@@ -715,7 +715,7 @@ class MoveInputModal(ui.Modal, title='Enter Your Move'):
                     return
             except ValueError:
                 await interaction.response.send_message(
-                    f"Invalid move format: '{move_text}'. Use algebraic notation (e.g., Nf3, e4, O-O) or UCI (e.g., e2e4).",
+                    f"Invalid move format or illegal move: '{move_text}'. Use algebraic notation (e.g., Nf3, e4, O-O) or UCI (e.g., e2e4).",
                     ephemeral=True
                 )
                 return
