@@ -202,7 +202,9 @@ class ChessBotView(ui.View):
             options_to_set = {"Skill Level": self.skill_level}
             if self.variant == "chess960":
                 options_to_set["UCI_Chess960"] = True
-            await self.engine.configure(options_to_set)
+            # Run synchronous configure in executor
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self.engine.configure, options_to_set)
             print("[Debug] Configuration successful.")
 
             print(f"Stockfish engine configured for {self.variant} with skill level {self.skill_level}.")
