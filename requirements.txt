@@ -12,3 +12,4 @@ distro
 pynacl
 ffmpeg
 chess
+Pillow
