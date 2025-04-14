@@ -982,14 +982,16 @@ class ChessBotView(ui.View):
             self.engine = engine_protocol
             self._engine_transport = transport
 
-            # Configure Stockfish options using the async protocol's setoption
-            print("[Debug] Configuring engine using protocol.setoption (async)...")
-            options = {"Skill Level": self.skill_level}
+            # Configure Stockfish options using send_command
+            print("[Debug] Configuring engine using send_command (async)...")
+            await self.engine.send_command(f"setoption name Skill Level value {self.skill_level}")
+            print(f"[Debug] Sent: setoption name Skill Level value {self.skill_level}")
             if self.variant == "chess960":
-                options["UCI_Chess960"] = "true"
-            # setoption is likely async according to the pattern
-            await self.engine.setoption(options)
-            print("[Debug] Configuration successful.")
+                await self.engine.send_command("setoption name UCI_Chess960 value true")
+                print("[Debug] Sent: setoption name UCI_Chess960 value true")
+            # It's good practice to wait for 'isready' after setting options before proceeding
+            await self.engine.isready()
+            print("[Debug] Configuration successful (isready received).")
 
             # Position is set implicitly when calling play/analyse or explicitly via send_command
             # No explicit position call needed here.
