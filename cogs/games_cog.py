@@ -979,19 +979,22 @@ class ChessBotView(ui.View):
             print("[Debug] Awaiting chess.engine.popen_uci...")
             transport, engine_protocol = await chess.engine.popen_uci(stockfish_path)
             print(f"[Debug] popen_uci successful. Protocol type: {type(engine_protocol)}")
-            self.engine = engine_protocol
+            self.engine = engine_protocol # This is the UciProtocol object
             self._engine_transport = transport
 
-            # Configure Stockfish options using send_command
-            print("[Debug] Configuring engine using send_command (async)...")
-            await self.engine.send_command(f"setoption name Skill Level value {self.skill_level}")
-            print(f"[Debug] Sent: setoption name Skill Level value {self.skill_level}")
+            # Configure Stockfish options using the configure method (corrected approach)
+            # NOTE: The user feedback mentioned using configure on the 'engine object'.
+            # However, in this code, self.engine IS the UciProtocol object returned by popen_uci.
+            # If UciProtocol doesn't have configure, this might still fail.
+            # Let's try the user's suggestion directly first.
+            print("[Debug] Configuring engine using configure (async)...")
+            options_to_set = {"Skill Level": self.skill_level}
             if self.variant == "chess960":
-                await self.engine.send_command("setoption name UCI_Chess960 value true")
-                print("[Debug] Sent: setoption name UCI_Chess960 value true")
-            # It's good practice to wait for 'isready' after setting options before proceeding
-            await self.engine.isready()
-            print("[Debug] Configuration successful (isready received).")
+                # UCI_Chess960 option typically expects a boolean or string "true"/"false".
+                # Assuming configure handles this conversion or expects boolean.
+                options_to_set["UCI_Chess960"] = True
+            await self.engine.configure(options_to_set) # Use configure as suggested
+            print("[Debug] Configuration successful.")
 
             # Position is set implicitly when calling play/analyse or explicitly via send_command
             # No explicit position call needed here.
