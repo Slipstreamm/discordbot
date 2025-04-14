@@ -83,10 +83,9 @@ class Rule34Cog(commands.Cog):
                     random_result = random.choice(all_results)
                     content = f"{random_result['file_url']}"
                     if loading_msg: # Prefix
+                        # Edit the loading message for prefix commands
                         await loading_msg.edit(content=content)
-                    elif is_interaction: # Slash
-                        # Send cached result respecting hidden flag
-                        await interaction_or_ctx.followup.send(content, ephemeral=hidden)
+                    # For interactions, just return the data. The caller will send the message.
                     return (content, all_results) # Success, return both random and all results
 
         # If no valid cache or cache is outdated, fetch from API
@@ -134,10 +133,9 @@ class Rule34Cog(commands.Cog):
                     random_result = random.choice(all_results)
                     result_content = f"{random_result['file_url']}"
                     if loading_msg: # Prefix
+                        # Edit the loading message for prefix commands
                         await loading_msg.edit(content=result_content)
-                    elif is_interaction: # Slash
-                        # Send result respecting hidden flag
-                        await interaction_or_ctx.followup.send(result_content, ephemeral=hidden)
+                    # For interactions, just return the data. The caller will send the message.
                     return (result_content, all_results) # Success, return both random and all results
 
             except Exception as e:
@@ -165,8 +163,8 @@ class Rule34Cog(commands.Cog):
         async def new_message(self, interaction: discord.Interaction, button: Button):
             random_result = random.choice(self.all_results)
             content = f"{random_result['file_url']}"
-            await interaction.response.send_message(content, ephemeral=self.hidden)
-            await interaction.followup.send("Here's another random result!", view=self, ephemeral=self.hidden)
+            # Send the new image and the original view in a single new message
+            await interaction.response.send_message(content, view=self, ephemeral=self.hidden)
 
         @discord.ui.button(label="Browse Results", style=discord.ButtonStyle.secondary)
         async def browse_results(self, interaction: discord.Interaction, button: Button):
