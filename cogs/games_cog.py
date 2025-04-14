@@ -30,18 +30,22 @@ def generate_board_image(board: chess.Board, last_move: Optional[chess.Move] = N
     img = Image.new("RGB", (BOARD_SIZE, BOARD_SIZE), DARK_COLOR)
     draw = ImageDraw.Draw(img, "RGBA") # Use RGBA for transparency support
 
-    # Load a font that supports Unicode chess pieces
+    # Load the bundled DejaVu Sans font
+    font = None
+    font_size = int(SQUARE_SIZE * 0.8)
     try:
-        # Adjust font path and size as needed
-        # Ensure you have a font file (like Arial) accessible or specify a full path
-        # On Windows: font_path = "C:/Windows/Fonts/arial.ttf"
-        # On Linux: font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" (example)
-        font_path = "arial.ttf" # Adjust if necessary
-        font_size = int(SQUARE_SIZE * 0.8)
+        # Construct path relative to this script file
+        SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+        PROJECT_ROOT = os.path.dirname(SCRIPT_DIR) # Go up one level from cogs
+        FONT_DIR_NAME = "dejavusans" # Directory specified by user
+        FONT_FILE_NAME = "DejaVuSans.ttf"
+        font_path = os.path.join(PROJECT_ROOT, FONT_DIR_NAME, FONT_FILE_NAME)
+
         font = ImageFont.truetype(font_path, font_size)
+        print(f"[Debug] Loaded font from bundled path: {font_path}")
     except IOError:
-        print(f"Warning: Font '{font_path}' not found. Using default font. Chess pieces might not render correctly.")
-        font = ImageFont.load_default()
+        print(f"Warning: Could not load bundled font at '{font_path}'. Using default font. Chess pieces might not render correctly.")
+        font = ImageFont.load_default() # Fallback
 
     # Determine squares to highlight based on the last move
     highlight_squares = set()
