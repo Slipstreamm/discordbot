@@ -972,19 +972,19 @@ class ChessBotView(ui.View):
             stockfish_path = get_stockfish_path()
             print(f"Attempting to start Stockfish engine from: {stockfish_path}")
 
-            # Use SimpleEngine.popen_uci for easier management
+            # Use SimpleEngine.popen_uci for easier management (this part IS async)
             self.engine = await chess.engine.SimpleEngine.popen_uci(stockfish_path)
             print(f"Stockfish engine process opened via SimpleEngine.popen_uci. Engine type: {type(self.engine)}")
 
-            # Configure Stockfish options using the engine wrapper
+            # Configure Stockfish options using the engine wrapper (these are SYNC)
             print("Configuring Stockfish engine...")
             options = {"Skill Level": self.skill_level}
             if self.variant == "chess960":
                 options["UCI_Chess960"] = "true"
-            await self.engine.configure(options)
+            self.engine.configure(options)
 
-            # Set position using the engine wrapper (handles standard and Chess960 FEN)
-            await self.engine.position(self.board)
+            # Set position using the engine wrapper (SYNC)
+            self.engine.position(self.board)
 
             print(f"Stockfish engine configured for {self.variant} with skill level {self.skill_level}.")
         except (FileNotFoundError, OSError, chess.engine.EngineError, Exception) as e:
@@ -1030,12 +1030,12 @@ class ChessBotView(ui.View):
 
         self.is_thinking = True
         try:
-            # Ensure the engine has the latest board state (SimpleEngine handles this implicitly or via position)
-            # It's generally safe to call position again before play if unsure
-            await self.engine.position(self.board)
+            # Ensure the engine has the latest board state (SYNC)
+            self.engine.position(self.board)
 
-            # Use the engine's play method
-            result = await self.engine.play(
+            # Use the engine's play method (SYNC), run in thread to avoid blocking
+            result = await asyncio.to_thread(
+                self.engine.play,
                 self.board,
                 chess.engine.Limit(time=self.think_time)
             )
@@ -1201,10 +1201,11 @@ class ChessBotView(ui.View):
             engine_to_stop = self.engine
             self.engine = None # Set to None immediately to prevent further use
             try:
-                await engine_to_stop.quit()
+                # engine.quit() is SYNC
+                engine_to_stop.quit()
                 print("Stockfish engine quit command sent successfully via SimpleEngine.")
             except (chess.engine.EngineError, chess.engine.EngineTerminatedError, Exception) as e:
-                # EngineTerminatedError can happen if engine process already terminated
+                # EngineTerminatedError can happen if the engine process already terminated
                 print(f"Error quitting Stockfish engine: {e}")
             # SimpleEngine manages transport closure internally when quit() is called or it's garbage collected.
 
