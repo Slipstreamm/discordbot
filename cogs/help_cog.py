@@ -148,10 +148,26 @@ class HelpCog(commands.Cog):
             bot.remove_command(original_help_command.name)
 
     @commands.hybrid_command(name="help", description="Shows this help message.")
-    async def help_command(self, ctx: commands.Context):
-        """Displays an interactive help message with command categories."""
-        view = HelpView(self.bot)
-        await ctx.send(embed=view.pages[0], view=view, ephemeral=True) # Send ephemeral so only user sees it
+    async def help_command(self, ctx: commands.Context, command_name: str = None):
+        """Displays an interactive help message with command categories or details about a specific command."""
+        if command_name:
+            command = self.bot.get_command(command_name)
+            if command:
+                embed = discord.Embed(
+                    title=f"Help for `{command.name}`",
+                    description=command.help or "No detailed description provided.",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(name="Usage", value=f"`{command.name} {command.signature}`", inline=False)
+                if isinstance(command, commands.Group):
+                    subcommands = "\n".join([f"`{sub.name}`: {sub.short_doc or 'No description'}" for sub in command.commands])
+                    embed.add_field(name="Subcommands", value=subcommands or "None", inline=False)
+                await ctx.send(embed=embed, ephemeral=True)
+            else:
+                await ctx.send(f"Command `{command_name}` not found.", ephemeral=True)
+        else:
+            view = HelpView(self.bot)
+            await ctx.send(embed=view.pages[0], view=view, ephemeral=True) # Send ephemeral so only user sees it
 
     @commands.Cog.listener()
     async def on_ready(self):
