@@ -191,11 +191,13 @@ class ChessBotView(ui.View):
             stockfish_path = get_stockfish_path()
             print(f"[Debug] OS: {platform.system()}, Path used: {stockfish_path}")
 
-            # Use the async open_uci
-            print("[Debug] Awaiting chess.engine.open_uci...")
-            # --- Debugging Removed ---
-            self.engine = await chess.engine.open_uci(stockfish_path)
-            print(f"[Debug] open_uci successful. Engine type: {type(self.engine)}")
+            # Use the synchronous popen_uci in an executor to avoid blocking
+            print("[Debug] Running chess.engine.popen_uci in executor...")
+            # Get the current event loop
+            loop = asyncio.get_running_loop()
+            # Run the synchronous popen_uci function in the default executor
+            self.engine = await loop.run_in_executor(None, chess.engine.popen_uci, stockfish_path)
+            print(f"[Debug] popen_uci successful. Engine type: {type(self.engine)}")
 
             # Configure Stockfish options
             print("[Debug] Configuring engine...")
@@ -203,7 +205,7 @@ class ChessBotView(ui.View):
             if self.variant == "chess960":
                 options_to_set["UCI_Chess960"] = True
             # Run synchronous configure in executor
-            loop = asyncio.get_running_loop()
+            loop = asyncio.get_running_loop() # Ensure loop is defined here too
             await loop.run_in_executor(None, self.engine.configure, options_to_set)
             print("[Debug] Configuration successful.")
 

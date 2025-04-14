@@ -13,3 +13,4 @@ pynacl
 ffmpeg
 chess # Reverted: Use version compatible with popen_uci
 Pillow
+
