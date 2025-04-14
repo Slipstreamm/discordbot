@@ -20,7 +20,7 @@ def generate_board_image(board: chess.Board, last_move: Optional[chess.Move] = N
     DARK_COLOR = (181, 136, 99)  # Dark wood
     HIGHLIGHT_LIGHT = (205, 210, 106, 180) # Semi-transparent yellow for light squares
     HIGHLIGHT_DARK = (170, 162, 58, 180)   # Semi-transparent yellow for dark squares
-    MARGIN = 20  # Add margin for rank and file labels
+    MARGIN = 30  # Add margin for rank and file labels
     TOTAL_SIZE = BOARD_SIZE + 2 * MARGIN
     
     # Create image with margins
