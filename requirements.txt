@@ -11,5 +11,5 @@ py-cpuinfo
 distro
 pynacl
 ffmpeg
-chess
+chess>=1.0 # Require version 1.0+ for async engine support
 Pillow
