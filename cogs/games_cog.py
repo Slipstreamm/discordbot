@@ -993,7 +993,7 @@ class ChessBotView(ui.View):
 
             # Set position using the async protocol's position method
             print("[Debug] Setting engine position using protocol.position (async)...")
-            await self.engine.position(self.board) # Use await
+            #await self.engine.position(self.board) # Use await
             print("[Debug] Position set successfully.")
 
             print(f"Stockfish engine configured for {self.variant} with skill level {self.skill_level}.")
