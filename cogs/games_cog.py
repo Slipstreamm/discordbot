@@ -557,9 +557,7 @@ class GamesCog(commands.Cog):
             "Don't count on it.", "My reply is no.", "My sources say no.", "Outlook not so good.", "Very doubtful."
         ]
         response = random.choice(responses)
-        await interaction.response.send_message(f"🎱 {response}")
-
-    @app_commands.command(name="rps", description="Play Rock-Paper-Scissors against the bot.")
+        await interaction.response.send_message(f"🎱 {response}")    @app_commands.command(name="rps", description="Play Rock-Paper-Scissors against the bot.")
     @app_commands.describe(choice="Your choice: Rock, Paper, or Scissors.")
     async def rps(self, interaction: discord.Interaction, choice: str):
         """Play Rock-Paper-Scissors against the bot."""
@@ -587,11 +585,11 @@ class GamesCog(commands.Cog):
         }
 
         if result == "You win! 🎉":
-            await interaction.response.send_message(f"{emojis[{user_choice}]}🤜{emojis[{bot_choice}]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
+            await interaction.response.send_message(f"{emojis[user_choice]}🤜{emojis[bot_choice]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
         elif result == "You lose! 😢":
-            await interaction.response.send_message(f"{emojis[{bot_choice}]}🤜{emojis[{user_choice}]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
+            await interaction.response.send_message(f"{emojis[bot_choice]}🤜{emojis[user_choice]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
         else:
-            await interaction.response.send_message(f"{emojis[{user_choice}]}🤝{emojis[{bot_choice}]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
+            await interaction.response.send_message(f"{emojis[user_choice]}🤝{emojis[bot_choice]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
 
     @app_commands.command(name="rpschallenge", description="Challenge another user to a game of Rock-Paper-Scissors.")
     @app_commands.describe(opponent="The user you want to challenge.")
@@ -840,9 +838,7 @@ class GamesCog(commands.Cog):
         view = RockPaperScissorsView(initiator, opponent)
         initial_message = f"Rock Paper Scissors: {initiator.mention} vs {opponent.mention}\n\nChoose your move!"
         message = await ctx.send(initial_message, view=view)
-        view.message = message
-
-    @commands.command(name="rps")
+        view.message = message    @commands.command(name="rps")
     async def rps_prefix(self, ctx: commands.Context, choice: str):
         """Play Rock-Paper-Scissors against the bot."""
         choices = ["Rock", "Paper", "Scissors"]
@@ -862,7 +858,18 @@ class GamesCog(commands.Cog):
         else:
             result = "You lose! 😢"
 
-        await ctx.send(f"You chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
+        emojis = {
+            "Rock": "🪨",
+            "Paper": "📄",
+            "Scissors": "✂️"
+        }
+
+        if result == "You win! 🎉":
+            await ctx.send(f"{emojis[user_choice]}🤜{emojis[bot_choice]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
+        elif result == "You lose! 😢":
+            await ctx.send(f"{emojis[bot_choice]}🤜{emojis[user_choice]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
+        else:
+            await ctx.send(f"{emojis[user_choice]}🤝{emojis[bot_choice]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GamesCog(bot))
