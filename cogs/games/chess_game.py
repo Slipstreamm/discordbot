@@ -477,21 +477,42 @@ class ChessView(ui.View):
         ]
         await asyncio.gather(*dm_update_tasks)
 
+        # Generate the final board image - ensure it's properly created
         board_image = generate_board_image(self.board, self.last_move, perspective_white=True) # Final board perspective
 
         try:
             if interaction.response.is_done():
                 # If interaction was already responded to, use followup
-                await interaction.followup.send(content=message_content, file=board_image)
+                try:
+                    await interaction.followup.send(content=message_content, file=board_image)
+                except discord.HTTPException as e:
+                    print(f"Failed to send followup: {e}")
+                    # Fallback to channel send if followup fails
+                    if interaction.channel:
+                        await interaction.channel.send(content=message_content, file=board_image)
             else:
                 # Edit the interaction response if still valid
-                await interaction.response.edit_message(content=message_content, attachments=[board_image], view=self)
+                try:
+                    await interaction.response.edit_message(content=message_content, attachments=[board_image], view=self)
+                except discord.HTTPException as e:
+                    print(f"Failed to edit message: {e}")
+                    # Fallback to sending a new message
+                    if interaction.channel:
+                        await interaction.channel.send(content=message_content, file=board_image)
         except discord.NotFound:
             # If the original message is gone, send a new message
             if interaction.channel:
                 await interaction.channel.send(content=message_content, file=board_image)
         except Exception as e:
-            print(f"ChessBotView: Failed to edit or send game end message: {e}")
+            print(f"ChessView: Failed to edit or send game end message: {e}")
+            # Last resort fallback - try to send a message to the channel if we can access it
+            try:
+                if interaction.channel:
+                    await interaction.channel.send(content=message_content, file=board_image)
+                elif self.message and self.message.channel:
+                    await self.message.channel.send(content=message_content, file=board_image)
+            except Exception as inner_e:
+                print(f"Final fallback also failed: {inner_e}")
 
         self.stop()
 
@@ -944,43 +965,102 @@ class ChessBotView(ui.View):
         # Update DM with final result
         await self._send_or_update_dm(result=message_content)
 
-        board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.player_color == chess.WHITE)) # Show final board
+        # Ensure a valid board image is generated
+        try:
+            board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.player_color == chess.WHITE)) # Show final board
+        except Exception as img_error:
+            print(f"Error generating final board image: {img_error}")
+            # Create a fallback message if image generation fails
+            message_content += "\n\n*Note: Could not generate final board image.*"
+            board_image = None
 
         # Use a consistent way to get the interaction or message object
         target_message = None
         interaction = None
+        channel = None
+
         if isinstance(interaction_or_message, discord.Interaction):
             interaction = interaction_or_message
-            # Try to get the original message if possible, otherwise use interaction context
+            channel = interaction.channel
+            # Try to get the original message if possible
             try:
-                target_message = await interaction.original_response()
-            except discord.NotFound:
-                 target_message = None # Fallback below
+                if interaction.response.is_done():
+                    target_message = await interaction.original_response()
+            except (discord.NotFound, discord.HTTPException) as e:
+                print(f"Could not get original response: {e}")
+                target_message = None
         elif isinstance(interaction_or_message, discord.Message):
             target_message = interaction_or_message
+            channel = target_message.channel
 
-        try:
-            if interaction and interaction.response.is_done():
-                 # If interaction was deferred or responded to, edit original response
-                 await interaction.edit_original_response(content=message_content, attachments=[board_image], view=self)
-            elif interaction and not interaction.response.is_done():
-                 # If interaction is fresh (e.g., resign button directly), edit its message
-                 await interaction.response.edit_message(content=message_content, attachments=[board_image], view=self)
-            elif target_message:
-                 # If we only have the message object (e.g., bot move leads to game end)
-                 await target_message.edit(content=message_content, attachments=[board_image], view=self)
-            else:
-                 print("ChessBotView: Could not determine message/interaction to edit for game end.")
+        # If we still don't have a channel but have a message stored, use that
+        if not channel and self.message:
+            channel = self.message.channel
+            if not target_message:
+                target_message = self.message
 
-        except (discord.NotFound, discord.HTTPException) as e:
-             print(f"ChessBotView: Failed to edit message on game end: {e}")
-             # Attempt to send a new message if editing failed
-             channel = target_message.channel if target_message else (interaction.channel if interaction else None)
-             if channel:
-                 try:
-                     await channel.send(content=message_content, files=[board_image])
-                 except discord.Forbidden:
-                     print("ChessBotView: Missing permissions to send final game message.")
+        # Try multiple approaches to send the final game state
+        success = False
+
+        # 1. Try using the interaction if available
+        if interaction and not success:
+            try:
+                if interaction.response.is_done():
+                    # If interaction was deferred or responded to, try to edit original response
+                    try:
+                        if board_image:
+                            await interaction.edit_original_response(content=message_content, attachments=[board_image], view=self)
+                        else:
+                            await interaction.edit_original_response(content=message_content, view=self)
+                        success = True
+                    except (discord.NotFound, discord.HTTPException) as e:
+                        print(f"Failed to edit original response: {e}")
+                else:
+                    # If interaction is fresh, edit its message
+                    try:
+                        if board_image:
+                            await interaction.response.edit_message(content=message_content, attachments=[board_image], view=self)
+                        else:
+                            await interaction.response.edit_message(content=message_content, view=self)
+                        success = True
+                    except (discord.NotFound, discord.HTTPException) as e:
+                        print(f"Failed to edit message via response: {e}")
+                        # Try to send a followup if editing fails
+                        try:
+                            if board_image:
+                                await interaction.followup.send(content=message_content, file=board_image)
+                            else:
+                                await interaction.followup.send(content=message_content)
+                            success = True
+                        except (discord.NotFound, discord.HTTPException) as followup_e:
+                            print(f"Failed to send followup: {followup_e}")
+            except Exception as e:
+                print(f"Error using interaction for end game: {e}")
+
+        # 2. Try using the target message if available
+        if target_message and not success:
+            try:
+                if board_image:
+                    await target_message.edit(content=message_content, attachments=[board_image], view=self)
+                else:
+                    await target_message.edit(content=message_content, view=self)
+                success = True
+            except (discord.NotFound, discord.HTTPException) as e:
+                print(f"Failed to edit target message: {e}")
+
+        # 3. Last resort: send a new message to the channel
+        if channel and not success:
+            try:
+                if board_image:
+                    await channel.send(content=message_content, file=board_image)
+                else:
+                    await channel.send(content=message_content)
+                success = True
+            except (discord.Forbidden, discord.HTTPException) as e:
+                print(f"Failed to send new message to channel: {e}")
+
+        if not success:
+            print("ChessBotView: All attempts to send game end message failed")
 
         self.stop() # Stop the view itself AFTER attempting message update
 
