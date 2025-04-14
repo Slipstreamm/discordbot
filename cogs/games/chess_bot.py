@@ -193,6 +193,10 @@ class ChessBotView(ui.View):
 
             # Use the async open_uci
             print("[Debug] Awaiting chess.engine.open_uci...")
+            # --- Added Debugging ---
+            print(f"[Debug] Type of chess.engine: {type(chess.engine)}")
+            print(f"[Debug] Attributes of chess.engine: {dir(chess.engine)}")
+            # --- End Added Debugging ---
             self.engine = await chess.engine.open_uci(stockfish_path)
             print(f"[Debug] open_uci successful. Engine type: {type(self.engine)}")
 
