@@ -23,8 +23,7 @@ class HelpSelect(discord.ui.Select):
         for i, cog in enumerate(view.cogs):
             display_name = COG_DISPLAY_NAMES.get(cog.qualified_name, cog.qualified_name)
             # Truncate description if too long for Discord API limit (100 chars)
-            description = f"Commands for {display_name}"[:100]
-            options.append(discord.SelectOption(label=display_name, description=description, value=str(i)))
+            options.append(discord.SelectOption(label=display_name, value=str(i)))
 
         super().__init__(placeholder="Select a category...", min_values=1, max_values=1, options=options)
 
