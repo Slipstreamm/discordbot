@@ -349,7 +349,18 @@ class BotTicTacToeView(ui.View):
         for item in self.children:
             if isinstance(item, ui.Button):
                 item.disabled = True
-                
+    def format_board(self) -> str:
+        """Format the game board into a string representation."""
+        board = self.game.get_board()
+        rows = []
+        for i in range(0, 9, 3):
+            row = board[i:i+3]
+            # Replace spaces with emoji equivalents for better visualization
+            row = [cell if cell != ' ' else '⬜' for cell in row]
+            row = [cell.replace('X', '❌').replace('O', '⭕') for cell in row]
+            rows.append(' '.join(row))
+        return '\n'.join(rows)
+        
     async def end_game(self, interaction: discord.Interaction):
         await self.disable_all_buttons()
         
@@ -379,17 +390,6 @@ class BotTicTacToeView(ui.View):
                     await self.message.edit(content=f"{content}\n\n{board_display}", view=self)
                 except: pass
         self.stop()
-        def format_board(self) -> str:
-            """Format the game board into a string representation."""
-            board = self.game.get_board()
-            rows = []
-            for i in range(0, 9, 3):
-                row = board[i:i+3]
-                # Replace spaces with emoji equivalents for better visualization
-                row = [cell if cell != ' ' else '⬜' for cell in row]
-                row = [cell.replace('X', '❌').replace('O', '⭕') for cell in row]
-                rows.append(' '.join(row))
-            return '\n'.join(rows)
     
     async def on_timeout(self):
         if self.message:
