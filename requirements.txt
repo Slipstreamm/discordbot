@@ -11,6 +11,5 @@ py-cpuinfo
 distro
 pynacl
 ffmpeg
-chess # Reverted: Use version compatible with popen_uci
+chess
 Pillow
-
