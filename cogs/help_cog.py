@@ -3,21 +3,70 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 
+# Define friendly names for cogs
+COG_DISPLAY_NAMES = {
+    "AudioCog": "🎵 Audio Player",
+    "HelpCog": "❓ Help",
+    "PingCog": "🏓 Ping",
+    "RandomCog": "🎲 Random Image (NSFW)",
+    "RoleCreatorCog": "✨ Role Management (Owner Only)",
+    "RoleSelectorCog": "🎭 Role Selection (Owner Only)",
+    "Rule34Cog": "🔞 Rule34 Search (NSFW)",
+    "SystemCheckCog": "📊 System Status",
+    # Add other cogs here as needed
+}
+
+class HelpSelect(discord.ui.Select):
+    def __init__(self, view: 'HelpView'):
+        self.help_view = view
+        options = [discord.SelectOption(label="General Overview", description="Go back to the main help page.", value="-1")] # Value -1 for overview page
+        for i, cog in enumerate(view.cogs):
+            display_name = COG_DISPLAY_NAMES.get(cog.qualified_name, cog.qualified_name)
+            # Truncate description if too long for Discord API limit (100 chars)
+            description = f"Commands for {display_name}"[:100]
+            options.append(discord.SelectOption(label=display_name, description=description, value=str(i)))
+
+        super().__init__(placeholder="Select a category...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_value = int(self.values[0])
+        if selected_value == -1: # General Overview selected
+            self.help_view.current_page = 0
+        else:
+            self.help_view.current_page = selected_value + 1 # +1 because page 0 is overview
+
+        self.help_view._update_buttons()
+        # Update the placeholder to show the current selection
+        current_option_label = "General Overview" if self.help_view.current_page == 0 else COG_DISPLAY_NAMES.get(self.help_view.cogs[self.help_view.current_page - 1].qualified_name)
+        self.placeholder = current_option_label
+        await interaction.response.edit_message(embed=self.help_view.pages[self.help_view.current_page], view=self.help_view)
+
+
 class HelpView(discord.ui.View):
     def __init__(self, bot: commands.Bot, timeout=180):
         super().__init__(timeout=timeout)
         self.bot = bot
         self.current_page = 0
-        self.cogs = [cog for cog_name, cog in bot.cogs.items() if cog.get_commands()] # Get cogs with commands
+        # Filter cogs and sort them using the display name mapping
+        self.cogs = sorted(
+            [cog for cog_name, cog in bot.cogs.items() if cog.get_commands()],
+            key=lambda cog: COG_DISPLAY_NAMES.get(cog.qualified_name, cog.qualified_name) # Sort alphabetically by display name
+        )
         self.pages = self._create_pages()
-        self._update_buttons()
+
+        # Add components in order: Select, Previous, Next
+        self.select_menu = HelpSelect(self)
+        self.add_item(self.select_menu)
+        # Buttons are added via decorators later, ensure they appear after select if desired layout matters
+
+        self._update_buttons() # Initial button state
 
     def _create_pages(self):
         pages = []
         # Page 0: General overview
         embed = discord.Embed(
             title="Help Command",
-            description=f"Use the buttons below to navigate through command categories.\nTotal Cogs: {len(self.cogs)}",
+            description=f"Use the buttons below to navigate through command categories.\nTotal Categories: {len(self.cogs)}",
             color=discord.Color.blue()
         )
         embed.set_footer(text="Page 0 / {}".format(len(self.cogs)))
@@ -26,10 +75,12 @@ class HelpView(discord.ui.View):
         # Subsequent pages: One per cog
         for i, cog in enumerate(self.cogs):
             cog_name = cog.qualified_name
+            # Get the friendly display name, falling back to the original name
+            display_name = COG_DISPLAY_NAMES.get(cog_name, cog_name)
             cog_commands = cog.get_commands()
             embed = discord.Embed(
-                title=f"{cog_name} Commands",
-                description=f"Commands available in the {cog_name} category:",
+                title=f"{display_name} Commands", # Use the display name here
+                description=f"Commands available in the {display_name} category:",
                 color=discord.Color.green() # Or assign colors dynamically
             )
             for command in cog_commands:
@@ -55,29 +106,36 @@ class HelpView(discord.ui.View):
 
     def _update_buttons(self):
         # Disable previous button if on the first page
-        self.children[0].disabled = self.current_page == 0
+        # Assuming previous button is the second item added (index 1 after select menu)
+        prev_button = self.children[1] # Adjust index if component order changes
+        prev_button.disabled = self.current_page == 0
         # Disable next button if on the last page
-        self.children[1].disabled = self.current_page == len(self.pages) - 1
+        # Assuming next button is the third item added (index 2 after select menu)
+        next_button = self.children[2] # Adjust index if component order changes
+        next_button.disabled = self.current_page == len(self.pages) - 1
 
-    @discord.ui.button(label="Previous", style=discord.ButtonStyle.grey)
+        # Update select menu placeholder
+        current_option_label = "General Overview"
+        if self.current_page > 0 and self.current_page <= len(self.cogs):
+             current_option_label = COG_DISPLAY_NAMES.get(self.cogs[self.current_page - 1].qualified_name, self.cogs[self.current_page - 1].qualified_name)
+        self.select_menu.placeholder = current_option_label
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.grey, row=1) # Specify row if needed
     async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.current_page > 0:
             self.current_page -= 1
-            self._update_buttons()
+            self._update_buttons() # This will now also update the select placeholder
             await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
         else:
-             # Optionally send an ephemeral message if they try to go before the first page
             await interaction.response.defer()
 
-
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.grey)
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.grey, row=1) # Specify row if needed
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.current_page < len(self.pages) - 1:
             self.current_page += 1
-            self._update_buttons()
+            self._update_buttons() # This will now also update the select placeholder
             await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
         else:
-            # Optionally send an ephemeral message if they try to go past the last page
             await interaction.response.defer()
 
 
