@@ -334,6 +334,59 @@ class GamesCog(commands.Cog):
             except discord.HTTPException:
                 pass # Ignore if we can't edit the message
 
+    # --- PvP Chess Commands (Moved from chess_pvp.py) ---
+
+    @app_commands.command(name="chess", description="Challenge another user to a game of chess.")
+    @app_commands.describe(opponent="The user you want to challenge.")
+    async def chess_slash(self, interaction: discord.Interaction, opponent: discord.Member):
+        """Start a game of chess with another user."""
+        initiator = interaction.user
+
+        if opponent == initiator:
+            await interaction.response.send_message("You cannot challenge yourself!", ephemeral=True)
+            return
+        if opponent.bot:
+            await interaction.response.send_message("You cannot challenge a bot! Use `/chessbot` instead.", ephemeral=True)
+            return
+
+        # Initiator is white, opponent is black
+        view = ChessView(initiator, opponent)
+        initial_status = f"Turn: **{initiator.mention}** (White)"
+        initial_message = f"Chess: {initiator.mention} (White) vs {opponent.mention} (Black)\n\n{initial_status}"
+        board_image = generate_board_image(view.board) # Generate initial board image
+
+        await interaction.response.send_message(initial_message, file=board_image, view=view)
+        message = await interaction.original_response()
+        view.message = message
+
+        # Send initial DMs
+        asyncio.create_task(view._send_or_update_dm(view.white_player))
+        asyncio.create_task(view._send_or_update_dm(view.black_player))
+
+    @commands.command(name="chess")
+    async def chess_prefix(self, ctx: commands.Context, opponent: discord.Member):
+        """(Prefix) Start a game of chess with another user."""
+        initiator = ctx.author
+
+        if opponent == initiator:
+            await ctx.send("You cannot challenge yourself!")
+            return
+        if opponent.bot:
+            await ctx.send("You cannot challenge a bot! Use `!chessbot` instead.")
+            return
+
+        view = ChessView(initiator, opponent)
+        initial_status = f"Turn: **{initiator.mention}** (White)"
+        initial_message = f"Chess: {initiator.mention} (White) vs {opponent.mention} (Black)\n\n{initial_status}"
+        board_image = generate_board_image(view.board)
+
+        message = await ctx.send(initial_message, file=board_image, view=view)
+        view.message = message
+
+        # Send initial DMs
+        asyncio.create_task(view._send_or_update_dm(view.white_player))
+        asyncio.create_task(view._send_or_update_dm(view.black_player))
+
     # --- Listeners for Cleanup ---
 
     @commands.Cog.listener()
