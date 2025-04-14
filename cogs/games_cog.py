@@ -906,6 +906,7 @@ class ChessBotView(ui.View):
         self.variant = variant.lower()
         self.message: Optional[discord.Message] = None
         self.engine: Optional[chess.engine.SimpleEngine] = None
+        self.transport: Optional[chess.engine.BaseTransport] = None # Add transport attribute
         self.skill_level = max(0, min(20, skill_level)) # Clamp skill level
         self.think_time = max(0.1, min(5.0, think_time)) # Clamp think time
         self.is_thinking = False # Flag to prevent interaction during bot's turn
@@ -969,8 +970,8 @@ class ChessBotView(ui.View):
             stockfish_path = get_stockfish_path()
             print(f"Attempting to start Stockfish from: {stockfish_path}")
 
-            # SimpleEngine.popen_uci returns the engine instance directly
-            self.engine = await chess.engine.SimpleEngine.popen_uci(stockfish_path)
+            # SimpleEngine.popen_uci is synchronous, returns the engine instance directly
+            self.engine = chess.engine.SimpleEngine.popen_uci(stockfish_path)
             print(f"Stockfish process opened. Engine object type: {type(self.engine)}")
 
             # Check if engine object seems valid before proceeding
