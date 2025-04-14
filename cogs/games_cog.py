@@ -108,15 +108,17 @@ def generate_board_image(board: chess.Board, last_move: Optional[chess.Move] = N
                     chess.KNIGHT: "knight",
                     chess.PAWN: "pawn"
                 }.get(piece_type, None)
-
+# ...existing code...
                 if piece_name:
                     piece_key = f"{piece_color}-{piece_name}"
                     piece_image = piece_images.get(piece_key)
                     if piece_image:
-                        piece_image_resized = piece_image.resize((SQUARE_SIZE, SQUARE_SIZE), Image.ANTIALIAS)
+                        # Use Image.Resampling.LANCZOS instead of Image.ANTIALIAS
+                        piece_image_resized = piece_image.resize((SQUARE_SIZE, SQUARE_SIZE), Image.Resampling.LANCZOS)
                         img.paste(piece_image_resized, (x0, y0), piece_image_resized)
 
     # Draw file labels (a-h) along the bottom
+# ...existing code...
     text_color = (220, 220, 220)  # Light gray color for labels
     for file in range(8):
         # Determine the correct file label based on perspective
