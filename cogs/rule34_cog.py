@@ -82,10 +82,7 @@ class Rule34Cog(commands.Cog):
                 if all_results:
                     random_result = random.choice(all_results)
                     content = f"{random_result['file_url']}"
-                    if loading_msg: # Prefix
-                        # Edit the loading message for prefix commands
-                        await loading_msg.edit(content=content)
-                    # For interactions, just return the data. The caller will send the message.
+                    # Always return the data. The caller handles sending/editing.
                     return (content, all_results) # Success, return both random and all results
 
         # If no valid cache or cache is outdated, fetch from API
@@ -132,10 +129,7 @@ class Rule34Cog(commands.Cog):
                 else:
                     random_result = random.choice(all_results)
                     result_content = f"{random_result['file_url']}"
-                    if loading_msg: # Prefix
-                        # Edit the loading message for prefix commands
-                        await loading_msg.edit(content=result_content)
-                    # For interactions, just return the data. The caller will send the message.
+                    # Always return the data. The caller handles sending/editing.
                     return (result_content, all_results) # Success, return both random and all results
 
             except Exception as e:
@@ -273,16 +267,20 @@ class Rule34Cog(commands.Cog):
     @commands.command(name="rule34")
     async def rule34(self, ctx: commands.Context, *, tags: str = "kasane_teto"):
         """Search for images on Rule34 with the provided tags."""
-        # Call logic, hidden is False by default and irrelevant for prefix
+        # Send initial loading message
+        loading_msg = await ctx.reply("Fetching data, please wait...")
+
+        # Call logic, passing the context (which includes the loading_msg reference indirectly)
         response = await self._rule34_logic(ctx, tags)
-        
+
         if isinstance(response, tuple):
             content, all_results = response
             view = self.Rule34Buttons(self, tags, all_results)
-            await ctx.send(content, view=view)
-        elif response is not None:
-            print(f"Rule34 prefix command received error response unexpectedly: {response}")
-            await ctx.reply(response)
+            # Edit the original loading message with content and view
+            await loading_msg.edit(content=content, view=view)
+        elif response is not None: # Error occurred
+            # Edit the original loading message with the error
+            await loading_msg.edit(content=response, view=None) # Remove view on error
 
     # --- Slash Command ---
     @app_commands.command(name="rule34", description="Get random image from rule34 with specified tags")
