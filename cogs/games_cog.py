@@ -297,14 +297,13 @@ class BotTicTacToeButton(ui.Button['BotTicTacToeView']):
             self.label = 'X'  # Player is always X
             self.style = discord.ButtonStyle.success
             self.disabled = True
-            
-            # Check if game is over after player's move
+              # Check if game is over after player's move
             if view.game.is_game_over():
                 await view.end_game(interaction)
                 return
                 
-            # Now it's the bot's turn
-            await interaction.response.defer(thinking=True)
+            # Now it's the bot's turn - defer without thinking message
+            await interaction.response.defer()
             await asyncio.sleep(1)  # Brief pause to simulate bot "thinking"
             
             # Bot makes its move
@@ -580,8 +579,19 @@ class GamesCog(commands.Cog):
             result = "You win! 🎉"
         else:
             result = "You lose! 😢"
+        
+        emojis = {
+            "Rock": "🪨",
+            "Paper": "📄",
+            "Scissors": "✂️"
+        }
 
-        await interaction.response.send_message(f"You chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
+        if result == "You win! 🎉":
+            await interaction.response.send_message(f"{emojis[{user_choice}]}🤜{emojis[{bot_choice}]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
+        elif result == "You lose! 😢":
+            await interaction.response.send_message(f"{emojis[{bot_choice}]}🤜{emojis[{user_choice}]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
+        else:
+            await interaction.response.send_message(f"{emojis[{user_choice}]}🤝{emojis[{bot_choice}]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
 
     @app_commands.command(name="rpschallenge", description="Challenge another user to a game of Rock-Paper-Scissors.")
     @app_commands.describe(opponent="The user you want to challenge.")
