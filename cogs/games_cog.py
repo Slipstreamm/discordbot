@@ -697,18 +697,28 @@ class MoveInputModal(ui.Modal, title='Enter Your Move'):
         move = None
 
         try:
-            # Try parsing as SAN first (more user-friendly)
             move = board.parse_san(move_text)
+            if not board.is_legal(move):
+                await interaction.response.send_message(
+                    f"Illegal move: '{move_text}' is not valid in the current position.",
+                    ephemeral=True
+                )
+                return
         except ValueError:
             try:
-                # Try parsing as UCI if SAN fails (e.g., "e2e4")
                 move = board.parse_uci(move_text)
+                if not board.is_legal(move):
+                    await interaction.response.send_message(
+                        f"Illegal move: '{move_text}' is not valid in the current position.",
+                        ephemeral=True
+                    )
+                    return
             except ValueError:
                 await interaction.response.send_message(
                     f"Invalid move format: '{move_text}'. Use algebraic notation (e.g., Nf3, e4, O-O) or UCI (e.g., e2e4).",
                     ephemeral=True
                 )
-                return # Stop processing if format is wrong
+                return
 
         # Check if the parsed move is legal
         if move not in board.legal_moves:
