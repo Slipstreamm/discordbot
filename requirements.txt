@@ -11,3 +11,4 @@ py-cpuinfo
 distro
 pynacl
 ffmpeg
+chess

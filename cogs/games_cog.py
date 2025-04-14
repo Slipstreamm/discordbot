@@ -1,10 +1,19 @@
 import discord
 from discord.ext import commands
 from discord import app_commands, ui
+import discord
+from discord.ext import commands
+from discord import app_commands, ui
+import discord
+from discord.ext import commands
+from discord import app_commands, ui
 import random
 import asyncio
-from typing import Optional, List
-import chess  # Added chess module import
+from typing import Optional, List, Union # Added Union
+import chess
+import chess.engine
+import platform
+import os
 
 class CoinFlipView(ui.View):
     def __init__(self, initiator: discord.Member, opponent: discord.Member):
@@ -665,11 +674,390 @@ class ChessView(ui.View):
 
 # --- Chess Game --- END
 
+# --- Chess Bot Game --- START
+
+# Define paths relative to the script location for better portability
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR) # Assumes cogs folder is one level down from root
+
+STOCKFISH_PATH_WINDOWS = os.path.join(PROJECT_ROOT, "stockfish-windows-x86-64-avx2", "stockfish", "stockfish-windows-x86-64-avx2.exe")
+STOCKFISH_PATH_LINUX = os.path.join(PROJECT_ROOT, "stockfish-ubuntu-x86-64-avx2", "stockfish", "stockfish-ubuntu-x86-64-avx2")
+
+def get_stockfish_path():
+    """Returns the appropriate Stockfish path based on the OS."""
+    system = platform.system()
+    if system == "Windows":
+        if not os.path.exists(STOCKFISH_PATH_WINDOWS):
+            raise FileNotFoundError(f"Stockfish not found at expected Windows path: {STOCKFISH_PATH_WINDOWS}")
+        return STOCKFISH_PATH_WINDOWS
+    elif system == "Linux":
+        # Check for execute permissions on Linux
+        if not os.path.exists(STOCKFISH_PATH_LINUX):
+            raise FileNotFoundError(f"Stockfish not found at expected Linux path: {STOCKFISH_PATH_LINUX}")
+        if not os.access(STOCKFISH_PATH_LINUX, os.X_OK):
+             print(f"Warning: Stockfish at {STOCKFISH_PATH_LINUX} does not have execute permissions. Attempting to set...")
+             try:
+                 os.chmod(STOCKFISH_PATH_LINUX, 0o755) # Add execute permissions
+                 if not os.access(STOCKFISH_PATH_LINUX, os.X_OK): # Check again
+                     raise OSError(f"Failed to set execute permissions for Stockfish at {STOCKFISH_PATH_LINUX}")
+             except Exception as e:
+                 raise OSError(f"Error setting execute permissions for Stockfish: {e}")
+        return STOCKFISH_PATH_LINUX
+    else:
+        raise OSError(f"Unsupported operating system '{system}' for Stockfish.")
+
+class ChessBotButton(ui.Button['ChessBotView']):
+    def __init__(self, x: int, y: int, piece_symbol: Optional[str] = None):
+        # Unicode chess pieces
+        self.pieces = {
+            'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚', 'p': '♟',
+            'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔', 'P': '♙',
+            None: ' ' # Use a space for empty squares
+        }
+        self.x = x
+        self.y = y
+        self.piece_symbol = piece_symbol
+
+        # Set button style and label based on square color
+        is_dark = (x + y) % 2 != 0
+        style = discord.ButtonStyle.secondary if is_dark else discord.ButtonStyle.primary
+        label = self.pieces.get(piece_symbol, ' ') # Get piece representation or space
+        super().__init__(style=style, label=label if label != ' ' else '\u2003', row=y) # Use em-space for empty squares
+
+    async def callback(self, interaction: discord.Interaction):
+        assert self.view is not None
+        view: ChessBotView = self.view
+
+        # Check if it's the player's turn and the engine is ready
+        if interaction.user != view.player:
+             await interaction.response.send_message("This is not your game!", ephemeral=True)
+             return
+        if view.board.turn != view.player_color:
+            await interaction.response.send_message("It's not your turn!", ephemeral=True)
+            return
+        if view.engine is None or view.is_thinking:
+            await interaction.response.send_message("Please wait for the bot to finish thinking or start.", ephemeral=True)
+            return
+
+        # Process the move
+        await view.handle_square_click(interaction, self.x, self.y)
+
+class ChessBotView(ui.View):
+    # Maps skill level (0-20) to typical ELO ratings for context
+    SKILL_ELO_MAP = {
+        0: 800, 1: 900, 2: 1000, 3: 1100, 4: 1200, 5: 1300, 6: 1400, 7: 1500, 8: 1600, 9: 1700,
+        10: 1800, 11: 1900, 12: 2000, 13: 2100, 14: 2200, 15: 2300, 16: 2400, 17: 2500, 18: 2600,
+        19: 2700, 20: 2800
+    }
+
+    def __init__(self, player: discord.Member, player_color: chess.Color, variant: str = "standard", skill_level: int = 10, think_time: float = 1.0):
+        super().__init__(timeout=900.0)  # 15 minute timeout
+        self.player = player
+        self.player_color = player_color
+        self.bot_color = not player_color
+        self.variant = variant.lower()
+        self.message: Optional[discord.Message] = None
+        self.engine: Optional[chess.engine.SimpleEngine] = None
+        self.skill_level = max(0, min(20, skill_level)) # Clamp skill level
+        self.think_time = max(0.1, min(5.0, think_time)) # Clamp think time
+        self.is_thinking = False # Flag to prevent interaction during bot's turn
+
+        # Initialize board based on variant
+        if self.variant == "chess960":
+            self.board = chess.Board(chess960=True)
+            # Stockfish needs the FEN for Chess960 setup
+            self.initial_fen = self.board.fen()
+        else: # Standard chess
+            self.board = chess.Board()
+            self.initial_fen = None # Not needed for standard
+
+        # For move input (selected square)
+        self.selected_square: Optional[int] = None
+
+        # Initialize the chess board with buttons
+        self.update_board_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # Allow only the player to interact
+        if interaction.user.id != self.player.id:
+            await interaction.response.send_message("This is not your game!", ephemeral=True)
+            return False
+        # Prevent interaction while bot is thinking
+        if self.is_thinking:
+            await interaction.response.send_message("The bot is thinking, please wait.", ephemeral=True)
+            return False
+        return True
+
+    async def start_engine(self):
+        """Initializes the Stockfish engine."""
+        try:
+            stockfish_path = get_stockfish_path()
+            self.engine = await chess.engine.popen_uci(stockfish_path)
+
+            # Configure Stockfish
+            options = {"Skill Level": self.skill_level}
+            if self.variant == "chess960":
+                options["UCI_Chess960"] = "true"
+            await self.engine.configure(options)
+
+            # Set position if Chess960
+            if self.initial_fen:
+                await self.engine.position(self.board) # Use position method which takes a board
+
+            print(f"Stockfish engine started for {self.variant} with skill level {self.skill_level}.")
+        except (FileNotFoundError, OSError, chess.engine.EngineError, Exception) as e:
+            print(f"Failed to start Stockfish engine: {e}")
+            self.engine = None # Ensure engine is None if failed
+            # Optionally notify the user in the channel if the message exists
+            if self.message:
+                try:
+                    await self.message.channel.send(f"Error: Could not start the chess engine. {e}")
+                except discord.Forbidden:
+                    pass # Can't send message
+            self.stop() # Stop the view if engine fails
+
+    def update_board_buttons(self):
+        """Recreate all buttons based on current board state"""
+        self.clear_items()  # Clear all buttons
+
+        # Create buttons for each square
+        for y in range(8):
+            for x in range(8):
+                # Convert to chess coordinates (0=a1, 63=h8)
+                square = chess.square(x, 7 - y) # UI y=0 is rank 8, y=7 is rank 1
+                piece = self.board.piece_at(square)
+                piece_symbol = piece.symbol() if piece else None
+                self.add_item(ChessBotButton(x, y, piece_symbol))
+
+    async def handle_square_click(self, interaction: discord.Interaction, x: int, y: int):
+        """Handle when a user clicks a square on the board"""
+        # Convert UI coordinates to chess coordinates
+        square = chess.square(x, 7 - y)
+
+        if self.selected_square is None:
+            # No square selected yet - select this one if it has a piece of the right color
+            piece = self.board.piece_at(square)
+            if piece is None:
+                await interaction.response.send_message("Select a square with your piece first.", ephemeral=True)
+                return
+
+            # Check correct color
+            if piece.color != self.player_color:
+                await interaction.response.send_message("You can only move your own pieces.", ephemeral=True)
+                return
+
+            # Select this square
+            self.selected_square = square
+            await interaction.response.send_message(f"Selected {chess.square_name(square)}. Now select the destination square.", ephemeral=True)
+
+        else:
+            # Already have a square selected - try to make a move
+            move = chess.Move(self.selected_square, square)
+
+            # Check for promotion - always promote to Queen for simplicity in this context
+            piece = self.board.piece_at(self.selected_square)
+            if piece and piece.piece_type == chess.PAWN:
+                to_rank = chess.square_rank(square)
+                if (piece.color == chess.WHITE and to_rank == 7) or \
+                   (piece.color == chess.BLACK and to_rank == 0):
+                    move = chess.Move(self.selected_square, square, promotion=chess.QUEEN)
+
+            # Try to make the move
+            if move in self.board.legal_moves:
+                self.board.push(move)
+                self.selected_square = None # Reset selection
+
+                # Update board visually
+                self.update_board_buttons()
+
+                # Check game state *after* player's move
+                if await self.check_game_over(interaction):
+                    return # Game ended
+
+                # Edit message to show player's move and indicate bot's turn
+                await interaction.response.edit_message(content=self.get_board_message("Bot is thinking..."), view=self)
+
+                # Trigger bot's move
+                await self.make_bot_move()
+
+            else:
+                # Invalid move
+                await interaction.response.send_message(f"Invalid move from {chess.square_name(self.selected_square)} to {chess.square_name(square)}. Try again.", ephemeral=True)
+                # Keep the selection or reset? Resetting might be less confusing.
+                self.selected_square = None
+
+    async def make_bot_move(self):
+        """Lets the Stockfish engine make a move."""
+        if self.engine is None or self.board.turn != self.bot_color or self.is_thinking:
+            return # Engine not ready, not bot's turn, or already thinking
+
+        self.is_thinking = True
+        try:
+            # Use asyncio.to_thread to run the blocking engine call
+            result = await asyncio.to_thread(
+                self.engine.play,
+                self.board,
+                chess.engine.Limit(time=self.think_time)
+            )
+            if result.move:
+                self.board.push(result.move)
+                self.update_board_buttons() # Update board visually after bot move
+
+                # Check game state *after* bot's move
+                if await self.check_game_over(self.message.channel): # Use channel if interaction not available
+                     return
+
+                # Update message for player's turn
+                if self.message:
+                    try:
+                        await self.message.edit(content=self.get_board_message("Your turn."), view=self)
+                    except discord.NotFound:
+                        print("ChessBotView: Failed to edit message after bot move, likely deleted.")
+                    except discord.Forbidden:
+                        print("ChessBotView: Missing permissions to edit message after bot move.")
+            else:
+                 print("ChessBotView: Engine returned no move.")
+                 # Handle case where engine fails to produce a move (should be rare)
+                 if self.message:
+                     await self.message.edit(content=self.get_board_message("Bot failed to move. Your turn?"), view=self)
+
+        except (chess.engine.EngineError, Exception) as e:
+            print(f"Error during bot move: {e}")
+            if self.message:
+                 try:
+                     await self.message.edit(content=self.get_board_message(f"Error during bot move: {e}. Your turn."), view=self)
+                 except: pass # Ignore errors editing message here
+        finally:
+            self.is_thinking = False
+
+
+    def get_board_message(self, status: str) -> str:
+        """Generates the message content including status and whose turn it is."""
+        turn_color = "White" if self.board.turn == chess.WHITE else "Black"
+        player_mention = self.player.mention
+        elo = self.SKILL_ELO_MAP.get(self.skill_level, "Unknown")
+        variant_name = "Chess960" if self.variant == "chess960" else "Standard Chess"
+
+        title = f"{variant_name}: {player_mention} ({'White' if self.player_color == chess.WHITE else 'Black'}) vs Bot (Skill: {self.skill_level}/20, ~{elo} ELO)"
+        turn_indicator = f"Turn: **{'Your (White)' if self.board.turn == chess.WHITE and self.player_color == chess.WHITE else 'Your (Black)' if self.board.turn == chess.BLACK and self.player_color == chess.BLACK else 'Bot (White)' if self.board.turn == chess.WHITE else 'Bot (Black)'}**"
+
+        # Add check indicator
+        check_indicator = ""
+        if self.board.is_check():
+            check_indicator = " **Check!**"
+
+        return f"{title}\n\n{status}{check_indicator}\n{turn_indicator}"
+
+    async def check_game_over(self, source: Union[discord.Interaction, discord.TextChannel, discord.abc.Messageable]) -> bool:
+        """Checks if the game has ended and updates the message."""
+        outcome = self.board.outcome()
+        if outcome:
+            await self.disable_all_buttons()
+            winner_text = ""
+            if outcome.winner == chess.WHITE:
+                winner = self.player if self.player_color == chess.WHITE else "Bot"
+                winner_text = f"{winner} (White) wins!"
+            elif outcome.winner == chess.BLACK:
+                winner = self.player if self.player_color == chess.BLACK else "Bot"
+                winner_text = f"{winner} (Black) wins!"
+            else:
+                winner_text = "It's a draw!"
+
+            termination_reason = outcome.termination.name.replace("_", " ").title()
+            final_message = f"{self.get_board_message('Game Over!')}\n\n**Result: {winner_text} by {termination_reason}**"
+
+            # Try to edit the original message
+            edit_success = False
+            if isinstance(source, discord.Interaction) and not source.is_expired():
+                 try:
+                     await source.response.edit_message(content=final_message, view=self)
+                     edit_success = True
+                 except (discord.InteractionResponded, discord.NotFound, discord.Forbidden):
+                     pass # Fallback below
+
+            if not edit_success and self.message:
+                 try:
+                     await self.message.edit(content=final_message, view=self)
+                 except (discord.NotFound, discord.Forbidden):
+                     # If editing fails, try sending a new message
+                     try:
+                         if isinstance(source, discord.abc.Messageable): # Check if source can send messages
+                             await source.send(final_message)
+                         elif self.message: # Fallback to original message channel
+                             await self.message.channel.send(final_message)
+                     except discord.Forbidden:
+                         print("ChessBotView: Cannot send final game message due to permissions.")
+            elif not edit_success and isinstance(source, discord.abc.Messageable): # If no self.message, try source
+                 try:
+                     await source.send(final_message)
+                 except discord.Forbidden:
+                     print("ChessBotView: Cannot send final game message due to permissions.")
+
+
+            await self.stop_engine() # Ensure engine is closed
+            self.stop()
+            return True
+        return False
+
+    async def disable_all_buttons(self):
+        for item in self.children:
+            if isinstance(item, ui.Button):
+                item.disabled = True
+        # Update the view on the message if possible
+        if self.message:
+            try:
+                # Don't pass interaction here, just edit the message state
+                await self.message.edit(view=self)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass # Ignore if message is gone or cannot be edited
+
+    async def stop_engine(self):
+        """Safely quits the chess engine."""
+        if self.engine:
+            try:
+                await self.engine.quit()
+                print("Stockfish engine quit successfully.")
+            except (chess.engine.EngineError, BrokenPipeError, Exception) as e:
+                print(f"Error quitting Stockfish engine: {e}")
+            finally:
+                self.engine = None
+
+    async def on_timeout(self):
+        if not self.is_finished(): # Only act if not already stopped (e.g., by game end)
+            await self.disable_all_buttons()
+            timeout_msg = f"Chess game for {self.player.mention} timed out."
+            if self.message:
+                try:
+                    await self.message.edit(content=timeout_msg, view=self)
+                except (discord.NotFound, discord.Forbidden):
+                    pass
+            await self.stop_engine()
+            self.stop() # Ensure the view itself is stopped
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: ui.Item):
+        print(f"Error in ChessBotView interaction: {error}")
+        await interaction.response.send_message(f"An error occurred: {error}", ephemeral=True)
+        await self.stop_engine()
+        self.stop()
+
+# --- Chess Bot Game --- END
+
 class GamesCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Store instances of bot Tic-Tac-Toe games
-        self.ttt_games = {}
+        # Store active bot game views to manage engine resources
+        self.active_chess_bot_views = {} # Store by message ID
+
+    async def cog_unload(self):
+        """Clean up resources when the cog is unloaded."""
+        print("Unloading GamesCog, closing active chess engines...")
+        # Create a copy of the dictionary items to avoid runtime errors during iteration
+        views_to_stop = list(self.active_chess_bot_views.values())
+        for view in views_to_stop:
+            await view.stop_engine()
+            view.stop() # Stop the view itself
+        self.active_chess_bot_views.clear()
+        print("GamesCog unloaded.")
 
     @app_commands.command(name="coinflipbet", description="Challenge another user to a coin flip game.")
     @app_commands.describe(
@@ -913,8 +1301,68 @@ class GamesCog(commands.Cog):
         initial_message = f"Chess: {initiator.mention} (White) vs {opponent.mention} (Black)\n\nTurn: **{initiator.mention}** (White)"
         await interaction.response.send_message(initial_message, view=view)
         message = await interaction.original_response()
-        view.message = message  # Store message for timeout handling
-        
+        view.message = message
+
+    @app_commands.command(name="chessbot", description="Play chess against the bot.")
+    @app_commands.describe(
+        color="Choose your color (default: White).",
+        variant="Choose the chess variant (default: Standard).",
+        skill_level="Bot skill level (0=Easy - 20=Hard, default: 10).",
+        think_time="Bot thinking time per move in seconds (0.1 - 5.0, default: 1.0)."
+    )
+    @app_commands.choices(
+        color=[
+            app_commands.Choice(name="White", value="white"),
+            app_commands.Choice(name="Black", value="black"),
+        ],
+        variant=[
+            app_commands.Choice(name="Standard", value="standard"),
+            app_commands.Choice(name="Chess960 (Fischer Random)", value="chess960"),
+            # Add more variants here as supported
+        ]
+    )
+    async def chessbot(self, interaction: discord.Interaction, color: str = "white", variant: str = "standard", skill_level: int = 10, think_time: float = 1.0):
+        """Starts a chess game against the Stockfish engine."""
+        player = interaction.user
+        player_color = chess.WHITE if color.lower() == "white" else chess.BLACK
+        variant = variant.lower() # Ensure lowercase for consistency
+
+        # Validate inputs
+        skill_level = max(0, min(20, skill_level))
+        think_time = max(0.1, min(5.0, think_time))
+
+        # Check if variant is supported (currently standard and chess960)
+        supported_variants = ["standard", "chess960"]
+        if variant not in supported_variants:
+            await interaction.response.send_message(f"Sorry, the variant '{variant}' is not currently supported. Choose from: {', '.join(supported_variants)}", ephemeral=True)
+            return
+
+        view = ChessBotView(player, player_color, variant, skill_level, think_time)
+
+        # Start the engine asynchronously (now handles variant setup)
+        await view.start_engine()
+        if view.engine is None:
+             # Error message already sent by start_engine or will be handled if message exists
+             await interaction.response.send_message("Failed to initialize the chess engine. Cannot start game.", ephemeral=True)
+             return # Stop if engine failed
+
+        # Determine initial message based on who moves first
+        initial_status = "Your turn." if player_color == chess.WHITE else "Bot is thinking..."
+        initial_message = view.get_board_message(initial_status)
+
+        await interaction.response.send_message(initial_message, view=view)
+        message = await interaction.original_response()
+        view.message = message
+        self.active_chess_bot_views[message.id] = view # Track the view
+
+        # If bot is black, make its first move
+        if player_color == chess.WHITE:
+            pass # Player (White) moves first
+        else:
+            await view.make_bot_move() # Bot (White) moves first
+
+    # --- Prefix Commands ---
+
     @commands.command(name="coinflipbet")
     async def coinflipbet_prefix(self, ctx: commands.Context, opponent: discord.Member):
         """Initiates a coin flip game against another user."""
@@ -1059,10 +1507,7 @@ class GamesCog(commands.Cog):
     async def chess_prefix(self, ctx: commands.Context, opponent: discord.Member):
         """Start a game of chess with another user."""
         initiator = ctx.author
-
-        if opponent == initiator:
-            await ctx.send("You cannot challenge yourself!")
-            return
+        
         if opponent.bot:
             await ctx.send("You cannot challenge a bot!")
             return
@@ -1071,8 +1516,92 @@ class GamesCog(commands.Cog):
         view = ChessView(initiator, opponent)
         initial_message = f"Chess: {initiator.mention} (White) vs {opponent.mention} (Black)\n\nTurn: **{initiator.mention}** (White)"
         message = await ctx.send(initial_message, view=view)
-        view.message = message  # Store message for timeout handling
+        view.message = message
+
+    @commands.command(name="chessbot")
+    async def chessbot_prefix(self, ctx: commands.Context, color: str = "white", variant: str = "standard", skill_level: int = 10, think_time: float = 1.0):
+        """Play chess against the bot. Usage: !chessbot [white|black] [standard|chess960] [skill 0-20] [time 0.1-5.0]"""
+        player = ctx.author
+        player_color = chess.WHITE if color.lower() == "white" else chess.BLACK
+        variant = variant.lower() # Ensure lowercase
+
+        # Validate inputs
+        skill_level = max(0, min(20, skill_level))
+        think_time = max(0.1, min(5.0, think_time))
+
+        # Check if variant is supported
+        supported_variants = ["standard", "chess960"]
+        if variant not in supported_variants:
+            await ctx.send(f"Sorry, the variant '{variant}' is not currently supported. Choose from: {', '.join(supported_variants)}")
+            return
+
+        view = ChessBotView(player, player_color, variant, skill_level, think_time)
+
+        # Start the engine asynchronously (now handles variant setup)
+        await view.start_engine()
+        if view.engine is None:
+             await ctx.send("Failed to initialize the chess engine. Cannot start game.")
+             return # Stop if engine failed
+
+        # Determine initial message based on who moves first
+        initial_status = "Your turn." if player_color == chess.WHITE else "Bot is thinking..."
+        initial_message = view.get_board_message(initial_status)
+
+        message = await ctx.send(initial_message, view=view)
+        view.message = message
+        self.active_chess_bot_views[message.id] = view # Track the view
+
+        # If bot is black, make its first move
+        if player_color == chess.WHITE:
+            pass # Player (White) moves first
+        else:
+            await view.make_bot_move() # Bot (White) moves first
+
+    # Listener to remove views from tracking when they stop (timeout or game end)
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        # Check if the interaction is from a view associated with a message we track
+        if interaction.message and interaction.message.id in self.active_chess_bot_views:
+            view = self.active_chess_bot_views[interaction.message.id]
+            # If the view is finished, remove it from tracking
+            if view.is_finished():
+                await view.stop_engine() # Ensure engine is stopped
+                del self.active_chess_bot_views[interaction.message.id]
+                print(f"Removed finished ChessBotView for message {interaction.message.id}")
+
+    # Add a listener for message deletion to clean up views/engines
+    @commands.Cog.listener()
+    async def on_message_delete(self, message: discord.Message):
+        if message.id in self.active_chess_bot_views:
+            print(f"Chess game message {message.id} deleted. Stopping associated view and engine.")
+            view = self.active_chess_bot_views.pop(message.id)
+            await view.stop_engine()
+            view.stop()
+
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(GamesCog(bot))
-    print("GamesCog loaded successfully.")
+    # Ensure the chess library is available
+    try:
+        import chess
+        import chess.engine
+        # Check version if needed, e.g., for specific features
+        # if chess.__version__ < '1.9.0':
+        #     print("Warning: 'python-chess' version might be too old for some features.")
+    except ImportError:
+        print("Error: 'python-chess' library not found. Please install it (`pip install python-chess`) to use chess features.")
+        return # Prevent loading cog if dependency missing
+
+    # Check for Stockfish executable before adding cog
+    try:
+        get_stockfish_path() # This will raise FileNotFoundError or OSError if not found/configured
+        await bot.add_cog(GamesCog(bot))
+        print("GamesCog loaded successfully with Stockfish.")
+    except (FileNotFoundError, OSError) as e:
+        print(f"Error loading GamesCog: {e}. Chess bot features will be unavailable.")
+        # Optionally load the cog without chessbot features, or prevent loading entirely
+        # Example: Load anyway, but chessbot commands will fail gracefully if engine isn't found later
+        # await bot.add_cog(GamesCog(bot))
+        # print("GamesCog loaded, but Stockfish engine not found. Chess bot commands will fail.")
+
+    # Note: If you choose to load the cog even without Stockfish,
+    # the `chessbot` commands should handle the `view.engine is None` case gracefully.
