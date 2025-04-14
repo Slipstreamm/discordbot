@@ -871,24 +871,25 @@ class ChessView(ui.View):
         return message
 
     async def end_game(self, interaction: discord.Interaction, message_content: str):
-        """Ends the game, disables buttons, and updates the message."""
+        """Ends the game, disables buttons, stops the engine, and updates the message."""
         await self.disable_all_buttons()
-        board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.current_player == self.white_player)) # Show final board
+        await self.stop_engine()  # Ensure engine is closed before stopping view
 
-        # Use followup if interaction was deferred (likely from modal or resign)
+        board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.player_color == chess.WHITE))
+
         try:
             if interaction.response.is_done():
-                await interaction.edit_original_response(content=message_content, attachments=[board_image], view=self)
+                # If interaction was already responded to, use followup
+                await interaction.followup.send(content=message_content, file=board_image)
             else:
-                # This case might happen if end_game is called directly without deferral (less likely now)
+                # Edit the interaction response if still valid
                 await interaction.response.edit_message(content=message_content, attachments=[board_image], view=self)
-        except (discord.NotFound, discord.HTTPException) as e:
-             print(f"ChessView: Failed to edit message on game end: {e}")
-             # Attempt to send a new message if editing failed
-             try:
-                 await interaction.channel.send(content=message_content, files=[board_image])
-             except discord.Forbidden:
-                 print("ChessView: Missing permissions to send final game message.")
+        except discord.NotFound:
+            # If the original message is gone, send a new message
+            if interaction.channel:
+                await interaction.channel.send(content=message_content, file=board_image)
+        except Exception as e:
+            print(f"ChessBotView: Failed to edit or send game end message: {e}")
 
         self.stop()
 
