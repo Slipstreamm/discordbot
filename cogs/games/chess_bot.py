@@ -5,8 +5,8 @@ import random
 import asyncio
 from typing import Optional, List, Union
 import chess
-import chess.engine
 import chess.pgn
+import chess.engine # Ensure this import exists
 import platform
 import os
 from PIL import Image, ImageDraw, ImageFont
