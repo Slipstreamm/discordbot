@@ -2001,6 +2001,44 @@ class GamesCog(commands.Cog):
                 await view.stop_engine()
                 view.stop()
 
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        """Listener to handle chess moves in the format 'mv e4' or 'mv Nf4'."""
+        if message.author.bot:
+            return
+
+        # Check if the message starts with 'mv '
+        if message.content.startswith("mv "):
+            move_text = message.content[3:].strip()
+            ctx = await self.bot.get_context(message)
+
+            # Ensure the command is part of an active chess game
+            if ctx.command and ctx.command.name == "chess":
+                view: ChessView = ctx.view
+
+                if not view or not isinstance(view, ChessView):
+                    await message.channel.send("No active chess game found.", delete_after=5)
+                    return
+
+                # Parse and validate the move
+                try:
+                    move = view.board.parse_san(move_text)
+                    if not view.board.is_legal(move):
+                        await message.channel.send(f"Illegal move: '{move_text}' is not valid in the current position.", delete_after=5)
+                        return
+                except ValueError:
+                    await message.channel.send(f"Invalid move format: '{move_text}'. Use algebraic notation (e.g., Nf3, e4, O-O).", delete_after=5)
+                    return
+
+                # Process the move
+                await view.handle_move(ctx, move)
+
+                # Delete the user's message
+                try:
+                    await message.delete()
+                except (discord.Forbidden, discord.NotFound):
+                    pass
+
 async def setup(bot: commands.Bot):
     # Ensure necessary libraries are available
     try:
