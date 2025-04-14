@@ -991,10 +991,9 @@ class ChessBotView(ui.View):
             await self.engine.setoption(options)
             print("[Debug] Configuration successful.")
 
-            # Set position using the async protocol's position method
-            print("[Debug] Setting engine position using protocol.position (async)...")
-            #await self.engine.position(self.board) # Use await
-            print("[Debug] Position set successfully.")
+            # Position is set implicitly when calling play/analyse or explicitly via send_command
+            # No explicit position call needed here.
+            print("[Debug] Engine configured. Position will be set on first play/analyse call.")
 
             print(f"Stockfish engine configured for {self.variant} with skill level {self.skill_level}.")
 
@@ -1098,9 +1097,8 @@ class ChessBotView(ui.View):
 
         self.is_thinking = True
         try:
-            # Ensure the engine has the latest board state using the async position method
-            print("[Debug] Setting position before play (async)...")
-            await self.engine.position(self.board) # Use await
+            # Position is set implicitly by the play method when passed the board
+            # No explicit position call needed here.
 
             # Use the protocol's play method (ASYNC)
             print("[Debug] Awaiting engine.play...")
