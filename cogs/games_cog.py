@@ -905,8 +905,7 @@ class ChessBotView(ui.View):
         self.bot_color = not player_color
         self.variant = variant.lower()
         self.message: Optional[discord.Message] = None
-        self.protocol: Optional[chess.engine.UciProtocol] = None # Renamed from engine
-        self.transport: Optional[chess.engine.BaseTransport] = None
+        self.engine: Optional[chess.engine.SimpleEngine] = None # Use SimpleEngine wrapper
         self.skill_level = max(0, min(20, skill_level)) # Clamp skill level
         self.think_time = max(0.1, min(5.0, think_time)) # Clamp think time
         self.is_thinking = False # Flag to prevent interaction during bot's turn
@@ -946,6 +945,9 @@ class ChessBotView(ui.View):
             if view.engine is None:
                  await interaction.response.send_message("The engine is not running.", ephemeral=True)
                  return
+            if view.is_thinking: # Added check here as well
+                await interaction.response.send_message("The bot is thinking, please wait.", ephemeral=True)
+                return
 
             # Open the modal for move input
             await interaction.response.send_modal(MoveInputModal(game_view=view))
@@ -968,44 +970,39 @@ class ChessBotView(ui.View):
         """Initializes the Stockfish engine using SimpleEngine."""
         try:
             stockfish_path = get_stockfish_path()
-            print(f"Attempting to start Stockfish from: {stockfish_path}")
+            print(f"Attempting to start Stockfish engine from: {stockfish_path}")
 
-            # Use the async popen_uci to get transport and protocol
-            self.transport, self.protocol = await chess.engine.popen_uci(stockfish_path)
-            print(f"Stockfish process opened via popen_uci. Transport: {self.transport}, Protocol Type: {type(self.protocol)}")
+            # Use SimpleEngine.popen_uci for easier management
+            self.engine = await chess.engine.SimpleEngine.popen_uci(stockfish_path)
+            print(f"Stockfish engine process opened via SimpleEngine.popen_uci. Engine type: {type(self.engine)}")
 
-            # --- Add Check ---
-            if self.protocol is None:
-                # This shouldn't happen if popen_uci succeeds without error, but good to check.
-                raise chess.engine.EngineError("popen_uci returned None for protocol unexpectedly.")
-            # -----------------
-
-            # It seems popen_uci implicitly handles the UCI handshake.
-            # The explicit call to self.protocol.initialize() was causing the 'engine already initialized' error.
-            # We can proceed directly to configuration.
-            print("Stockfish handshake likely completed implicitly by popen_uci.")
-
-            # Configure Stockfish options
-            print("Configuring Stockfish...")
+            # Configure Stockfish options using the engine wrapper
+            print("Configuring Stockfish engine...")
             options = {"Skill Level": self.skill_level}
             if self.variant == "chess960":
                 options["UCI_Chess960"] = "true"
-            await self.protocol.configure(options)
+            await self.engine.configure(options)
 
-            # Set position (handles standard and Chess960)
-            await self.protocol.position(self.board)
+            # Set position using the engine wrapper (handles standard and Chess960 FEN)
+            await self.engine.position(self.board)
 
-            print(f"Stockfish protocol configured for {self.variant} with skill level {self.skill_level}.")
+            print(f"Stockfish engine configured for {self.variant} with skill level {self.skill_level}.")
         except (FileNotFoundError, OSError, chess.engine.EngineError, Exception) as e:
-            print(f"Failed to start Stockfish engine/protocol: {e}")
-            self.protocol = None # Ensure protocol is None if failed
-            # Optionally notify the user in the channel if the message exists
+            print(f"Failed to start or configure Stockfish engine: {e}")
+            await self.stop_engine() # Ensure cleanup if init fails
+            self.engine = None # Ensure engine is None if failed
+            # Notify the user in the channel if the message exists
             if self.message:
                 try:
-                    await self.message.channel.send(f"Error: Could not start the chess engine. {e}")
-                except discord.Forbidden:
+                    # Use followup if interaction is available and not done
+                    if hasattr(self, '_interaction') and self._interaction and not self._interaction.response.is_done():
+                         await self._interaction.followup.send(f"Error: Could not start the chess engine: {e}", ephemeral=True)
+                    else:
+                         await self.message.channel.send(f"Error: Could not start the chess engine: {e}")
+                except (discord.Forbidden, discord.HTTPException):
                     pass # Can't send message
-            self.stop() # Stop the view if engine fails
+            if not self.is_finished():
+                self.stop() # Stop the view if engine fails and view hasn't already stopped
 
     async def handle_player_move(self, interaction: discord.Interaction, move: chess.Move):
         """Handles the player's validated legal move."""
@@ -1028,16 +1025,17 @@ class ChessBotView(ui.View):
 
     async def make_bot_move(self):
         """Lets the Stockfish engine make a move."""
-        if self.protocol is None or self.board.turn != self.bot_color or self.is_thinking or self.is_finished(): # Changed engine to protocol
+        if self.engine is None or self.board.turn != self.bot_color or self.is_thinking or self.is_finished():
             return # Engine not ready, not bot's turn, already thinking, or game ended
 
         self.is_thinking = True
         try:
-            # Ensure the engine has the latest board state
-            await self.protocol.position(self.board) # Changed engine to protocol
+            # Ensure the engine has the latest board state (SimpleEngine handles this implicitly or via position)
+            # It's generally safe to call position again before play if unsure
+            await self.engine.position(self.board)
 
-            # The play method is already async, no need for to_thread
-            result = await self.protocol.play( # Changed engine to protocol
+            # Use the engine's play method
+            result = await self.engine.play(
                 self.board,
                 chess.engine.Limit(time=self.think_time)
             )
@@ -1056,27 +1054,33 @@ class ChessBotView(ui.View):
                 if outcome:
                     # Need a way to update the message; use self.message if available
                     if self.message:
+                         # Pass the message object directly to end_game
                          await self.end_game(self.message, self.get_game_over_message(outcome))
                     else: # Should not happen if game started correctly
                          print("ChessBotView Error: Cannot end game after bot move, self.message is None.")
-                    return
+                    return # Important: return after ending the game
 
                 # Update message for player's turn
-                if self.message:
+                if self.message and not self.is_finished(): # Check if view is still active
                     await self.update_message(self.message, status_prefix="Your turn.")
             else:
-                 print("ChessBotView: Engine returned no bestmove.")
-                 if self.message:
+                 print("ChessBotView: Engine returned no best move (result.move is None).")
+                 if self.message and not self.is_finished():
                      await self.update_message(self.message, status_prefix="Bot failed to find a move. Your turn?")
 
-        except (chess.engine.EngineError, Exception) as e:
+        except (chess.engine.EngineError, chess.engine.EngineTerminatedError, Exception) as e:
             print(f"Error during bot move analysis: {e}")
-            if self.message:
+            if self.message and not self.is_finished():
                  try:
                      # Try to inform the user about the error
-                     await self.update_message(self.message, status_prefix=f"Error during bot move: {e}. Your turn.")
+                     await self.update_message(self.message, status_prefix=f"Error during bot move: {e}. Your turn?")
                  except: pass # Ignore errors editing message here
+            # Consider stopping the game if the engine has issues
+            await self.stop_engine()
+            if not self.is_finished():
+                self.stop() # Stop the view as well
         finally:
+            # Ensure is_thinking is reset even if errors occur or game ends mid-thought
             self.is_thinking = False
 
     # --- Message and State Management ---
@@ -1142,34 +1146,48 @@ class ChessBotView(ui.View):
         if self.is_finished(): return # Avoid double execution
 
         await self.disable_all_buttons()
-        await self.stop_engine() # Ensure engine is closed
+        await self.disable_all_buttons()
+        await self.stop_engine() # Ensure engine is closed before stopping view
 
         board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.player_color == chess.WHITE)) # Show final board
 
+        # Use a consistent way to get the interaction or message object
+        target_message = None
+        interaction = None
+        if isinstance(interaction_or_message, discord.Interaction):
+            interaction = interaction_or_message
+            # Try to get the original message if possible, otherwise use interaction context
+            try:
+                target_message = await interaction.original_response()
+            except discord.NotFound:
+                 target_message = None # Fallback below
+        elif isinstance(interaction_or_message, discord.Message):
+            target_message = interaction_or_message
+
         try:
-            if isinstance(interaction_or_message, discord.Interaction):
-                if interaction_or_message.response.is_done():
-                    await interaction_or_message.edit_original_response(content=message_content, attachments=[board_image], view=self)
-                else:
-                    await interaction_or_message.response.edit_message(content=message_content, attachments=[board_image], view=self)
-            elif isinstance(interaction_or_message, discord.Message):
-                 await interaction_or_message.edit(content=message_content, attachments=[board_image], view=self)
+            if interaction and interaction.response.is_done():
+                 # If interaction was deferred or responded to, edit original response
+                 await interaction.edit_original_response(content=message_content, attachments=[board_image], view=self)
+            elif interaction and not interaction.response.is_done():
+                 # If interaction is fresh (e.g., resign button directly), edit its message
+                 await interaction.response.edit_message(content=message_content, attachments=[board_image], view=self)
+            elif target_message:
+                 # If we only have the message object (e.g., bot move leads to game end)
+                 await target_message.edit(content=message_content, attachments=[board_image], view=self)
+            else:
+                 print("ChessBotView: Could not determine message/interaction to edit for game end.")
+
         except (discord.NotFound, discord.HTTPException) as e:
              print(f"ChessBotView: Failed to edit message on game end: {e}")
-             # Attempt to send a new message if editing failed and we have a channel context
-             channel = None
-             if isinstance(interaction_or_message, discord.Interaction):
-                 channel = interaction_or_message.channel
-             elif isinstance(interaction_or_message, discord.Message):
-                 channel = interaction_or_message.channel
-
+             # Attempt to send a new message if editing failed
+             channel = target_message.channel if target_message else (interaction.channel if interaction else None)
              if channel:
                  try:
                      await channel.send(content=message_content, files=[board_image])
                  except discord.Forbidden:
                      print("ChessBotView: Missing permissions to send final game message.")
 
-        self.stop() # Stop the view itself
+        self.stop() # Stop the view itself AFTER attempting message update
 
     async def disable_all_buttons(self):
         for item in self.children:
@@ -1178,28 +1196,17 @@ class ChessBotView(ui.View):
         # Don't edit the message here, let end_game or on_timeout handle the final update
 
     async def stop_engine(self):
-        """Safely quits the chess engine protocol and closes the transport."""
-        # First, try to quit the engine via UCI protocol
-        if self.protocol:
-            protocol_to_stop = self.protocol
-            self.protocol = None # Set to None immediately to prevent further use
+        """Safely quits the chess engine using SimpleEngine."""
+        if self.engine:
+            engine_to_stop = self.engine
+            self.engine = None # Set to None immediately to prevent further use
             try:
-                await protocol_to_stop.quit()
-                print("Stockfish protocol quit command sent successfully.")
-            except (chess.engine.EngineError, BrokenPipeError, Exception) as e:
-                # BrokenPipeError can happen if engine process already terminated
-                if not isinstance(e, BrokenPipeError):
-                     print(f"Error sending quit command to Stockfish protocol: {e}")
-
-        # Regardless of protocol quit success, close the transport
-        if self.transport:
-            transport_to_close = self.transport
-            self.transport = None # Set to None immediately
-            try:
-                transport_to_close.close()
-                print("Stockfish transport closed successfully.")
-            except Exception as e:
-                print(f"Error closing Stockfish transport: {e}")
+                await engine_to_stop.quit()
+                print("Stockfish engine quit command sent successfully via SimpleEngine.")
+            except (chess.engine.EngineError, chess.engine.EngineTerminatedError, Exception) as e:
+                # EngineTerminatedError can happen if engine process already terminated
+                print(f"Error quitting Stockfish engine: {e}")
+            # SimpleEngine manages transport closure internally when quit() is called or it's garbage collected.
 
     async def on_timeout(self):
         if not self.is_finished(): # Only act if not already stopped
@@ -1575,12 +1582,16 @@ class GamesCog(commands.Cog):
         view = ChessBotView(player, player_color, variant_str, skill_level, think_time)
 
         # Start the engine asynchronously
+        # Store interaction temporarily for potential error reporting during init
+        view._interaction = interaction
         await view.start_engine()
+        del view._interaction # Remove temporary attribute
+
         if view.engine is None or view.is_finished(): # Check if engine failed or view stopped during init
              # Error message should have been sent by start_engine or view stopped itself
              # Ensure we don't try to send another response if already handled
-             if not interaction.is_done():
-                 await interaction.followup.send("Failed to initialize the chess engine. Cannot start game.", ephemeral=True)
+             # No need to send another message here, start_engine handles it.
+             print("ChessBotView: Engine failed to start, stopping command execution.")
              return # Stop if engine failed
 
         # Determine initial message based on who moves first
@@ -1782,9 +1793,14 @@ class GamesCog(commands.Cog):
 
         view = ChessBotView(player, player_color, variant_str, skill_level, think_time)
 
+        # Store context temporarily for potential error reporting during init
+        view.message = thinking_msg # Store message early for error reporting
         await view.start_engine()
-        if view.engine is None or view.is_finished(): # Changed back to engine
-             await thinking_msg.edit(content="Failed to initialize the chess engine. Cannot start game.")
+
+        if view.engine is None or view.is_finished():
+             # start_engine should have edited the message or logged error
+             print("ChessBotView (Prefix): Engine failed to start, stopping command execution.")
+             # No need to edit thinking_msg again here if start_engine failed
              return
 
         initial_status_prefix = "Your turn." if player_color == chess.WHITE else "Bot is thinking..."
