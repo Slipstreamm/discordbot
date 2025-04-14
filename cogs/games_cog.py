@@ -838,7 +838,9 @@ class GamesCog(commands.Cog):
         view = RockPaperScissorsView(initiator, opponent)
         initial_message = f"Rock Paper Scissors: {initiator.mention} vs {opponent.mention}\n\nChoose your move!"
         message = await ctx.send(initial_message, view=view)
-        view.message = message    @commands.command(name="rps")
+        view.message = message
+    
+    @commands.command(name="rps")
     async def rps_prefix(self, ctx: commands.Context, choice: str):
         """Play Rock-Paper-Scissors against the bot."""
         choices = ["Rock", "Paper", "Scissors"]
