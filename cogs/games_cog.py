@@ -968,29 +968,89 @@ class ChessBotView(ui.View):
 
     async def start_engine(self):
         """Initializes the Stockfish engine using SimpleEngine."""
+        engine = None # Initialize engine variable
         try:
             stockfish_path = get_stockfish_path()
-            print(f"Attempting to start Stockfish engine from: {stockfish_path}")
+            print(f"[Debug] OS: {platform.system()}, Path used: {stockfish_path}") # Add debug print
 
             # Use SimpleEngine.popen_uci for easier management (this part IS async)
-            self.engine = await chess.engine.SimpleEngine.popen_uci(stockfish_path)
-            print(f"Stockfish engine process opened via SimpleEngine.popen_uci. Engine type: {type(self.engine)}")
+            print("[Debug] Awaiting chess.engine.SimpleEngine.popen_uci...")
+            engine = await chess.engine.SimpleEngine.popen_uci(stockfish_path)
+            print(f"[Debug] popen_uci successful. Engine type: {type(engine)}")
+            self.engine = engine # Assign to self.engine only after success
 
             # Configure Stockfish options using the engine wrapper (these are SYNC)
-            print("Configuring Stockfish engine...")
+            print("[Debug] Configuring engine...")
             options = {"Skill Level": self.skill_level}
             if self.variant == "chess960":
                 options["UCI_Chess960"] = "true"
             self.engine.configure(options)
+            print("[Debug] Configuration successful.")
 
             # Set position using the engine wrapper (SYNC)
+            print("[Debug] Setting engine position...")
             self.engine.position(self.board)
+            print("[Debug] Position set successfully.")
 
             print(f"Stockfish engine configured for {self.variant} with skill level {self.skill_level}.")
-        except (FileNotFoundError, OSError, chess.engine.EngineError, Exception) as e:
-            print(f"Failed to start or configure Stockfish engine: {e}")
-            await self.stop_engine() # Ensure cleanup if init fails
+
+        except FileNotFoundError as e:
+             print(f"[Error] Stockfish executable not found: {e}")
+             self.engine = None
+             # Notify the user in the channel if the message exists
+             if self.message:
+                 # ... (rest of existing error handling for this block)
+                 try:
+                     if hasattr(self, '_interaction') and self._interaction and not self._interaction.response.is_done():
+                          await self._interaction.followup.send(f"Error: Could not start the chess engine: {e}", ephemeral=True)
+                     else:
+                          await self.message.channel.send(f"Error: Could not start the chess engine: {e}")
+                 except (discord.Forbidden, discord.HTTPException):
+                     pass
+             if not self.is_finished(): self.stop()
+        except OSError as e:
+             print(f"[Error] OS error during engine start: {e}")
+             self.engine = None
+             # Notify the user in the channel if the message exists
+             if self.message:
+                 # ... (rest of existing error handling for this block)
+                 try:
+                     if hasattr(self, '_interaction') and self._interaction and not self._interaction.response.is_done():
+                          await self._interaction.followup.send(f"Error: Could not start the chess engine: {e}", ephemeral=True)
+                     else:
+                          await self.message.channel.send(f"Error: Could not start the chess engine: {e}")
+                 except (discord.Forbidden, discord.HTTPException):
+                     pass
+             if not self.is_finished(): self.stop()
+        except chess.engine.EngineError as e:
+             print(f"[Error] Chess engine error during start/config: {e}")
+             if engine: # Try to quit if engine object exists but failed later
+                 try: engine.quit()
+                 except: pass
+             self.engine = None
+             # Notify the user in the channel if the message exists
+             if self.message:
+                 # ... (rest of existing error handling for this block)
+                 try:
+                     if hasattr(self, '_interaction') and self._interaction and not self._interaction.response.is_done():
+                          await self._interaction.followup.send(f"Error: Could not start the chess engine: {e}", ephemeral=True)
+                     else:
+                          await self.message.channel.send(f"Error: Could not start the chess engine: {e}")
+                 except (discord.Forbidden, discord.HTTPException):
+                     pass
+             if not self.is_finished(): self.stop()
+        except Exception as e:
+            # Catch the specific error if possible, otherwise print generic
+            print(f"[Error] Unexpected error during engine start: {e}")
+            print(f"[Debug] Type of error: {type(e)}") # Print the type of the exception
+            if "can't be used in 'await' expression" in str(e):
+                 print("[Debug] Caught the specific 'await' expression error.")
+            if engine: # Try to quit if engine object exists but failed later
+                 try: engine.quit()
+                 except: pass
             self.engine = None # Ensure engine is None if failed
+            # Keep existing error handling below
+            # await self.stop_engine() # Redundant as self.engine is None, stop_engine checks this
             # Notify the user in the channel if the message exists
             if self.message:
                 try:
