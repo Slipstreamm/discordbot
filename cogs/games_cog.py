@@ -4,6 +4,7 @@ from discord import app_commands, ui
 import random
 import asyncio
 from typing import Optional, List
+import chess  # Added chess module import
 
 class CoinFlipView(ui.View):
     def __init__(self, initiator: discord.Member, opponent: discord.Member):
@@ -503,6 +504,167 @@ class RockPaperScissorsView(ui.View):
 
 # --- Rock Paper Scissors Challenge --- END
 
+# --- Chess Game --- START
+
+class ChessButton(ui.Button['ChessView']):
+    def __init__(self, x: int, y: int, piece: str = None):
+        # Unicode chess pieces
+        self.pieces = {
+            'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚', 'p': '♟',
+            'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔', 'P': '♙',
+            None: ' '
+        }
+        self.x = x
+        self.y = y
+        self.piece = piece
+        
+        # Set button style and label based on square color
+        is_dark = (x + y) % 2 != 0
+        style = discord.ButtonStyle.secondary if is_dark else discord.ButtonStyle.primary
+        super().__init__(style=style, label=self.pieces.get(piece, ' '), row=y)
+
+    async def callback(self, interaction: discord.Interaction):
+        assert self.view is not None
+        view: ChessView = self.view
+        
+        # Check if it's the correct player's turn
+        if interaction.user != view.current_player:
+            await interaction.response.send_message("It's not your turn!", ephemeral=True)
+            return
+        
+        # Process the move
+        await view.handle_square_click(interaction, self.x, self.y)
+
+
+class ChessView(ui.View):
+    def __init__(self, white_player: discord.Member, black_player: discord.Member):
+        super().__init__(timeout=600.0)  # 10 minute timeout
+        self.white_player = white_player
+        self.black_player = black_player
+        self.current_player = white_player  # White starts
+        self.board = chess.Board()
+        self.message = None
+        
+        # For move input (selected square)
+        self.selected_square = None
+        
+        # Initialize the chess board with buttons
+        self.update_board_buttons()
+    
+    def update_board_buttons(self):
+        """Recreate all buttons based on current board state"""
+        self.clear_items()  # Clear all buttons
+        
+        # Create buttons for each square
+        for y in range(8):
+            for x in range(8):
+                # Convert to chess coordinates
+                square = chess.square(x, 7-y)
+                piece = self.board.piece_at(square)
+                piece_symbol = piece.symbol() if piece else None
+                self.add_item(ChessButton(x, y, piece_symbol))
+    
+    async def handle_square_click(self, interaction: discord.Interaction, x: int, y: int):
+        """Handle when a user clicks a square on the board"""
+        # Convert UI coordinates to chess coordinates
+        square = chess.square(x, 7-y)  # Chess board is 0,0 at bottom-left, our UI is 0,0 at top-left
+        
+        if self.selected_square is None:
+            # No square selected yet - select this one if it has a piece of the right color
+            piece = self.board.piece_at(square)
+            if piece is None:
+                await interaction.response.send_message("No piece at this square.", ephemeral=True)
+                return
+            
+            # Check correct color
+            is_white_piece = piece.color == chess.WHITE
+            is_white_turn = self.board.turn == chess.WHITE
+            if is_white_piece != is_white_turn:
+                await interaction.response.send_message("You can only move your own pieces.", ephemeral=True)
+                return
+            
+            # Select this square
+            self.selected_square = square
+            await interaction.response.send_message(f"Selected {chess.square_name(square)}.", ephemeral=True)
+        
+        else:
+            # Already have a square selected - try to make a move
+            move = chess.Move(self.selected_square, square)
+            
+            # Check for promotion
+            if self.is_pawn_promotion(self.selected_square, square):
+                move = chess.Move(self.selected_square, square, promotion=chess.QUEEN)
+            
+            # Try to make the move
+            if move in self.board.legal_moves:
+                self.board.push(move)
+                self.selected_square = None
+                
+                # Update board and switch turns
+                self.update_board_buttons()
+                self.current_player = self.black_player if self.current_player == self.white_player else self.white_player
+                
+                # Check for game end
+                status_message = ""
+                if self.board.is_checkmate():
+                    winner = self.white_player if not self.board.turn else self.black_player
+                    status_message = f"Checkmate! {winner.mention} wins! 🎉"
+                    self.stop()
+                elif self.board.is_stalemate():
+                    status_message = "Stalemate! The game is a draw. 🤝"
+                    self.stop()
+                elif self.board.is_check():
+                    status_message = "Check! "
+                
+                # Update the message
+                turn_color = "White" if self.board.turn == chess.WHITE else "Black"
+                content = f"Chess: {self.white_player.mention} (White) vs {self.black_player.mention} (Black)\n\n"
+                content += f"{status_message}Turn: **{self.current_player.mention}** ({turn_color})"
+                
+                await interaction.response.edit_message(content=content, view=self)
+            else:
+                # Invalid move
+                self.selected_square = None
+                await interaction.response.send_message("Invalid move. Try again.", ephemeral=True)
+    
+    def is_pawn_promotion(self, from_square: int, to_square: int) -> bool:
+        """Check if a move is a pawn promotion"""
+        piece = self.board.piece_at(from_square)
+        if piece is None or piece.piece_type != chess.PAWN:
+            return False
+            
+        # Check if move is to the last rank
+        to_rank = chess.square_rank(to_square)
+        return (piece.color == chess.WHITE and to_rank == 7) or \
+               (piece.color == chess.BLACK and to_rank == 0)
+    
+    async def disable_all_buttons(self):
+        for item in self.children:
+            if isinstance(item, ui.Button):
+                item.disabled = True
+                
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.NotFound:
+                pass
+            except discord.Forbidden:
+                pass
+    
+    async def on_timeout(self):
+        if self.message:
+            await self.disable_all_buttons()
+            timeout_msg = f"Chess game between {self.white_player.mention} and {self.black_player.mention} timed out."
+            try:
+                await self.message.edit(content=timeout_msg, view=self)
+            except discord.NotFound:
+                pass
+            except discord.Forbidden:
+                pass
+        self.stop()
+
+# --- Chess Game --- END
+
 class GamesCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -518,7 +680,7 @@ class GamesCog(commands.Cog):
 
         initiator = interaction.user
 
-        # --- Input Validation ---
+        # --- Input Validation --- 
         if opponent.bot:
             await interaction.response.send_message("You cannot challenge a bot!", ephemeral=True)
             return
@@ -733,6 +895,26 @@ class GamesCog(commands.Cog):
         )
         view.message = await interaction.original_response()
 
+    @app_commands.command(name="chess", description="Challenge another user to a game of chess.")
+    @app_commands.describe(opponent="The user you want to challenge.")
+    async def chess(self, interaction: discord.Interaction, opponent: discord.Member):
+        """Start a game of chess with another user."""
+        initiator = interaction.user
+
+        if opponent == initiator:
+            await interaction.response.send_message("You cannot challenge yourself!", ephemeral=True)
+            return
+        if opponent.bot:
+            await interaction.response.send_message("You cannot challenge a bot!", ephemeral=True)
+            return
+
+        # Initiator is white, opponent is black
+        view = ChessView(initiator, opponent)
+        initial_message = f"Chess: {initiator.mention} (White) vs {opponent.mention} (Black)\n\nTurn: **{initiator.mention}** (White)"
+        await interaction.response.send_message(initial_message, view=view)
+        message = await interaction.original_response()
+        view.message = message  # Store message for timeout handling
+        
     @commands.command(name="coinflipbet")
     async def coinflipbet_prefix(self, ctx: commands.Context, opponent: discord.Member):
         """Initiates a coin flip game against another user."""
@@ -872,6 +1054,24 @@ class GamesCog(commands.Cog):
             await ctx.send(f"{emojis[bot_choice]}🤜{emojis[user_choice]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
         else:
             await ctx.send(f"{emojis[user_choice]}🤝{emojis[bot_choice]}\nYou chose **{user_choice}**, and I chose **{bot_choice}**. {result}")
+
+    @commands.command(name="chess")
+    async def chess_prefix(self, ctx: commands.Context, opponent: discord.Member):
+        """Start a game of chess with another user."""
+        initiator = ctx.author
+
+        if opponent == initiator:
+            await ctx.send("You cannot challenge yourself!")
+            return
+        if opponent.bot:
+            await ctx.send("You cannot challenge a bot!")
+            return
+
+        # Initiator is white, opponent is black
+        view = ChessView(initiator, opponent)
+        initial_message = f"Chess: {initiator.mention} (White) vs {opponent.mention} (Black)\n\nTurn: **{initiator.mention}** (White)"
+        message = await ctx.send(initial_message, view=view)
+        view.message = message  # Store message for timeout handling
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GamesCog(bot))
