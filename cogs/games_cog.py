@@ -755,12 +755,13 @@ class MoveInputModal(ui.Modal, title='Enter Your Move'):
 # Removed ChessButton class (No longer used with image-based board)
 
 class ChessView(ui.View):
-    def __init__(self, white_player: discord.Member, black_player: discord.Member):
+    def __init__(self, white_player: discord.Member, black_player: discord.Member, board: Optional[chess.Board] = None):
         super().__init__(timeout=600.0)  # 10 minute timeout
         self.white_player = white_player
         self.black_player = black_player
-        self.current_player = white_player  # White starts
-        self.board = chess.Board()
+        self.board = board if board else chess.Board() # Use provided board or create new
+        # Determine current player based on board state
+        self.current_player = self.white_player if self.board.turn == chess.WHITE else self.black_player
         self.message: Optional[discord.Message] = None
         self.last_move: Optional[chess.Move] = None # Store last move for highlighting
 
@@ -989,10 +990,10 @@ class ChessBotView(ui.View):
         19: 2700, 20: 2800
     }
 
-    def __init__(self, player: discord.Member, player_color: chess.Color, variant: str = "standard", skill_level: int = 10, think_time: float = 1.0):
+    def __init__(self, player: discord.Member, player_color: chess.Color, variant: str = "standard", skill_level: int = 10, think_time: float = 1.0, board: Optional[chess.Board] = None):
         super().__init__(timeout=900.0)  # 15 minute timeout
         self.player = player
-        self.player_color = player_color
+        self.player_color = player_color # The color the human player chose to play as
         self.bot_color = not player_color
         self.variant = variant.lower()
         self.message: Optional[discord.Message] = None
@@ -1003,14 +1004,20 @@ class ChessBotView(ui.View):
         self.is_thinking = False # Flag to prevent interaction during bot's turn
         self.last_move: Optional[chess.Move] = None # Store last move for highlighting
 
-        # Initialize board based on variant
-        if self.variant == "chess960":
-            self.board = chess.Board(chess960=True)
-            # Stockfish needs the FEN for Chess960 setup
-            self.initial_fen = self.board.fen()
-        else: # Standard chess
-            self.board = chess.Board()
-            self.initial_fen = None # Not needed for standard
+        # Initialize board - Use provided board or create new based on variant
+        if board:
+            self.board = board
+            # Infer variant from loaded board
+            self.variant = "chess960" if self.board.chess960 else "standard"
+            self.initial_fen = self.board.fen() if self.variant == "chess960" else None
+        else:
+            self.variant = variant.lower()
+            if self.variant == "chess960":
+                self.board = chess.Board(chess960=True)
+                self.initial_fen = self.board.fen()
+            else: # Standard chess
+                self.board = chess.Board()
+                self.initial_fen = None
 
         # Add control buttons
         self.add_item(self.MakeMoveButton())
@@ -1409,6 +1416,32 @@ class GamesCog(commands.Cog):
         self.active_chess_bot_views = {} # Store by message ID
         self.ttt_games = {} # Store TicTacToe game instances by user ID
 
+    def _array_to_fen(self, board_array: List[List[str]], turn: chess.Color) -> str:
+        """Converts an 8x8 array representation to a basic FEN string."""
+        fen_rows = []
+        for rank_idx in range(8): # Iterate ranks 0-7 (corresponds to 8-1 in FEN)
+            rank_data = board_array[rank_idx]
+            fen_row = ""
+            empty_count = 0
+            for piece in rank_data: # Iterate files a-h
+                if piece == ".":
+                    empty_count += 1
+                else:
+                    if empty_count > 0:
+                        fen_row += str(empty_count)
+                        empty_count = 0
+                    # Validate piece character if needed, assume valid for now
+                    fen_row += piece
+            if empty_count > 0:
+                fen_row += str(empty_count)
+            fen_rows.append(fen_row)
+
+        piece_placement = "/".join(fen_rows)
+        turn_char = 'w' if turn == chess.WHITE else 'b'
+        # Default castling, no en passant, 0 halfmove, 1 fullmove for simplicity from array
+        fen = f"{piece_placement} {turn_char} - - 0 1"
+        return fen
+
     async def cog_unload(self):
         """Clean up resources when the cog is unloaded."""
         print("Unloading GamesCog, closing active chess engines...")
@@ -1778,6 +1811,153 @@ class GamesCog(commands.Cog):
         if player_color == chess.BLACK:
             # Don't await this, let it run in the background
             asyncio.create_task(view.make_bot_move())
+
+    @app_commands.command(name="loadchess", description="Load a chess game from FEN or array representation.")
+    @app_commands.describe(
+        state="FEN string or board array (e.g., [['r',...],...]).",
+        turn="Whose turn? ('white' or 'black'). Required only for array state.",
+        opponent="Challenge a user (optional, defaults to playing the bot).",
+        color="Choose your color vs bot (default: color whose turn it is).",
+        skill_level="Bot skill level (0-20, default: 10).",
+        think_time="Bot think time (0.1-5.0, default: 1.0)."
+    )
+    @app_commands.choices(
+        turn=[app_commands.Choice(name="White", value="white"), app_commands.Choice(name="Black", value="black")],
+        color=[app_commands.Choice(name="White", value="white"), app_commands.Choice(name="Black", value="black")]
+    )
+    async def loadchess(self, interaction: discord.Interaction,
+                        state: str,
+                        turn: Optional[app_commands.Choice[str]] = None,
+                        opponent: Optional[discord.Member] = None,
+                        color: Optional[app_commands.Choice[str]] = None,
+                        skill_level: int = 10,
+                        think_time: float = 1.0):
+        """Loads a chess game state and starts a view."""
+        await interaction.response.defer()
+        initiator = interaction.user
+        board = None
+        load_error = None
+
+        # Try parsing as FEN first
+        try:
+            # Basic check if it looks like FEN
+            if '/' in state and (' w ' in state or ' b ' in state):
+                board = chess.Board(fen=state)
+                print(f"[Debug] Parsed as FEN: {state}")
+            else:
+                # Try parsing as array
+                try:
+                    board_array = ast.literal_eval(state)
+                    print("[Debug] Attempting to parse as array...")
+
+                    # Validate array structure (basic check)
+                    if not isinstance(board_array, list) or len(board_array) != 8 or \
+                       not all(isinstance(row, list) and len(row) == 8 for row in board_array):
+                        raise ValueError("Invalid array structure. Must be 8x8 list.")
+
+                    if not turn:
+                        load_error = "The 'turn' parameter is required when providing a board array."
+                    else:
+                        turn_color = chess.WHITE if turn.value == "white" else chess.BLACK
+                        # Convert array to basic FEN
+                        fen = self._array_to_fen(board_array, turn_color)
+                        print(f"[Debug] Converted array to FEN: {fen}")
+                        board = chess.Board(fen=fen)
+
+                except (ValueError, SyntaxError, TypeError) as e:
+                    load_error = f"Invalid state format. Could not parse as FEN or Python list array. Error: {e}"
+                    print(f"[Error] Array parsing failed: {e}")
+                except Exception as e: # Catch other potential ast errors
+                    load_error = f"Error parsing array state: {e}"
+                    print(f"[Error] Unexpected array parsing error: {e}")
+
+
+        except ValueError as e: # Catch errors from chess.Board(fen=...)
+            load_error = f"Invalid FEN string: {e}"
+            print(f"[Error] FEN parsing failed: {e}")
+        except Exception as e: # Catch unexpected errors
+            load_error = f"An unexpected error occurred during parsing: {e}"
+            print(f"[Error] Unexpected parsing error: {e}")
+
+        if load_error:
+            await interaction.followup.send(load_error, ephemeral=True)
+            return
+        if board is None: # Should be caught by load_error, but safety check
+            await interaction.followup.send("Failed to load board state.", ephemeral=True)
+            return
+
+        # --- Game Setup ---
+        if opponent:
+            # Player vs Player
+            if opponent == initiator:
+                await interaction.followup.send("You cannot challenge yourself!", ephemeral=True)
+                return
+            if opponent.bot:
+                await interaction.followup.send("You cannot challenge a bot! Use `/chessbot` or load without opponent.", ephemeral=True)
+                return
+
+            # Determine player colors based on whose turn it is in the loaded state
+            white_player = initiator if board.turn == chess.WHITE else opponent
+            black_player = opponent if board.turn == chess.WHITE else initiator
+
+            view = ChessView(white_player, black_player, board=board) # Pass loaded board
+
+            current_player_mention = white_player.mention if board.turn == chess.WHITE else black_player.mention
+            turn_color_name = "White" if board.turn == chess.WHITE else "Black"
+            initial_status = f"Turn: **{current_player_mention}** ({turn_color_name})"
+            if board.is_check(): initial_status += " **Check!**"
+            initial_message = f"Loaded Chess Game: {white_player.mention} (White) vs {black_player.mention} (Black)\n\n{initial_status}"
+            # Determine perspective based on whose turn it is
+            perspective_white = (board.turn == chess.WHITE)
+            board_image = generate_board_image(view.board, perspective_white=perspective_white)
+
+            message = await interaction.followup.send(initial_message, file=board_image, view=view, wait=True)
+            view.message = message
+
+        else:
+            # Player vs Bot
+            player = initiator
+
+            # Determine player's chosen color, default to the color whose turn it is
+            if color:
+                player_color = chess.WHITE if color.value == "white" else chess.BLACK
+            else:
+                player_color = board.turn # Player takes the color whose turn it is
+
+            # Validate skill/time
+            skill_level = max(0, min(20, skill_level))
+            think_time = max(0.1, min(5.0, think_time))
+
+            # Determine variant based on board (Chess960 FENs are handled by chess.Board)
+            variant_str = "chess960" if board.chess960 else "standard"
+
+            view = ChessBotView(player, player_color, variant_str, skill_level, think_time, board=board) # Pass loaded board
+
+            # Start engine
+            view._interaction = interaction # For error reporting during start
+            await view.start_engine()
+            if hasattr(view, '_interaction'): # Clean up temporary attribute
+                 del view._interaction
+
+            if view.engine is None or view.is_finished():
+                print("ChessBotView (Load): Engine failed to start, stopping command execution.")
+                # Error message sent by start_engine
+                return
+
+            # Determine initial message
+            status_prefix = "Your turn." if board.turn == player_color else "Bot is thinking..."
+            initial_message_content = view.get_board_message(status_prefix)
+            # Player's perspective for the board image
+            board_image = generate_board_image(view.board, perspective_white=(player_color == chess.WHITE))
+
+            message = await interaction.followup.send(initial_message_content, file=board_image, view=view, wait=True)
+            view.message = message
+            self.active_chess_bot_views[message.id] = view
+
+            # If it's the bot's turn, trigger its move
+            if board.turn != player_color:
+                asyncio.create_task(view.make_bot_move())
+
 
     # --- Prefix Commands (Legacy Support) ---
 
