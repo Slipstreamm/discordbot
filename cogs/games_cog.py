@@ -530,7 +530,8 @@ class ChessButton(ui.Button['ChessView']):
         # Set button style and label based on square color
         is_dark = (x + y) % 2 != 0
         style = discord.ButtonStyle.secondary if is_dark else discord.ButtonStyle.primary
-        super().__init__(style=style, label=self.pieces.get(piece, ' '), row=y)
+        # REMOVED row=y parameter
+        super().__init__(style=style, label=self.pieces.get(piece, ' '))
 
     async def callback(self, interaction: discord.Interaction):
         assert self.view is not None
@@ -722,7 +723,8 @@ class ChessBotButton(ui.Button['ChessBotView']):
         is_dark = (x + y) % 2 != 0
         style = discord.ButtonStyle.secondary if is_dark else discord.ButtonStyle.primary
         label = self.pieces.get(piece_symbol, ' ') # Get piece representation or space
-        super().__init__(style=style, label=label if label != ' ' else '\u2003', row=y) # Use em-space for empty squares
+        # REMOVED row=y parameter
+        super().__init__(style=style, label=label if label != ' ' else '') # Use em-space for empty squares
 
     async def callback(self, interaction: discord.Interaction):
         assert self.view is not None
