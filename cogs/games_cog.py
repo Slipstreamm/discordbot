@@ -964,14 +964,21 @@ class ChessBotView(ui.View):
     # --- Engine and Game Logic ---
 
     async def start_engine(self):
-        """Initializes the Stockfish engine."""
-        self.transport = None # Initialize transport attribute
+        """Initializes the Stockfish engine using SimpleEngine."""
         try:
             stockfish_path = get_stockfish_path()
-            # popen_uci returns (transport, engine)
-            self.transport, self.engine = await chess.engine.popen_uci(stockfish_path)
+            print(f"Attempting to start Stockfish from: {stockfish_path}")
+
+            # SimpleEngine.popen_uci returns the engine instance directly
+            self.engine = await chess.engine.SimpleEngine.popen_uci(stockfish_path)
+            print(f"Stockfish process opened. Engine object type: {type(self.engine)}")
+
+            # Check if engine object seems valid before proceeding
+            if not hasattr(self.engine, 'configure') or not hasattr(self.engine, 'position'):
+                 raise chess.engine.EngineError(f"SimpleEngine object is missing expected methods (configure/position). Type: {type(self.engine)}")
 
             # Configure Stockfish
+            print("Configuring Stockfish...")
             options = {"Skill Level": self.skill_level}
             if self.variant == "chess960":
                 options["UCI_Chess960"] = "true"
