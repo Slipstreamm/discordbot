@@ -161,6 +161,13 @@ class Rule34Cog(commands.Cog):
             content = f"{random_result['file_url']}"
             await interaction.response.edit_message(content=content, view=self)
 
+        @discord.ui.button(label="New Message", style=discord.ButtonStyle.success)
+        async def new_message(self, interaction: discord.Interaction, button: Button):
+            random_result = random.choice(self.all_results)
+            content = f"{random_result['file_url']}"
+            await interaction.response.send_message(content, ephemeral=self.hidden)
+            await interaction.followup.send("Here's another random result!", view=self, ephemeral=self.hidden)
+
         @discord.ui.button(label="Browse Results", style=discord.ButtonStyle.secondary)
         async def browse_results(self, interaction: discord.Interaction, button: Button):
             if len(self.all_results) == 0:
@@ -182,6 +189,13 @@ class Rule34Cog(commands.Cog):
                 self.hidden = hidden
                 self.current_index = 0
 
+            @discord.ui.button(label="First", style=discord.ButtonStyle.secondary)
+            async def first(self, interaction: discord.Interaction, button: Button):
+                self.current_index = 0
+                result = self.all_results[self.current_index]
+                content = f"Result 1/{len(self.all_results)}:\n{result['file_url']}"
+                await interaction.response.edit_message(content=content, view=self)
+
             @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
             async def previous(self, interaction: discord.Interaction, button: Button):
                 if self.current_index > 0:
@@ -201,6 +215,54 @@ class Rule34Cog(commands.Cog):
                 result = self.all_results[self.current_index]
                 content = f"Result {self.current_index + 1}/{len(self.all_results)}:\n{result['file_url']}"
                 await interaction.response.edit_message(content=content, view=self)
+
+            @discord.ui.button(label="Last", style=discord.ButtonStyle.secondary)
+            async def last(self, interaction: discord.Interaction, button: Button):
+                self.current_index = len(self.all_results) - 1
+                result = self.all_results[self.current_index]
+                content = f"Result {len(self.all_results)}/{len(self.all_results)}:\n{result['file_url']}"
+                await interaction.response.edit_message(content=content, view=self)
+
+            @discord.ui.button(label="Go To", style=discord.ButtonStyle.primary)
+            async def goto(self, interaction: discord.Interaction, button: Button):
+                modal = self.GoToModal(len(self.all_results))
+                await interaction.response.send_modal(modal)
+                await modal.wait()
+                if modal.value is not None:
+                    self.current_index = modal.value - 1
+                    result = self.all_results[self.current_index]
+                    content = f"Result {modal.value}/{len(self.all_results)}:\n{result['file_url']}"
+                    await interaction.followup.edit_message(interaction.message.id, content=content, view=self)
+
+            class GoToModal(discord.ui.Modal):
+                def __init__(self, max_pages: int):
+                    super().__init__(title="Go To Page")
+                    self.value = None
+                    self.max_pages = max_pages
+                    self.page_num = discord.ui.TextInput(
+                        label=f"Page Number (1-{max_pages})",
+                        placeholder=f"Enter a number between 1 and {max_pages}",
+                        min_length=1,
+                        max_length=len(str(max_pages))
+                    )
+                    self.add_item(self.page_num)
+
+                async def on_submit(self, interaction: discord.Interaction):
+                    try:
+                        num = int(self.page_num.value)
+                        if 1 <= num <= self.max_pages:
+                            self.value = num
+                            await interaction.response.defer()
+                        else:
+                            await interaction.response.send_message(
+                                f"Please enter a number between 1 and {self.max_pages}",
+                                ephemeral=True
+                            )
+                    except ValueError:
+                        await interaction.response.send_message(
+                            "Please enter a valid number",
+                            ephemeral=True
+                        )
 
             @discord.ui.button(label="Back", style=discord.ButtonStyle.danger)
             async def back(self, interaction: discord.Interaction, button: Button):
