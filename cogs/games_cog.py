@@ -172,9 +172,6 @@ class GamesCog(commands.Cog):
         initiator = interaction.user
 
         # --- Input Validation ---
-        if opponent == initiator:
-            await interaction.response.send_message("You cannot challenge yourself!", ephemeral=True)
-            return
         if opponent.bot:
             await interaction.response.send_message("You cannot challenge a bot!", ephemeral=True)
             return
@@ -187,6 +184,48 @@ class GamesCog(commands.Cog):
         await interaction.response.send_message(initial_message, view=view)
         message = await interaction.original_response()
         view.message = message
+
+    @app_commands.command(name="coinflip", description="Flip a coin and get Heads or Tails.")
+    async def coinflip(self, interaction: discord.Interaction):
+        """Flips a coin and returns Heads or Tails."""
+        result = random.choice(["Heads", "Tails"])
+        await interaction.response.send_message(f"The coin landed on **{result}**! 🪙")
+
+    @app_commands.command(name="roll", description="Roll a dice and get a number between 1 and 6.")
+    async def roll(self, interaction: discord.Interaction):
+        """Rolls a dice and returns a number between 1 and 6."""
+        result = random.randint(1, 6)
+        await interaction.response.send_message(f"You rolled a **{result}**! 🎲")
+
+    @commands.command(name="coinflipbet")
+    async def coinflipbet_prefix(self, ctx: commands.Context, opponent: discord.Member):
+        """Initiates a coin flip game against another user (prefix version)."""
+        initiator = ctx.author
+
+        # --- Input Validation ---
+        if opponent.bot:
+            await ctx.send("You cannot challenge a bot!")
+            return
+
+        # --- Start the Game ---
+        view = CoinFlipView(initiator, opponent)
+        initial_message = f"{initiator.mention} has challenged {opponent.mention} to a coin flip game! Choose your side:"
+
+        # Send the initial message and store it in the view
+        message = await ctx.send(initial_message, view=view)
+        view.message = message
+
+    @commands.command(name="coinflip")
+    async def coinflip_prefix(self, ctx: commands.Context):
+        """Flips a coin and returns Heads or Tails (prefix version)."""
+        result = random.choice(["Heads", "Tails"])
+        await ctx.send(f"The coin landed on **{result}**! 🪙")
+
+    @commands.command(name="roll")
+    async def roll_prefix(self, ctx: commands.Context):
+        """Rolls a dice and returns a number between 1 and 6 (prefix version)."""
+        result = random.randint(1, 6)
+        await ctx.send(f"You rolled a **{result}**! 🎲")
 
 
 async def setup(bot: commands.Bot):
