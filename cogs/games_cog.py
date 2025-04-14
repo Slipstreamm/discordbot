@@ -965,9 +965,11 @@ class ChessBotView(ui.View):
 
     async def start_engine(self):
         """Initializes the Stockfish engine."""
+        self.transport = None # Initialize transport attribute
         try:
             stockfish_path = get_stockfish_path()
-            self.engine = await chess.engine.popen_uci(stockfish_path)
+            # popen_uci returns (transport, engine)
+            self.transport, self.engine = await chess.engine.popen_uci(stockfish_path)
 
             # Configure Stockfish
             options = {"Skill Level": self.skill_level}
