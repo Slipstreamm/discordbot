@@ -974,6 +974,12 @@ class ChessBotView(ui.View):
             self.transport, self.protocol = await chess.engine.popen_uci(stockfish_path)
             print(f"Stockfish process opened via popen_uci. Transport: {self.transport}, Protocol Type: {type(self.protocol)}")
 
+            # --- Add Check ---
+            if self.protocol is None:
+                # This shouldn't happen if popen_uci succeeds without error, but good to check.
+                raise chess.engine.EngineError("popen_uci returned None for protocol unexpectedly.")
+            # -----------------
+
             # It seems popen_uci implicitly handles the UCI handshake.
             # The explicit call to self.protocol.initialize() was causing the 'engine already initialized' error.
             # We can proceed directly to configuration.
@@ -1022,17 +1028,16 @@ class ChessBotView(ui.View):
 
     async def make_bot_move(self):
         """Lets the Stockfish engine make a move."""
-        if self.engine is None or self.board.turn != self.bot_color or self.is_thinking or self.is_finished():
+        if self.protocol is None or self.board.turn != self.bot_color or self.is_thinking or self.is_finished(): # Changed engine to protocol
             return # Engine not ready, not bot's turn, already thinking, or game ended
 
         self.is_thinking = True
         try:
             # Ensure the engine has the latest board state
-            await self.engine.position(self.board)
+            await self.protocol.position(self.board) # Changed engine to protocol
 
-            # Use asyncio.to_thread for the blocking engine call
-            result = await asyncio.to_thread(
-                self.engine.play,
+            # The play method is already async, no need for to_thread
+            result = await self.protocol.play( # Changed engine to protocol
                 self.board,
                 chess.engine.Limit(time=self.think_time)
             )
@@ -1778,7 +1783,7 @@ class GamesCog(commands.Cog):
         view = ChessBotView(player, player_color, variant_str, skill_level, think_time)
 
         await view.start_engine()
-        if view.protocol is None or view.is_finished(): # Changed engine to protocol
+        if view.engine is None or view.is_finished(): # Changed back to engine
              await thinking_msg.edit(content="Failed to initialize the chess engine. Cannot start game.")
              return
 
