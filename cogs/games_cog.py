@@ -905,8 +905,8 @@ class ChessBotView(ui.View):
         self.bot_color = not player_color
         self.variant = variant.lower()
         self.message: Optional[discord.Message] = None
-        self.engine: Optional[chess.engine.UciProtocol] = None # Store the async protocol object
-        self._engine_transport: Optional[asyncio.SubprocessTransport] = None # Store transport for closing
+        self.engine: Optional[chess.engine.SimpleEngine] = None # Back to SimpleEngine
+        # No need for separate transport tracking with SimpleEngine
         self.skill_level = max(0, min(20, skill_level)) # Clamp skill level
         self.think_time = max(0.1, min(5.0, think_time)) # Clamp think time
         self.is_thinking = False # Flag to prevent interaction during bot's turn
@@ -968,47 +968,34 @@ class ChessBotView(ui.View):
     # --- Engine and Game Logic ---
 
     async def start_engine(self):
-        """Initializes the Stockfish engine using the async UCI protocol."""
-        engine_protocol = None # Initialize protocol variable
-        transport = None # Initialize transport variable
+        """Initializes the Stockfish engine using SimpleEngine in a separate thread."""
+        engine = None
         try:
             stockfish_path = get_stockfish_path()
             print(f"[Debug] OS: {platform.system()}, Path used: {stockfish_path}")
 
-            # Check asyncio event loop
-            try:
-                loop = asyncio.get_running_loop()
-                print(f"[Debug] Current asyncio event loop: {loop}")
-            except RuntimeError:
-                print("[Error] No running asyncio event loop found!")
-                raise RuntimeError("Asyncio event loop not running")
+            # Define a synchronous function to handle engine initialization
+            def _init_engine_sync():
+                print("[Debug] Running SimpleEngine.popen_uci (sync)...")
+                local_engine = chess.engine.SimpleEngine.popen_uci(stockfish_path)
+                print(f"[Debug] SimpleEngine created. Type: {type(local_engine)}")
 
-            # Use the async popen_uci
-            print("[Debug] Awaiting chess.engine.popen_uci...")
-            transport, engine_protocol = await chess.engine.popen_uci(stockfish_path)
-            print(f"[Debug] popen_uci successful. Protocol type: {type(engine_protocol)}")
-            self.engine = engine_protocol # Store the protocol object
-            self._engine_transport = transport # Store the transport
+                print("[Debug] Configuring engine (sync)...")
+                options = {"Skill Level": self.skill_level}
+                if self.variant == "chess960":
+                    options["UCI_Chess960"] = "true"
+                local_engine.configure(options)
+                print("[Debug] Configuration successful.")
 
-            # Configure Stockfish options using the async protocol
-            print("[Debug] Configuring engine (async)...")
-            options = {"Skill Level": self.skill_level}
-            if self.variant == "chess960":
-                options["UCI_Chess960"] = "true"
-            await self.engine.configure(options) # Use await
-            print("[Debug] Configuration successful.")
+                print("[Debug] Setting engine position (sync)...")
+                local_engine.position(self.board)
+                print("[Debug] Position set successfully.")
+                return local_engine
 
-            # Set position using the async protocol
-            print("[Debug] Setting engine position (async)...")
-            # Use FEN for Chess960, board object for standard
-            if self.variant == "chess960" and self.initial_fen:
-                 await self.engine.position(chess.Board(fen=self.initial_fen, chess960=True)) # Use await
-                 print(f"[Debug] Set Chess960 position with FEN: {self.initial_fen}")
-            else:
-                 await self.engine.position(self.board) # Use await
-                 print("[Debug] Set standard position.")
-            print("[Debug] Position set successfully.")
-
+            # Run the synchronous initialization in a thread
+            print("[Debug] Calling asyncio.to_thread for engine init...")
+            engine = await asyncio.to_thread(_init_engine_sync)
+            self.engine = engine # Assign the successfully initialized engine
             print(f"Stockfish engine configured for {self.variant} with skill level {self.skill_level}.")
 
         except FileNotFoundError as e:
@@ -1041,13 +1028,11 @@ class ChessBotView(ui.View):
              if not self.is_finished(): self.stop()
         except chess.engine.EngineError as e:
              print(f"[Error] Chess engine error during start/config: {e}")
-             if engine_protocol: # Try to quit if protocol object exists
-                 try: await engine_protocol.quit()
+             # engine.quit() is sync, but might be called from except block
+             if engine:
+                 try: engine.quit()
                  except: pass
-             if transport: # Close transport if it exists
-                 transport.close()
              self.engine = None
-             self._engine_transport = None
              # Notify the user in the channel if the message exists
              if self.message:
                  # ... (rest of existing error handling for this block)
@@ -1065,13 +1050,11 @@ class ChessBotView(ui.View):
             print(f"[Debug] Type of error: {type(e)}") # Print the type of the exception
             if "can't be used in 'await' expression" in str(e):
                  print("[Debug] Caught the specific 'await' expression error.")
-            if engine_protocol: # Try to quit if protocol object exists
-                 try: await engine_protocol.quit()
+            # engine.quit() is sync, but might be called from except block
+            if engine:
+                 try: engine.quit()
                  except: pass
-            if transport: # Close transport if it exists
-                 transport.close()
             self.engine = None
-            self._engine_transport = None
             # Notify the user in the channel if the message exists
             if self.message:
                 try:
@@ -1105,22 +1088,26 @@ class ChessBotView(ui.View):
         asyncio.create_task(self.make_bot_move())
 
     async def make_bot_move(self):
-        """Lets the Stockfish engine make a move using the async protocol."""
+        """Lets the Stockfish engine make a move using SimpleEngine in a thread."""
         if self.engine is None or self.board.turn != self.bot_color or self.is_thinking or self.is_finished():
             return # Engine not ready, not bot's turn, already thinking, or game ended
 
         self.is_thinking = True
         try:
-            # Ensure the engine has the latest board state (ASYNC)
-            # Re-setting position before each play might be redundant if board state is tracked correctly,
-            # but can be safer. Let's keep it for now.
-            await self.engine.position(self.board) # Use await
+            # SimpleEngine methods are synchronous, run them in a thread
+            def _play_sync():
+                # Ensure the engine has the latest board state (SYNC)
+                # No need to await here, it's inside the sync function
+                print("[Debug] Setting position before play (sync)...")
+                self.engine.position(self.board)
+                # Use the engine's play method (SYNC)
+                print("[Debug] Running engine.play (sync)...")
+                play_result = self.engine.play(self.board, chess.engine.Limit(time=self.think_time))
+                print(f"[Debug] engine.play completed. Result: {play_result}")
+                return play_result
 
-            # Use the protocol's play method (ASYNC)
-            print("[Debug] Awaiting engine.play...")
-            result = await self.engine.play(self.board, chess.engine.Limit(time=self.think_time))
-            print(f"[Debug] engine.play completed. Result: {result}")
-
+            print("[Debug] Calling asyncio.to_thread for engine play...")
+            result = await asyncio.to_thread(_play_sync)
 
             # Check if the view is still active before proceeding
             if self.is_finished():
@@ -1278,28 +1265,18 @@ class ChessBotView(ui.View):
         # Don't edit the message here, let end_game or on_timeout handle the final update
 
     async def stop_engine(self):
-        """Safely quits the chess engine using the async protocol and transport."""
-        engine_protocol = self.engine
-        transport = self._engine_transport
-        self.engine = None # Set to None immediately
-        self._engine_transport = None # Clear transport reference
-
-        if engine_protocol:
+        """Safely quits the chess engine (SimpleEngine is synchronous)."""
+        # No need to run quit in a thread, as it should be quick.
+        # If it blocks unexpectedly, this might need adjustment.
+        if self.engine:
+            engine_to_stop = self.engine
+            self.engine = None # Set to None immediately
             try:
-                # protocol.quit() is ASYNC
-                print("[Debug] Awaiting engine.quit()...")
-                await engine_protocol.quit()
+                print("[Debug] Quitting engine (sync)...")
+                engine_to_stop.quit()
                 print("Stockfish engine quit command sent successfully.")
             except (chess.engine.EngineError, chess.engine.EngineTerminatedError, Exception) as e:
-                print(f"Error sending quit command to Stockfish engine: {e}")
-
-        if transport:
-            try:
-                print("[Debug] Closing engine transport...")
-                transport.close()
-                print("Engine transport closed.")
-            except Exception as e:
-                print(f"Error closing engine transport: {e}")
+                print(f"Error quitting Stockfish engine: {e}")
 
 
     async def on_timeout(self):
