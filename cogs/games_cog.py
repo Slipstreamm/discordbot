@@ -1430,9 +1430,6 @@ class GamesCog(commands.Cog):
         initiator = interaction.user
 
         # --- Input Validation ---
-        if opponent == initiator:
-            await interaction.response.send_message("You cannot challenge yourself!", ephemeral=True)
-            return
         if opponent.bot:
             await interaction.response.send_message("You cannot challenge a bot!", ephemeral=True)
             return
@@ -1789,9 +1786,7 @@ class GamesCog(commands.Cog):
         """(Prefix) Challenge another user to a coin flip game."""
         initiator = ctx.author
 
-        if opponent == initiator:
-            await ctx.send("You cannot challenge yourself!")
-            return
+
         if opponent.bot:
             await ctx.send("You cannot challenge a bot!")
             return
@@ -1831,9 +1826,7 @@ class GamesCog(commands.Cog):
         """(Prefix) Challenge another user to Tic-Tac-Toe."""
         initiator = ctx.author
 
-        if opponent == initiator:
-            await ctx.send("You cannot challenge yourself!")
-            return
+
         if opponent.bot:
             await ctx.send("You cannot challenge a bot! Use `!tictactoebot` instead.")
             return
@@ -1884,9 +1877,7 @@ class GamesCog(commands.Cog):
         """(Prefix) Challenge another user to Rock-Paper-Scissors."""
         initiator = ctx.author
 
-        if opponent == initiator:
-            await ctx.send("You cannot challenge yourself!")
-            return
+
         if opponent.bot:
             await ctx.send("You cannot challenge a bot!")
             return
@@ -1929,9 +1920,7 @@ class GamesCog(commands.Cog):
         """(Prefix) Start a game of chess with another user."""
         initiator = ctx.author
 
-        if opponent == initiator:
-            await ctx.send("You cannot challenge yourself!")
-            return
+
         if opponent.bot:
             await ctx.send("You cannot challenge a bot! Use `!chessbot` instead.")
             return
