@@ -3,27 +3,31 @@ from discord.ext import commands
 from discord import app_commands, ui
 import random
 import asyncio
-from typing import Optional, List, Union, Dict # Added Dict
+from typing import Optional, List, Union
 import chess
-import chess.pgn # Import PGN library
+import chess.engine
+import chess.pgn
+import platform
 import os
-from PIL import Image, ImageDraw, ImageFont # Added Pillow imports
-import io # Added io import
+import io
 import ast
 
-# Import chess utilities and views
-from .games.chess_utils import generate_board_image, MoveInputModal
-from .games.chess_pvp import ChessView
-from .games.chess_bot import ChessBotView, get_stockfish_path # Import necessary items
-
-# Note: Other game views (CoinFlip, RPS, TTT) are likely used by commands in simple_games.py or other cogs.
+# Import game implementations from separate files
+from .games.chess_game import (
+    generate_board_image, MoveInputModal, ChessView, ChessBotView, 
+    get_stockfish_path
+)
+from .games.coinflip_game import CoinFlipView
+from .games.tictactoe_game import TicTacToeView, BotTicTacToeView
+from .games.rps_game import RockPaperScissorsView
+from .games.basic_games import roll_dice, flip_coin, magic8ball_response, play_hangman
 
 class GamesCog(commands.Cog):
-    """Cog for handling chess games (PvP and PvBot)."""
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Store active bot game views to manage engine resources and cleanup
-        self.active_chess_bot_views: Dict[int, ChessBotView] = {} # Store by message ID
+        # Store active bot game views to manage engine resources
+        self.active_chess_bot_views = {} # Store by message ID
+        self.ttt_games = {} # Store TicTacToe game instances by user ID
 
     def _array_to_fen(self, board_array: List[List[str]], turn: chess.Color) -> str:
         """Converts an 8x8 array representation to a basic FEN string."""
@@ -39,6 +43,7 @@ class GamesCog(commands.Cog):
                     if empty_count > 0:
                         fen_row += str(empty_count)
                         empty_count = 0
+                    # Validate piece character if needed, assume valid for now
                     fen_row += piece
             if empty_count > 0:
                 fen_row += str(empty_count)
@@ -56,289 +61,195 @@ class GamesCog(commands.Cog):
         # Create a copy of the dictionary items to avoid runtime errors during iteration
         views_to_stop = list(self.active_chess_bot_views.values())
         for view in views_to_stop:
-            # Ensure it's a ChessBotView and has the stop_engine method
-            if isinstance(view, ChessBotView) and hasattr(view, 'stop_engine'):
-                try:
-                    await view.stop_engine()
-                except Exception as e:
-                    print(f"Error stopping engine for view {view}: {e}")
-            # Stop the view itself regardless (handles timeouts etc.)
-            if hasattr(view, 'stop'):
-                view.stop()
+            await view.stop_engine()
+            view.stop() # Stop the view itself
         self.active_chess_bot_views.clear()
         print("GamesCog unloaded.")
 
-    # Hangman game logic removed - should be in simple_games.py
-
-    @app_commands.command(name="chessbot", description="Play chess against the bot.")
+    @app_commands.command(name="coinflipbet", description="Challenge another user to a coin flip game.")
     @app_commands.describe(
-        color="Choose your color (default: White).",
-        variant="Choose the chess variant (default: Standard).",
-        skill_level="Bot skill level (0=Easy - 20=Hard, default: 10).",
-        think_time="Bot thinking time per move in seconds (0.1 - 5.0, default: 1.0)."
+        opponent="The user you want to challenge."
     )
-    @app_commands.choices(
-        color=[
-            app_commands.Choice(name="White", value="white"),
-            app_commands.Choice(name="Black", value="black"),
-        ],
-        variant=[
-            app_commands.Choice(name="Standard", value="standard"),
-            app_commands.Choice(name="Chess960 (Fischer Random)", value="chess960"),
-        ]
-    )
-    async def chessbot(self, interaction: discord.Interaction, color: Optional[app_commands.Choice[str]] = None, variant: Optional[app_commands.Choice[str]] = None, skill_level: int = 10, think_time: float = 1.0):
-        """Starts a chess game against the Stockfish engine."""
-        player = interaction.user
-        player_color_str = color.value if color else "white"
-        variant_str = variant.value if variant else "standard"
-        player_color = chess.WHITE if player_color_str == "white" else chess.BLACK
+    async def coinflipbet(self, interaction: discord.Interaction, opponent: discord.Member):
+        """Initiates a coin flip game against another user."""
 
-        # Validate inputs
-        skill_level = max(0, min(20, skill_level))
-        think_time = max(0.1, min(5.0, think_time))
-
-        supported_variants = ["standard", "chess960"]
-        if variant_str not in supported_variants:
-            await interaction.response.send_message(f"Sorry, the variant '{variant_str}' is not currently supported. Choose from: {', '.join(supported_variants)}", ephemeral=True)
-            return
-
-        await interaction.response.defer()
-
-        try:
-            view = ChessBotView(player, player_color, variant_str, skill_level, think_time)
-
-            # Store interaction temporarily for potential error reporting during init
-            view._interaction = interaction
-            await view.start_engine()
-            if hasattr(view, '_interaction'): del view._interaction # Remove temporary attribute
-
-            if view.engine is None or view.is_finished():
-                # Error message should have been sent by start_engine or view stopped itself
-                print("ChessBotView: Engine failed to start, stopping command execution.")
-                # No need to send another message here, start_engine handles it.
-                return # Stop if engine failed
-
-            initial_status_prefix = "Your turn." if player_color == chess.WHITE else "Bot is thinking..."
-            initial_message_content = view.get_board_message(initial_status_prefix)
-            board_image = generate_board_image(view.board, perspective_white=(player_color == chess.WHITE))
-
-            message = await interaction.followup.send(initial_message_content, file=board_image, view=view, wait=True)
-            view.message = message
-            self.active_chess_bot_views[message.id] = view # Track the view
-
-            asyncio.create_task(view._send_or_update_dm())
-
-            if player_color == chess.BLACK:
-                asyncio.create_task(view.make_bot_move())
-
-        except Exception as e:
-            print(f"Error during /chessbot command setup: {e}")
-            try:
-                await interaction.followup.send(f"An error occurred while starting the chess game: {e}", ephemeral=True)
-            except discord.HTTPException:
-                pass # Ignore if we can't send the error
-
-    @app_commands.command(name="loadchess", description="Load a chess game from FEN, PGN, or array representation.")
-    @app_commands.describe(
-        state="FEN string, PGN string, or board array (e.g., [['r',...],...]).",
-        turn="Whose turn? ('white' or 'black'). Required only for array state.",
-        opponent="Challenge a user (optional, defaults to playing the bot).",
-        color="Your color vs bot (White/Black). Required if playing vs bot.",
-        skill_level="Bot skill level (0-20, default: 10).",
-        think_time="Bot think time (0.1-5.0, default: 1.0)."
-    )
-    @app_commands.choices(
-        turn=[app_commands.Choice(name="White", value="white"), app_commands.Choice(name="Black", value="black")],
-        color=[app_commands.Choice(name="White", value="white"), app_commands.Choice(name="Black", value="black")]
-    )
-    async def loadchess(self, interaction: discord.Interaction,
-                        state: str,
-                        turn: Optional[app_commands.Choice[str]] = None,
-                        opponent: Optional[discord.Member] = None,
-                        color: Optional[app_commands.Choice[str]] = None, # Required for bot games
-                        skill_level: int = 10,
-                        think_time: float = 1.0):
-        """Loads a chess game state (FEN, PGN, Array) and starts a view."""
-        await interaction.response.defer()
         initiator = interaction.user
-        board = None
-        load_error = None
-        loaded_pgn_game = None
 
         # --- Input Validation ---
-        if not opponent and not color:
-            await interaction.followup.send("The 'color' parameter is required when playing against the bot.", ephemeral=True)
+        if opponent.bot:
+            await interaction.response.send_message("You cannot challenge a bot!", ephemeral=True)
             return
 
-        # --- Parsing Logic ---
-        state_trimmed = state.strip()
+        # --- Start the Game ---
+        view = CoinFlipView(initiator, opponent)
+        initial_message = f"{initiator.mention} has challenged {opponent.mention} to a coin flip game! {initiator.mention}, choose your side:"
+
+        # Send the initial message and store it in the view
+        await interaction.response.send_message(initial_message, view=view)
+        message = await interaction.original_response()
+        view.message = message
+
+    @app_commands.command(name="coinflip", description="Flip a coin and get Heads or Tails.")
+    async def coinflip(self, interaction: discord.Interaction):
+        """Flips a coin and returns Heads or Tails."""
+        result = flip_coin()
+        await interaction.response.send_message(f"The coin landed on **{result}**! 🪙")
+
+    @app_commands.command(name="roll", description="Roll a dice and get a number between 1 and 6.")
+    async def roll(self, interaction: discord.Interaction):
+        """Rolls a dice and returns a number between 1 and 6."""
+        result = roll_dice()
+        await interaction.response.send_message(f"You rolled a **{result}**! 🎲")
+
+    @app_commands.command(name="magic8ball", description="Ask the magic 8 ball a question.")
+    @app_commands.describe(
+        question="The question you want to ask the magic 8 ball."
+    )
+    async def magic8ball(self, interaction: discord.Interaction, question: str):
+        """Provides a random response to a yes/no question."""
+        response = magic8ball_response()
+        await interaction.response.send_message(f"🎱 {response}")
+
+    @app_commands.command(name="rps", description="Play Rock-Paper-Scissors against the bot.")
+    @app_commands.describe(choice="Your choice: Rock, Paper, or Scissors.")
+    @app_commands.choices(choice=[
+        app_commands.Choice(name="Rock 🪨", value="Rock"),
+        app_commands.Choice(name="Paper 📄", value="Paper"),
+        app_commands.Choice(name="Scissors ✂️", value="Scissors")
+    ])
+    async def rps(self, interaction: discord.Interaction, choice: app_commands.Choice[str]):
+        """Play Rock-Paper-Scissors against the bot."""
+        choices = ["Rock", "Paper", "Scissors"]
+        bot_choice = random.choice(choices)
+        user_choice = choice.value # Get value from choice
+
+        if user_choice == bot_choice:
+            result = "It's a tie!"
+        elif (user_choice == "Rock" and bot_choice == "Scissors") or \
+             (user_choice == "Paper" and bot_choice == "Rock") or \
+             (user_choice == "Scissors" and bot_choice == "Paper"):
+            result = "You win! 🎉"
+        else:
+            result = "You lose! 😢"
+
+        emojis = {
+            "Rock": "🪨",
+            "Paper": "📄",
+            "Scissors": "✂️"
+        }
+
+        await interaction.response.send_message(
+            f"You chose **{user_choice}** {emojis[user_choice]}\n"
+            f"I chose **{bot_choice}** {emojis[bot_choice]}\n\n"
+            f"{result}"
+        )
+
+    @app_commands.command(name="rpschallenge", description="Challenge another user to a game of Rock-Paper-Scissors.")
+    @app_commands.describe(opponent="The user you want to challenge.")
+    async def rpschallenge(self, interaction: discord.Interaction, opponent: discord.Member):
+        """Starts a Rock-Paper-Scissors game with another user."""
+        initiator = interaction.user
+
+        if opponent == initiator:
+            await interaction.response.send_message("You cannot challenge yourself!", ephemeral=True)
+            return
+        if opponent.bot:
+            await interaction.response.send_message("You cannot challenge a bot!", ephemeral=True)
+            return
+
+        view = RockPaperScissorsView(initiator, opponent)
+        initial_message = f"Rock Paper Scissors: {initiator.mention} vs {opponent.mention}\n\nChoose your move!"
+        await interaction.response.send_message(initial_message, view=view)
+        message = await interaction.original_response()
+        view.message = message
+
+    @app_commands.command(name="guess", description="Guess the number I'm thinking of (1-100).")
+    @app_commands.describe(guess="Your guess (1-100).")
+    async def guess(self, interaction: discord.Interaction, guess: int):
+        """Guess the number the bot is thinking of."""
+        # Simple implementation: generate number per guess (no state needed)
+        number_to_guess = random.randint(1, 100)
+
+        if guess < 1 or guess > 100:
+            await interaction.response.send_message("Please guess a number between 1 and 100.", ephemeral=True)
+            return
+
+        if guess == number_to_guess:
+            await interaction.response.send_message(f"🎉 Correct! The number was **{number_to_guess}**.")
+        elif guess < number_to_guess:
+            await interaction.response.send_message(f"Too low! The number was {number_to_guess}.")
+        else:
+            await interaction.response.send_message(f"Too high! The number was {number_to_guess}.")
+
+    @app_commands.command(name="hangman", description="Play a game of Hangman.")
+    async def hangman(self, interaction: discord.Interaction):
+        """Play a game of Hangman."""
+        await play_hangman(self.bot, interaction.channel, interaction.user)
+
+    @app_commands.command(name="tictactoe", description="Challenge another user to a game of Tic-Tac-Toe.")
+    @app_commands.describe(opponent="The user you want to challenge.")
+    async def tictactoe(self, interaction: discord.Interaction, opponent: discord.Member):
+        """Starts a Tic-Tac-Toe game with another user."""
+        initiator = interaction.user
+
+        if opponent == initiator:
+            await interaction.response.send_message("You cannot challenge yourself!", ephemeral=True)
+            return
+        if opponent.bot:
+            await interaction.response.send_message("You cannot challenge a bot! Use `/tictactoebot` instead.", ephemeral=True)
+            return
+
+        view = TicTacToeView(initiator, opponent)
+        initial_message = f"Tic Tac Toe: {initiator.mention} (X) vs {opponent.mention} (O)\n\nTurn: **{initiator.mention} (X)**"
+        await interaction.response.send_message(initial_message, view=view)
+        message = await interaction.original_response()
+        view.message = message # Store message for timeout handling
+
+    @app_commands.command(name="tictactoebot", description="Play a game of Tic-Tac-Toe against the bot.")
+    @app_commands.describe(difficulty="Bot difficulty: random, rule, or minimax (default: minimax)")
+    @app_commands.choices(difficulty=[
+        app_commands.Choice(name="Random (Easy)", value="random"),
+        app_commands.Choice(name="Rule-based (Medium)", value="rule"),
+        app_commands.Choice(name="Minimax (Hard)", value="minimax")
+    ])
+    async def tictactoebot(self, interaction: discord.Interaction, difficulty: app_commands.Choice[str] = None):
+        """Play a game of Tic-Tac-Toe against the bot."""
+        # Use default if no choice is made (discord.py handles default value assignment)
+        difficulty_value = difficulty.value if difficulty else "minimax"
+
+        # Ensure tictactoe module is importable
         try:
-            # 1. Try parsing as PGN
-            if state_trimmed.startswith("[Event") or ('.' in state_trimmed and ('O-O' in state_trimmed or 'x' in state_trimmed or state_trimmed[0].isdigit())):
-                pgn_io = io.StringIO(state_trimmed)
-                loaded_pgn_game = chess.pgn.read_game(pgn_io)
-                if loaded_pgn_game is None: raise ValueError("Could not parse PGN data.")
-                board = loaded_pgn_game.end().board()
-                print("[Debug] Parsed as PGN.")
-            # 2. Try parsing as FEN
-            elif '/' in state_trimmed and (' w ' in state_trimmed or ' b ' in state_trimmed):
-                board = chess.Board(fen=state_trimmed)
-                print(f"[Debug] Parsed as FEN: {state_trimmed}")
-            # 3. Try parsing as Array
-            elif state_trimmed.startswith('[') and state_trimmed.endswith(']'):
-                if not turn: raise ValueError("The 'turn' parameter is required for array state.")
-                board_array = ast.literal_eval(state_trimmed)
-                if not isinstance(board_array, list) or len(board_array) != 8 or \
-                   not all(isinstance(row, list) and len(row) == 8 for row in board_array):
-                    raise ValueError("Invalid array structure. Must be 8x8 list.")
-                turn_color = chess.WHITE if turn.value == "white" else chess.BLACK
-                fen = self._array_to_fen(board_array, turn_color)
-                print(f"[Debug] Converted array to FEN: {fen}")
-                board = chess.Board(fen=fen)
-            else:
-                raise ValueError("Input does not match known PGN, FEN, or Array patterns.")
-        except Exception as e:
-            load_error = f"Invalid state format. Could not parse input. Error: {e}"
-            print(f"[Error] State parsing failed: {e}")
-
-        # --- Final Check and Error Handling ---
-        if board is None:
-            final_error = load_error or "Failed to load board state from the provided input."
-            await interaction.followup.send(final_error, ephemeral=True)
+            import sys
+            import os
+            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if parent_dir not in sys.path:
+                sys.path.append(parent_dir)
+            from tictactoe import TicTacToe # Assuming tictactoe.py is in the parent directory
+        except ImportError:
+            await interaction.response.send_message("Error: TicTacToe game engine module not found.", ephemeral=True)
             return
+        except Exception as e:
+             await interaction.response.send_message(f"Error importing TicTacToe module: {e}", ephemeral=True)
+             return
 
-        # --- Game Setup ---
+        # Create a new game instance
         try:
-            if opponent:
-                # Player vs Player
-                if opponent == initiator: raise ValueError("You cannot challenge yourself!")
-                if opponent.bot: raise ValueError("You cannot challenge a bot! Use `/chessbot` or load without opponent.")
-
-                white_player = initiator if board.turn == chess.WHITE else opponent
-                black_player = opponent if board.turn == chess.WHITE else initiator
-
-                # Use ChessView imported at the top
-                view = ChessView(white_player, black_player, board=board)
-                if loaded_pgn_game:
-                    view.game_pgn = loaded_pgn_game
-                    view.pgn_node = loaded_pgn_game.end()
-
-                current_player_mention = white_player.mention if board.turn == chess.WHITE else black_player.mention
-                turn_color_name = "White" if board.turn == chess.WHITE else "Black"
-                initial_status = f"Turn: **{current_player_mention}** ({turn_color_name})"
-                if board.is_check(): initial_status += " **Check!**"
-                initial_message = f"Loaded Chess Game: {white_player.mention} (White) vs {black_player.mention} (Black)\n\n{initial_status}"
-                perspective_white = (initiator.id == white_player.id) # Show from initiator's perspective
-                board_image = generate_board_image(view.board, perspective_white=perspective_white)
-
-                message = await interaction.followup.send(initial_message, file=board_image, view=view, wait=True)
-                view.message = message
-
-                asyncio.create_task(view._send_or_update_dm(view.white_player))
-                asyncio.create_task(view._send_or_update_dm(view.black_player))
-
-            else:
-                # Player vs Bot
-                player = initiator
-                player_color = chess.WHITE if color.value == "white" else chess.BLACK
-                skill_level = max(0, min(20, skill_level))
-                think_time = max(0.1, min(5.0, think_time))
-                variant_str = "chess960" if board.chess960 else "standard"
-
-                view = ChessBotView(player, player_color, variant_str, skill_level, think_time, board=board)
-                if loaded_pgn_game:
-                    view.game_pgn = loaded_pgn_game
-                    view.pgn_node = loaded_pgn_game.end()
-
-                view._interaction = interaction # For error reporting during start
-                await view.start_engine()
-                if hasattr(view, '_interaction'): del view._interaction
-
-                if view.engine is None or view.is_finished():
-                    print("ChessBotView (Load): Engine failed to start, stopping command execution.")
-                    return # start_engine should have sent error
-
-                status_prefix = "Your turn." if board.turn == player_color else "Bot is thinking..."
-                initial_message_content = view.get_board_message(status_prefix)
-                board_image = generate_board_image(view.board, perspective_white=(player_color == chess.WHITE))
-
-                message = await interaction.followup.send(initial_message_content, file=board_image, view=view, wait=True)
-                view.message = message
-                self.active_chess_bot_views[message.id] = view
-
-                asyncio.create_task(view._send_or_update_dm())
-
-                if board.turn != player_color:
-                    asyncio.create_task(view.make_bot_move())
-
+            game = TicTacToe(ai_player='O', ai_difficulty=difficulty_value)
         except Exception as e:
-            print(f"Error during /loadchess game setup: {e}")
-            try:
-                await interaction.followup.send(f"An error occurred setting up the chess game: {e}", ephemeral=True)
-            except discord.HTTPException:
-                pass
+             await interaction.response.send_message(f"Error initializing TicTacToe game: {e}", ephemeral=True)
+             return
 
-    # --- Prefix Commands (Legacy Support) ---
-
-    @commands.command(name="chessbot")
-    async def chessbot_prefix(self, ctx: commands.Context, color: str = "white", variant: str = "standard", skill_level: int = 10, think_time: float = 1.0):
-        """(Prefix) Play chess against the bot. Usage: !chessbot [white|black] [standard|chess960] [skill 0-20] [time 0.1-5.0]"""
-        player = ctx.author
-        player_color_str = color.lower()
-        variant_str = variant.lower()
-
-        if player_color_str not in ["white", "black"]:
-            await ctx.send("Invalid color. Please choose 'white' or 'black'.")
-            return
-        player_color = chess.WHITE if player_color_str == "white" else chess.BLACK
-
-        supported_variants = ["standard", "chess960"]
-        if variant_str not in supported_variants:
-            await ctx.send(f"Sorry, the variant '{variant_str}' is not currently supported. Choose from: {', '.join(supported_variants)}")
-            return
-
-        skill_level = max(0, min(20, skill_level))
-        think_time = max(0.1, min(5.0, think_time))
-
-        thinking_msg = await ctx.send("Initializing chess engine...")
-
-        try:
-            view = ChessBotView(player, player_color, variant_str, skill_level, think_time)
-
-            view.message = thinking_msg # Store message early for error reporting
-            await view.start_engine()
-
-            if view.engine is None or view.is_finished():
-                 print("ChessBotView (Prefix): Engine failed to start, stopping command execution.")
-                 # start_engine should have edited the message or logged error
-                 return
-
-            initial_status_prefix = "Your turn." if player_color == chess.WHITE else "Bot is thinking..."
-            initial_message_content = view.get_board_message(initial_status_prefix)
-            board_image = generate_board_image(view.board, perspective_white=(player_color == chess.WHITE))
-
-            message = await thinking_msg.edit(content=initial_message_content, attachments=[board_image], view=view)
-            view.message = message # Update view's message reference
-            self.active_chess_bot_views[message.id] = view
-
-            asyncio.create_task(view._send_or_update_dm())
-
-            if player_color == chess.BLACK:
-                asyncio.create_task(view.make_bot_move())
-
-        except Exception as e:
-            print(f"Error during !chessbot command setup: {e}")
-            try:
-                await thinking_msg.edit(content=f"An error occurred while starting the chess game: {e}", view=None, attachments=[])
-            except discord.HTTPException:
-                pass # Ignore if we can't edit the message
-
-    # --- PvP Chess Commands (Moved from chess_pvp.py) ---
+        # Create a view for the user interface
+        view = BotTicTacToeView(game, interaction.user)
+        await interaction.response.send_message(
+            f"Tic Tac Toe: {interaction.user.mention} (X) vs Bot (O) - Difficulty: {difficulty_value.capitalize()}\n\nYour turn!",
+            view=view
+        )
+        view.message = await interaction.original_response()
 
     @app_commands.command(name="chess", description="Challenge another user to a game of chess.")
     @app_commands.describe(opponent="The user you want to challenge.")
-    async def chess_slash(self, interaction: discord.Interaction, opponent: discord.Member):
+    async def chess(self, interaction: discord.Interaction, opponent: discord.Member):
         """Start a game of chess with another user."""
         initiator = interaction.user
 
@@ -363,14 +274,379 @@ class GamesCog(commands.Cog):
         asyncio.create_task(view._send_or_update_dm(view.white_player))
         asyncio.create_task(view._send_or_update_dm(view.black_player))
 
+    @app_commands.command(name="chessbot", description="Play chess against the bot.")
+    @app_commands.describe(
+        color="Choose your color (default: White).",
+        variant="Choose the chess variant (default: Standard).",
+        skill_level="Bot skill level (0=Easy - 20=Hard, default: 10).",
+        think_time="Bot thinking time per move in seconds (0.1 - 5.0, default: 1.0)."
+    )
+    @app_commands.choices(
+        color=[
+            app_commands.Choice(name="White", value="white"),
+            app_commands.Choice(name="Black", value="black"),
+        ],
+        variant=[
+            app_commands.Choice(name="Standard", value="standard"),
+            app_commands.Choice(name="Chess960 (Fischer Random)", value="chess960"),
+            # Add more variants here as supported
+        ]
+    )
+    async def chessbot(self, interaction: discord.Interaction, color: app_commands.Choice[str] = None, variant: app_commands.Choice[str] = None, skill_level: int = 10, think_time: float = 1.0):
+        """Starts a chess game against the Stockfish engine."""
+        player = interaction.user
+        player_color_str = color.value if color else "white"
+        variant_str = variant.value if variant else "standard"
+        player_color = chess.WHITE if player_color_str == "white" else chess.BLACK
+
+        # Validate inputs
+        skill_level = max(0, min(20, skill_level))
+        think_time = max(0.1, min(5.0, think_time))
+
+        # Check if variant is supported (currently standard and chess960)
+        supported_variants = ["standard", "chess960"]
+        if variant_str not in supported_variants:
+            await interaction.response.send_message(f"Sorry, the variant '{variant_str}' is not currently supported. Choose from: {', '.join(supported_variants)}", ephemeral=True)
+            return
+
+        # Defer response as engine start might take a moment
+        await interaction.response.defer()
+
+        view = ChessBotView(player, player_color, variant_str, skill_level, think_time)
+
+        # Start the engine asynchronously
+        # Store interaction temporarily for potential error reporting during init
+        view._interaction = interaction
+        await view.start_engine()
+        del view._interaction # Remove temporary attribute
+
+        if view.engine is None or view.is_finished(): # Check if engine failed or view stopped during init
+             # Error message should have been sent by start_engine or view stopped itself
+             # Ensure we don't try to send another response if already handled
+             # No need to send another message here, start_engine handles it.
+             print("ChessBotView: Engine failed to start, stopping command execution.")
+             return # Stop if engine failed
+
+        # Determine initial message based on who moves first
+        initial_status_prefix = "Your turn." if player_color == chess.WHITE else "Bot is thinking..."
+        initial_message_content = view.get_board_message(initial_status_prefix)
+        board_image = generate_board_image(view.board, perspective_white=(player_color == chess.WHITE))
+
+        # Send the initial game state using followup
+        message = await interaction.followup.send(initial_message_content, file=board_image, view=view, wait=True)
+        view.message = message
+        self.active_chess_bot_views[message.id] = view # Track the view
+
+        # Send initial DM to player
+        asyncio.create_task(view._send_or_update_dm())
+
+        # If bot moves first (player chose black), trigger its move
+        if player_color == chess.BLACK:
+            # Don't await this, let it run in the background
+            asyncio.create_task(view.make_bot_move())
+
+    @app_commands.command(name="loadchess", description="Load a chess game from FEN, PGN, or array representation.")
+    @app_commands.describe(
+        state="FEN string, PGN string, or board array (e.g., [['r',...],...]).",
+        turn="Whose turn? ('white' or 'black'). Required only for array state.",
+        opponent="Challenge a user (optional, defaults to playing the bot).",
+        color="Your color vs bot (White/Black). Required if playing vs bot.",
+        skill_level="Bot skill level (0-20, default: 10).",
+        think_time="Bot think time (0.1-5.0, default: 1.0)."
+    )
+    @app_commands.choices(
+        turn=[app_commands.Choice(name="White", value="white"), app_commands.Choice(name="Black", value="black")],
+        color=[app_commands.Choice(name="White", value="white"), app_commands.Choice(name="Black", value="black")]
+    )
+    async def loadchess(self, interaction: discord.Interaction,
+                        state: str,
+                        turn: Optional[app_commands.Choice[str]] = None,
+                        opponent: Optional[discord.Member] = None,
+                        color: Optional[app_commands.Choice[str]] = None, # Now required for bot games
+                        skill_level: int = 10,
+                        think_time: float = 1.0):
+        """Loads a chess game state (FEN, PGN, Array) and starts a view."""
+        await interaction.response.defer()
+        initiator = interaction.user
+        board = None
+        load_error = None
+        loaded_pgn_game = None # To store the loaded PGN game object if parsed
+
+        # --- Input Validation ---
+        if not opponent and not color:
+            await interaction.followup.send("The 'color' parameter is required when playing against the bot.", ephemeral=True)
+            return
+
+        # --- Parsing Logic ---
+        state_trimmed = state.strip()
+
+        # 1. Try parsing as PGN
+        if state_trimmed.startswith("[Event") or ('.' in state_trimmed and ('O-O' in state_trimmed or 'x' in state_trimmed or state_trimmed[0].isdigit())):
+            try:
+                pgn_io = io.StringIO(state_trimmed)
+                loaded_pgn_game = chess.pgn.read_game(pgn_io)
+                if loaded_pgn_game is None:
+                    raise ValueError("Could not parse PGN data.")
+                # Get the board state from the end of the main line
+                board = loaded_pgn_game.end().board()
+                print("[Debug] Parsed as PGN.")
+            except Exception as e:
+                load_error = f"Could not parse as PGN: {e}. Trying other formats."
+                print(f"[Debug] PGN parsing failed: {e}")
+                loaded_pgn_game = None # Reset if PGN parsing failed
+
+        # 2. Try parsing as FEN (if not already parsed as PGN)
+        if board is None and '/' in state_trimmed and (' w ' in state_trimmed or ' b ' in state_trimmed):
+            try:
+                board = chess.Board(fen=state_trimmed)
+                print(f"[Debug] Parsed as FEN: {state_trimmed}")
+            except ValueError as e:
+                load_error = f"Invalid FEN string: {e}. Trying array format."
+                print(f"[Error] FEN parsing failed: {e}")
+            except Exception as e:
+                load_error = f"Unexpected FEN parsing error: {e}. Trying array format."
+                print(f"[Error] Unexpected FEN parsing error: {e}")
+
+        # 3. Try parsing as Array (if not parsed as PGN or FEN)
+        if board is None:
+            try:
+                # Check if it looks like a list before eval
+                if not state_trimmed.startswith('[') or not state_trimmed.endswith(']'):
+                     raise ValueError("Input does not look like a list array.")
+
+                board_array = ast.literal_eval(state_trimmed)
+                print("[Debug] Attempting to parse as array...")
+
+                if not isinstance(board_array, list) or len(board_array) != 8 or \
+                   not all(isinstance(row, list) and len(row) == 8 for row in board_array):
+                    raise ValueError("Invalid array structure. Must be 8x8 list.")
+
+                if not turn:
+                    load_error = "The 'turn' parameter is required when providing a board array."
+                else:
+                    turn_color = chess.WHITE if turn.value == "white" else chess.BLACK
+                    fen = self._array_to_fen(board_array, turn_color)
+                    print(f"[Debug] Converted array to FEN: {fen}")
+                    board = chess.Board(fen=fen)
+
+            except (ValueError, SyntaxError, TypeError) as e:
+                # If PGN/FEN failed, this is the final error message
+                load_error = f"Invalid state format. Could not parse as PGN, FEN, or Python list array. Error: {e}"
+                print(f"[Error] Array parsing failed: {e}")
+            except Exception as e:
+                load_error = f"Error parsing array state: {e}"
+                print(f"[Error] Unexpected array parsing error: {e}")
+
+        # --- Final Check and Error Handling ---
+        if board is None:
+            final_error = load_error or "Failed to load board state from the provided input."
+            await interaction.followup.send(final_error, ephemeral=True)
+            return
+
+        # --- Game Setup ---
+        if opponent:
+            # Player vs Player
+            if opponent == initiator:
+                await interaction.followup.send("You cannot challenge yourself!", ephemeral=True)
+                return
+            if opponent.bot:
+                await interaction.followup.send("You cannot challenge a bot! Use `/chessbot` or load without opponent.", ephemeral=True)
+                return
+
+            white_player = initiator if board.turn == chess.WHITE else opponent
+            black_player = opponent if board.turn == chess.WHITE else initiator
+
+            view = ChessView(white_player, black_player, board=board) # Pass loaded board
+            # If loaded from PGN, set the game object in the view
+            if loaded_pgn_game:
+                view.game_pgn = loaded_pgn_game
+                view.pgn_node = loaded_pgn_game.end() # Start from the end node
+
+            current_player_mention = white_player.mention if board.turn == chess.WHITE else black_player.mention
+            turn_color_name = "White" if board.turn == chess.WHITE else "Black"
+            initial_status = f"Turn: **{current_player_mention}** ({turn_color_name})"
+            if board.is_check(): initial_status += " **Check!**"
+            initial_message = f"Loaded Chess Game: {white_player.mention} (White) vs {black_player.mention} (Black)\n\n{initial_status}"
+            perspective_white = (board.turn == chess.WHITE)
+            board_image = generate_board_image(view.board, perspective_white=perspective_white)
+
+            message = await interaction.followup.send(initial_message, file=board_image, view=view, wait=True)
+            view.message = message
+
+            # Send initial DMs
+            asyncio.create_task(view._send_or_update_dm(view.white_player))
+            asyncio.create_task(view._send_or_update_dm(view.black_player))
+
+        else:
+            # Player vs Bot
+            player = initiator
+            # Color is now required, checked at the start
+            player_color = chess.WHITE if color.value == "white" else chess.BLACK
+
+            skill_level = max(0, min(20, skill_level))
+            think_time = max(0.1, min(5.0, think_time))
+            variant_str = "chess960" if board.chess960 else "standard"
+
+            view = ChessBotView(player, player_color, variant_str, skill_level, think_time, board=board) # Pass loaded board
+            # If loaded from PGN, set the game object in the view
+            if loaded_pgn_game:
+                view.game_pgn = loaded_pgn_game
+                view.pgn_node = loaded_pgn_game.end() # Start from the end node
+
+            view._interaction = interaction # For error reporting during start
+            await view.start_engine()
+            if hasattr(view, '_interaction'): del view._interaction
+
+            if view.engine is None or view.is_finished():
+                print("ChessBotView (Load): Engine failed to start, stopping command execution.")
+                return
+
+            status_prefix = "Your turn." if board.turn == player_color else "Bot is thinking..."
+            initial_message_content = view.get_board_message(status_prefix)
+            board_image = generate_board_image(view.board, perspective_white=(player_color == chess.WHITE))
+
+            message = await interaction.followup.send(initial_message_content, file=board_image, view=view, wait=True)
+            view.message = message
+            self.active_chess_bot_views[message.id] = view
+
+            # Send initial DM to player
+            asyncio.create_task(view._send_or_update_dm())
+
+            if board.turn != player_color:
+                asyncio.create_task(view.make_bot_move())
+
+
+    # --- Prefix Commands (Legacy Support) ---
+
+    @commands.command(name="coinflipbet")
+    async def coinflipbet_prefix(self, ctx: commands.Context, opponent: discord.Member):
+        """(Prefix) Challenge another user to a coin flip game."""
+        initiator = ctx.author
+
+        if opponent.bot:
+            await ctx.send("You cannot challenge a bot!")
+            return
+
+        view = CoinFlipView(initiator, opponent)
+        initial_message = f"{initiator.mention} has challenged {opponent.mention} to a coin flip game! {initiator.mention}, choose your side:"
+        message = await ctx.send(initial_message, view=view)
+        view.message = message
+
+    @commands.command(name="coinflip")
+    async def coinflip_prefix(self, ctx: commands.Context):
+        """(Prefix) Flip a coin."""
+        result = flip_coin()
+        await ctx.send(f"The coin landed on **{result}**! 🪙")
+
+    @commands.command(name="roll")
+    async def roll_prefix(self, ctx: commands.Context):
+        """(Prefix) Roll a dice."""
+        result = roll_dice()
+        await ctx.send(f"You rolled a **{result}**! 🎲")
+
+    @commands.command(name="magic8ball")
+    async def magic8ball_prefix(self, ctx: commands.Context, *, question: str):
+        """(Prefix) Ask the magic 8 ball."""
+        response = magic8ball_response()
+        await ctx.send(f"🎱 {response}")
+
+    @commands.command(name="tictactoe")
+    async def tictactoe_prefix(self, ctx: commands.Context, opponent: discord.Member):
+        """(Prefix) Challenge another user to Tic-Tac-Toe."""
+        initiator = ctx.author
+
+        if opponent.bot:
+            await ctx.send("You cannot challenge a bot! Use `!tictactoebot` instead.")
+            return
+
+        view = TicTacToeView(initiator, opponent)
+        initial_message = f"Tic Tac Toe: {initiator.mention} (X) vs {opponent.mention} (O)\n\nTurn: **{initiator.mention} (X)**"
+        message = await ctx.send(initial_message, view=view)
+        view.message = message
+
+    @commands.command(name="tictactoebot")
+    async def tictactoebot_prefix(self, ctx: commands.Context, difficulty: str = "minimax"):
+        """(Prefix) Play Tic-Tac-Toe against the bot."""
+        difficulty_value = difficulty.lower()
+        valid_difficulties = ["random", "rule", "minimax"]
+        if difficulty_value not in valid_difficulties:
+            await ctx.send(f"Invalid difficulty! Choose from: {', '.join(valid_difficulties)}")
+            return
+
+        try:
+            import sys
+            import os
+            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if parent_dir not in sys.path:
+                sys.path.append(parent_dir)
+            from tictactoe import TicTacToe
+        except ImportError:
+            await ctx.send("Error: TicTacToe game engine module not found.")
+            return
+        except Exception as e:
+             await ctx.send(f"Error importing TicTacToe module: {e}")
+             return
+
+        try:
+            game = TicTacToe(ai_player='O', ai_difficulty=difficulty_value)
+        except Exception as e:
+             await ctx.send(f"Error initializing TicTacToe game: {e}")
+             return
+
+        view = BotTicTacToeView(game, ctx.author)
+        message = await ctx.send(
+            f"Tic Tac Toe: {ctx.author.mention} (X) vs Bot (O) - Difficulty: {difficulty_value.capitalize()}\n\nYour turn!",
+            view=view
+        )
+        view.message = message
+
+    @commands.command(name="rpschallenge")
+    async def rpschallenge_prefix(self, ctx: commands.Context, opponent: discord.Member):
+        """(Prefix) Challenge another user to Rock-Paper-Scissors."""
+        initiator = ctx.author
+
+        if opponent.bot:
+            await ctx.send("You cannot challenge a bot!")
+            return
+
+        view = RockPaperScissorsView(initiator, opponent)
+        initial_message = f"Rock Paper Scissors: {initiator.mention} vs {opponent.mention}\n\nChoose your move!"
+        message = await ctx.send(initial_message, view=view)
+        view.message = message
+
+    @commands.command(name="rps")
+    async def rps_prefix(self, ctx: commands.Context, choice: str):
+        """(Prefix) Play Rock-Paper-Scissors against the bot."""
+        choices = ["Rock", "Paper", "Scissors"]
+        bot_choice = random.choice(choices)
+        user_choice = choice.capitalize()
+
+        if user_choice not in choices:
+            await ctx.send("Invalid choice! Please choose Rock, Paper, or Scissors.")
+            return
+
+        # Identical logic to slash command, just using ctx.send
+        if user_choice == bot_choice:
+            result = "It's a tie!"
+        elif (user_choice == "Rock" and bot_choice == "Scissors") or \
+             (user_choice == "Paper" and bot_choice == "Rock") or \
+             (user_choice == "Scissors" and bot_choice == "Paper"):
+            result = "You win! 🎉"
+        else:
+            result = "You lose! 😢"
+
+        emojis = { "Rock": "🪨", "Paper": "📄", "Scissors": "✂️" }
+        await ctx.send(
+            f"You chose **{user_choice}** {emojis[user_choice]}\n"
+            f"I chose **{bot_choice}** {emojis[bot_choice]}\n\n"
+            f"{result}"
+        )
+
     @commands.command(name="chess")
     async def chess_prefix(self, ctx: commands.Context, opponent: discord.Member):
         """(Prefix) Start a game of chess with another user."""
         initiator = ctx.author
 
-        if opponent == initiator:
-            await ctx.send("You cannot challenge yourself!")
-            return
         if opponent.bot:
             await ctx.send("You cannot challenge a bot! Use `!chessbot` instead.")
             return
@@ -387,69 +663,26 @@ class GamesCog(commands.Cog):
         asyncio.create_task(view._send_or_update_dm(view.white_player))
         asyncio.create_task(view._send_or_update_dm(view.black_player))
 
-    # --- Listeners for Cleanup ---
+    @commands.command(name="hangman")
+    async def hangman_prefix(self, ctx: commands.Context):
+        """(Prefix) Play a game of Hangman."""
+        await play_hangman(self.bot, ctx.channel, ctx.author)
 
-    @commands.Cog.listener()
-    async def on_interaction(self, interaction: discord.Interaction):
-        """Clean up finished chess bot views when interacted with."""
-        # Check if the interaction is for a message managed by this cog
-        if interaction.message and interaction.message.id in self.active_chess_bot_views:
-            view = self.active_chess_bot_views.get(interaction.message.id)
-            # If the view associated with the message is finished, remove it from tracking
-            if view and view.is_finished():
-                # Check again before deleting in case of race conditions
-                if interaction.message.id in self.active_chess_bot_views:
-                    del self.active_chess_bot_views[interaction.message.id]
-                    print(f"Removed finished ChessBotView tracking for message {interaction.message.id}")
+    @commands.command(name="guess")
+    async def guess_prefix(self, ctx: commands.Context, guess: int):
+        """(Prefix) Guess a number between 1 and 100."""
+        number_to_guess = random.randint(1, 100)
 
-    @commands.Cog.listener()
-    async def on_message_delete(self, message: discord.Message):
-        """Clean up chess bot view if its message is deleted."""
-        if message.id in self.active_chess_bot_views:
-            print(f"Chess game message {message.id} deleted. Stopping associated view and engine.")
-            view = self.active_chess_bot_views.pop(message.id, None) # Use pop to remove and get view
-            if view and not view.is_finished():
-                # Ensure it's a ChessBotView and has the stop_engine method
-                if isinstance(view, ChessBotView) and hasattr(view, 'stop_engine'):
-                    try:
-                        await view.stop_engine()
-                    except Exception as e:
-                        print(f"Error stopping engine for deleted message view {view}: {e}")
-                # Stop the view itself
-                if hasattr(view, 'stop'):
-                    view.stop()
-
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        """Listener to potentially handle other message-based game interactions if needed."""
-        if message.author.bot:
+        if guess < 1 or guess > 100:
+            await ctx.send("Please guess a number between 1 and 100.")
             return
-        # Currently no message content based triggers active for chess
-        pass
+
+        if guess == number_to_guess:
+            await ctx.send(f"🎉 Correct! The number was **{number_to_guess}**.")
+        elif guess < number_to_guess:
+            await ctx.send(f"Too low! The number was {number_to_guess}.")
+        else:
+            await ctx.send(f"Too high! The number was {number_to_guess}.")
 
 async def setup(bot: commands.Bot):
-    # Ensure necessary libraries are available
-    try:
-        import chess
-        import chess.pgn
-        from PIL import Image, ImageDraw, ImageFont
-        import io
-        import ast
-    except ImportError as e:
-        print(f"Error loading GamesCog: Missing dependency - {e}. Please install required libraries (python-chess, Pillow).")
-        return
-
-    # Check for Stockfish executable using the imported function
-    stockfish_available = False
-    try:
-        get_stockfish_path() # This will raise FileNotFoundError or OSError if not found/configured
-        stockfish_available = True
-    except (FileNotFoundError, OSError) as e:
-        print(f"Warning loading GamesCog: {e}. Chess bot features will be unavailable.")
-
-    # Load the cog
     await bot.add_cog(GamesCog(bot))
-    if stockfish_available:
-        print("GamesCog loaded successfully with Stockfish available.")
-    else:
-         print("GamesCog loaded, but Stockfish engine not found or not executable. Chess bot commands will fail.")
