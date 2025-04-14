@@ -172,6 +172,17 @@ class Rule34Cog(commands.Cog):
             view = self.BrowseView(self.cog, self.tags, self.all_results, self.hidden)
             await interaction.response.edit_message(content=content, view=view)
 
+        @discord.ui.button(label="Pin", style=discord.ButtonStyle.danger)
+        async def pin_message(self, interaction: discord.Interaction, button: Button):
+            if interaction.message:
+                try:
+                    await interaction.message.pin()
+                    await interaction.response.send_message("Message pinned successfully!", ephemeral=True)
+                except discord.Forbidden:
+                    await interaction.response.send_message("I don't have permission to pin messages in this channel.", ephemeral=True)
+                except discord.HTTPException as e:
+                    await interaction.response.send_message(f"Failed to pin the message: {e}", ephemeral=True)
+
         class BrowseView(View):
             def __init__(self, cog, tags: str, all_results: list, hidden: bool = False):
                 super().__init__(timeout=60)
