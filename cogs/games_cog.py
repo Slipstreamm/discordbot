@@ -974,9 +974,19 @@ class ChessBotView(ui.View):
             self.transport, self.protocol = await chess.engine.popen_uci(stockfish_path)
             print(f"Stockfish process opened via popen_uci. Transport: {self.transport}, Protocol Type: {type(self.protocol)}")
 
+            # --- Add logging ---
+            initialized_state_before = self.protocol._initialized if hasattr(self.protocol, '_initialized') else 'N/A'
+            print(f"ChessBotView Instance {id(self)}: About to call protocol.initialize(). Current protocol state (_initialized): {initialized_state_before}")
+            # -------------------
+
             # Initialize the engine via UCI commands (This performs the handshake)
             await self.protocol.initialize()
             print("Stockfish initialized via UCI.")
+
+            # --- Add logging ---
+            initialized_state_after = self.protocol._initialized if hasattr(self.protocol, '_initialized') else 'N/A'
+            print(f"ChessBotView Instance {id(self)}: protocol.initialize() completed. Current protocol state (_initialized): {initialized_state_after}")
+            # -------------------
 
             # Configure Stockfish options
             print("Configuring Stockfish...")
@@ -1777,7 +1787,7 @@ class GamesCog(commands.Cog):
         view = ChessBotView(player, player_color, variant_str, skill_level, think_time)
 
         await view.start_engine()
-        if view.engine is None or view.is_finished():
+        if view.protocol is None or view.is_finished(): # Changed engine to protocol
              await thinking_msg.edit(content="Failed to initialize the chess engine. Cannot start game.")
              return
 
