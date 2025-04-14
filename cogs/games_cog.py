@@ -973,29 +973,30 @@ class ChessBotView(ui.View):
             stockfish_path = get_stockfish_path()
             print(f"[Debug] OS: {platform.system()}, Path used: {stockfish_path}") # Add debug print
 
-            # 1. Use lower-level popen_uci to establish connection
-            print("[Debug] Awaiting chess.engine.popen_uci...")
-            transport, protocol = await chess.engine.popen_uci(stockfish_path)
-            print(f"[Debug] popen_uci successful. Protocol type: {type(protocol)}")
+            # Check asyncio event loop
+            try:
+                loop = asyncio.get_running_loop()
+                print(f"[Debug] Current asyncio event loop: {loop}")
+            except RuntimeError:
+                print("[Error] No running asyncio event loop found!")
+                raise RuntimeError("Asyncio event loop not running") # Re-raise
 
-            # 2. Manually wrap the protocol with SimpleEngine
-            print("[Debug] Wrapping protocol with SimpleEngine...")
-            # SimpleEngine constructor takes the protocol directly. It manages the transport implicitly.
-            engine = chess.engine.SimpleEngine(protocol)
-            print(f"[Debug] SimpleEngine created. Type: {type(engine)}")
-            self.engine = engine # Assign the SimpleEngine instance
+            # Use SimpleEngine.popen_uci for easier management (this part IS async)
+            print("[Debug] Awaiting chess.engine.SimpleEngine.popen_uci...")
+            engine = await chess.engine.SimpleEngine.popen_uci(stockfish_path) # Back to original call
+            print(f"[Debug] popen_uci successful. Engine type: {type(engine)}")
+            self.engine = engine # Assign to self.engine only after success
 
-            # 3. Configure using SimpleEngine (SYNC methods)
-            print("[Debug] Configuring SimpleEngine...")
+            # Configure Stockfish options using the engine wrapper (these are SYNC)
+            print("[Debug] Configuring engine...")
             options = {"Skill Level": self.skill_level}
             if self.variant == "chess960":
-                 options["UCI_Chess960"] = "true" # Ensure this option is correct for Stockfish
+                options["UCI_Chess960"] = "true"
             self.engine.configure(options)
             print("[Debug] Configuration successful.")
 
-            # 4. Set position using SimpleEngine (SYNC method)
-            print("[Debug] Setting SimpleEngine position...")
-            # SimpleEngine's position method handles standard/Chess960 boards correctly
+            # Set position using the engine wrapper (SYNC)
+            print("[Debug] Setting engine position...")
             self.engine.position(self.board)
             print("[Debug] Position set successfully.")
 
@@ -1031,18 +1032,9 @@ class ChessBotView(ui.View):
              if not self.is_finished(): self.stop()
         except chess.engine.EngineError as e:
              print(f"[Error] Chess engine error during start/config: {e}")
-             # If self.engine is a SimpleEngine instance, quit() is sync and handles transport
-             if isinstance(self.engine, chess.engine.SimpleEngine):
-                 try: self.engine.quit()
+             if engine: # Try to quit if engine object exists but failed later
+                 try: engine.quit()
                  except: pass
-             # Fallback if engine wasn't fully created or is raw protocol
-             elif self.engine: # Should be the protocol object in this case
-                 try: await self.engine.quit()
-                 except: pass
-                 # Manually close transport if it exists from popen_uci step
-                 transport = getattr(self, '_engine_transport', None)
-                 if transport: transport.close()
-
              self.engine = None
              # Notify the user in the channel if the message exists
              if self.message:
@@ -1061,20 +1053,10 @@ class ChessBotView(ui.View):
             print(f"[Debug] Type of error: {type(e)}") # Print the type of the exception
             if "can't be used in 'await' expression" in str(e):
                  print("[Debug] Caught the specific 'await' expression error.")
-            # If self.engine is a SimpleEngine instance, quit() is sync and handles transport
-            if isinstance(self.engine, chess.engine.SimpleEngine):
-                 try: self.engine.quit()
+            if engine: # Try to quit if engine object exists but failed later
+                 try: engine.quit()
                  except: pass
-            # Fallback if engine wasn't fully created or is raw protocol
-            elif self.engine: # Should be the protocol object in this case
-                 try: await self.engine.quit()
-                 except: pass
-                 # Manually close transport if it exists from popen_uci step
-                 transport = getattr(self, '_engine_transport', None)
-                 if transport: transport.close()
-
-            self.engine = None # Ensure engine is None if failed
-            # Keep existing error handling below
+            self.engine = None
             # Notify the user in the channel if the message exists
             if self.message:
                 try:
