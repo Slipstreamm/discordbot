@@ -973,35 +973,31 @@ class ChessBotView(ui.View):
             stockfish_path = get_stockfish_path()
             print(f"[Debug] OS: {platform.system()}, Path used: {stockfish_path}") # Add debug print
 
-            # Use the lower-level chess.engine.popen_uci (this part IS async)
+            # 1. Use lower-level popen_uci to establish connection
             print("[Debug] Awaiting chess.engine.popen_uci...")
-            transport, engine_protocol = await chess.engine.popen_uci(stockfish_path)
-            print(f"[Debug] popen_uci successful. Engine protocol type: {type(engine_protocol)}")
-            # We need to store both transport and protocol to close later if needed,
-            # but self.engine will hold the protocol object for interactions.
-            self.engine = engine_protocol
-            self._engine_transport = transport # Store transport for potential cleanup
+            transport, protocol = await chess.engine.popen_uci(stockfish_path)
+            print(f"[Debug] popen_uci successful. Protocol type: {type(protocol)}")
 
-            # Configure Stockfish options using the engine protocol (these are ASYNC now)
-            print("[Debug] Configuring engine...")
+            # 2. Manually wrap the protocol with SimpleEngine
+            print("[Debug] Wrapping protocol with SimpleEngine...")
+            # SimpleEngine constructor takes the protocol directly. It manages the transport implicitly.
+            engine = chess.engine.SimpleEngine(protocol)
+            print(f"[Debug] SimpleEngine created. Type: {type(engine)}")
+            self.engine = engine # Assign the SimpleEngine instance
+
+            # 3. Configure using SimpleEngine (SYNC methods)
+            print("[Debug] Configuring SimpleEngine...")
             options = {"Skill Level": self.skill_level}
-            # Note: configure is now async when using the base protocol
-            await self.engine.configure(options)
+            if self.variant == "chess960":
+                 options["UCI_Chess960"] = "true" # Ensure this option is correct for Stockfish
+            self.engine.configure(options)
             print("[Debug] Configuration successful.")
 
-            # Set position using the engine protocol (ASYNC)
-            # Need to handle Chess960 FEN correctly if applicable
-            print("[Debug] Setting engine position...")
-            if self.variant == "chess960" and self.initial_fen:
-                 # For Chess960, set the FEN explicitly
-                 await self.engine.position(chess.Board(fen=self.initial_fen, chess960=True))
-                 print(f"[Debug] Set Chess960 position with FEN: {self.initial_fen}")
-            else:
-                 # For standard, just set the board object
-                 await self.engine.position(self.board)
-                 print("[Debug] Set standard position.")
+            # 4. Set position using SimpleEngine (SYNC method)
+            print("[Debug] Setting SimpleEngine position...")
+            # SimpleEngine's position method handles standard/Chess960 boards correctly
+            self.engine.position(self.board)
             print("[Debug] Position set successfully.")
-
 
             print(f"Stockfish engine configured for {self.variant} with skill level {self.skill_level}.")
 
@@ -1035,13 +1031,18 @@ class ChessBotView(ui.View):
              if not self.is_finished(): self.stop()
         except chess.engine.EngineError as e:
              print(f"[Error] Chess engine error during start/config: {e}")
-             # Use the protocol object for quit if it exists
-             if self.engine:
+             # If self.engine is a SimpleEngine instance, quit() is sync and handles transport
+             if isinstance(self.engine, chess.engine.SimpleEngine):
+                 try: self.engine.quit()
+                 except: pass
+             # Fallback if engine wasn't fully created or is raw protocol
+             elif self.engine: # Should be the protocol object in this case
                  try: await self.engine.quit()
                  except: pass
-             # Close transport if it exists
-             if hasattr(self, '_engine_transport') and self._engine_transport:
-                 self._engine_transport.close()
+                 # Manually close transport if it exists from popen_uci step
+                 transport = getattr(self, '_engine_transport', None)
+                 if transport: transport.close()
+
              self.engine = None
              # Notify the user in the channel if the message exists
              if self.message:
@@ -1060,13 +1061,18 @@ class ChessBotView(ui.View):
             print(f"[Debug] Type of error: {type(e)}") # Print the type of the exception
             if "can't be used in 'await' expression" in str(e):
                  print("[Debug] Caught the specific 'await' expression error.")
-            # Use the protocol object for quit if it exists
-            if self.engine:
+            # If self.engine is a SimpleEngine instance, quit() is sync and handles transport
+            if isinstance(self.engine, chess.engine.SimpleEngine):
+                 try: self.engine.quit()
+                 except: pass
+            # Fallback if engine wasn't fully created or is raw protocol
+            elif self.engine: # Should be the protocol object in this case
                  try: await self.engine.quit()
                  except: pass
-             # Close transport if it exists
-            if hasattr(self, '_engine_transport') and self._engine_transport:
-                 self._engine_transport.close()
+                 # Manually close transport if it exists from popen_uci step
+                 transport = getattr(self, '_engine_transport', None)
+                 if transport: transport.close()
+
             self.engine = None # Ensure engine is None if failed
             # Keep existing error handling below
             # Notify the user in the channel if the message exists
@@ -1274,26 +1280,28 @@ class ChessBotView(ui.View):
         # Don't edit the message here, let end_game or on_timeout handle the final update
 
     async def stop_engine(self):
-        """Safely quits the chess engine using the base protocol."""
-        engine_protocol = self.engine
-        transport = getattr(self, '_engine_transport', None)
-        self.engine = None # Set to None immediately
-        self._engine_transport = None # Clear transport reference
-
-        if engine_protocol:
+        """Safely quits the chess engine (assuming self.engine is SimpleEngine)."""
+        if isinstance(self.engine, chess.engine.SimpleEngine):
+            engine_to_stop = self.engine
+            self.engine = None # Set to None immediately
             try:
-                # protocol.quit() is ASYNC
-                await engine_protocol.quit()
-                print("Stockfish engine quit command sent successfully via base protocol.")
+                # SimpleEngine.quit() is SYNC and handles transport closure
+                engine_to_stop.quit()
+                print("Stockfish engine quit command sent successfully via SimpleEngine.")
             except (chess.engine.EngineError, chess.engine.EngineTerminatedError, Exception) as e:
-                print(f"Error sending quit command to Stockfish engine: {e}")
-
-        if transport:
-            try:
-                transport.close()
-                print("Engine transport closed.")
-            except Exception as e:
-                print(f"Error closing engine transport: {e}")
+                print(f"Error quitting Stockfish engine via SimpleEngine: {e}")
+        elif self.engine:
+             # Fallback for unexpected state (shouldn't happen with current start_engine)
+             print("[Warning] stop_engine called but self.engine is not SimpleEngine. Attempting basic cleanup.")
+             try:
+                 # Try async quit if it's a raw protocol
+                 await self.engine.quit()
+             except: pass
+             transport = getattr(self, '_engine_transport', None)
+             if transport:
+                 try: transport.close()
+                 except: pass
+             self.engine = None
 
 
     async def on_timeout(self):
