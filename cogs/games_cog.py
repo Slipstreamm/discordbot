@@ -974,19 +974,10 @@ class ChessBotView(ui.View):
             self.transport, self.protocol = await chess.engine.popen_uci(stockfish_path)
             print(f"Stockfish process opened via popen_uci. Transport: {self.transport}, Protocol Type: {type(self.protocol)}")
 
-            # --- Add logging ---
-            initialized_state_before = self.protocol._initialized if hasattr(self.protocol, '_initialized') else 'N/A'
-            print(f"ChessBotView Instance {id(self)}: About to call protocol.initialize(). Current protocol state (_initialized): {initialized_state_before}")
-            # -------------------
-
-            # Initialize the engine via UCI commands (This performs the handshake)
-            await self.protocol.initialize()
-            print("Stockfish initialized via UCI.")
-
-            # --- Add logging ---
-            initialized_state_after = self.protocol._initialized if hasattr(self.protocol, '_initialized') else 'N/A'
-            print(f"ChessBotView Instance {id(self)}: protocol.initialize() completed. Current protocol state (_initialized): {initialized_state_after}")
-            # -------------------
+            # It seems popen_uci implicitly handles the UCI handshake.
+            # The explicit call to self.protocol.initialize() was causing the 'engine already initialized' error.
+            # We can proceed directly to configuration.
+            print("Stockfish handshake likely completed implicitly by popen_uci.")
 
             # Configure Stockfish options
             print("Configuring Stockfish...")
