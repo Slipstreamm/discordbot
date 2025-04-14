@@ -905,8 +905,8 @@ class ChessBotView(ui.View):
         self.bot_color = not player_color
         self.variant = variant.lower()
         self.message: Optional[discord.Message] = None
-        self.engine: Optional[chess.engine.SimpleEngine] = None
-        self.transport: Optional[chess.engine.BaseTransport] = None # Add transport attribute
+        self.protocol: Optional[chess.engine.UciProtocol] = None # Renamed from engine
+        self.transport: Optional[chess.engine.BaseTransport] = None
         self.skill_level = max(0, min(20, skill_level)) # Clamp skill level
         self.think_time = max(0.1, min(5.0, think_time)) # Clamp think time
         self.is_thinking = False # Flag to prevent interaction during bot's turn
@@ -971,32 +971,31 @@ class ChessBotView(ui.View):
             print(f"Attempting to start Stockfish from: {stockfish_path}")
 
             # Use the async popen_uci to get transport and protocol
-            self.transport, protocol = await chess.engine.popen_uci(stockfish_path)
-            print(f"Stockfish process opened via popen_uci. Transport: {self.transport}, Protocol: {type(protocol)}")
+            self.transport, self.protocol = await chess.engine.popen_uci(stockfish_path)
+            print(f"Stockfish process opened via popen_uci. Transport: {self.transport}, Protocol Type: {type(self.protocol)}")
 
-            # Wrap the protocol with SimpleEngine
-            self.engine = chess.engine.SimpleEngine(protocol)
-            print(f"Protocol wrapped in SimpleEngine. Engine object type: {type(self.engine)}")
+            # Check if protocol object seems valid before proceeding
+            if not hasattr(self.protocol, 'configure') or not hasattr(self.protocol, 'position'):
+                 raise chess.engine.EngineError(f"UciProtocol object is missing expected methods (configure/position). Type: {type(self.protocol)}")
 
-            # Check if engine object seems valid before proceeding (methods should be on SimpleEngine)
-            if not hasattr(self.engine, 'configure') or not hasattr(self.engine, 'position'):
-                 # If this happens, something is fundamentally wrong with the SimpleEngine wrapper
-                 raise chess.engine.EngineError(f"SimpleEngine object is missing expected methods (configure/position). Type: {type(self.engine)}")
+            # Initialize the engine via UCI commands
+            await self.protocol.initialize()
+            print("Stockfish initialized via UCI.")
 
-            # Configure Stockfish
+            # Configure Stockfish options
             print("Configuring Stockfish...")
             options = {"Skill Level": self.skill_level}
             if self.variant == "chess960":
                 options["UCI_Chess960"] = "true"
-            await self.engine.configure(options)
+            await self.protocol.configure(options)
 
             # Set position (handles standard and Chess960)
-            await self.engine.position(self.board)
+            await self.protocol.position(self.board)
 
-            print(f"Stockfish engine started for {self.variant} with skill level {self.skill_level}.")
+            print(f"Stockfish protocol configured for {self.variant} with skill level {self.skill_level}.")
         except (FileNotFoundError, OSError, chess.engine.EngineError, Exception) as e:
-            print(f"Failed to start Stockfish engine: {e}")
-            self.engine = None # Ensure engine is None if failed
+            print(f"Failed to start Stockfish engine/protocol: {e}")
+            self.protocol = None # Ensure protocol is None if failed
             # Optionally notify the user in the channel if the message exists
             if self.message:
                 try:
@@ -1064,12 +1063,12 @@ class ChessBotView(ui.View):
                 if self.message:
                     await self.update_message(self.message, status_prefix="Your turn.")
             else:
-                 print("ChessBotView: Engine returned no move.")
+                 print("ChessBotView: Engine returned no bestmove.")
                  if self.message:
-                     await self.update_message(self.message, status_prefix="Bot failed to move. Your turn?")
+                     await self.update_message(self.message, status_prefix="Bot failed to find a move. Your turn?")
 
         except (chess.engine.EngineError, Exception) as e:
-            print(f"Error during bot move: {e}")
+            print(f"Error during bot move analysis: {e}")
             if self.message:
                  try:
                      # Try to inform the user about the error
@@ -1177,20 +1176,20 @@ class ChessBotView(ui.View):
         # Don't edit the message here, let end_game or on_timeout handle the final update
 
     async def stop_engine(self):
-        """Safely quits the chess engine and closes the transport."""
+        """Safely quits the chess engine protocol and closes the transport."""
         # First, try to quit the engine via UCI protocol
-        if self.engine:
-            engine_to_stop = self.engine
-            self.engine = None # Set to None immediately to prevent further use
+        if self.protocol:
+            protocol_to_stop = self.protocol
+            self.protocol = None # Set to None immediately to prevent further use
             try:
-                await engine_to_stop.quit()
-                print("Stockfish engine quit command sent successfully.")
+                await protocol_to_stop.quit()
+                print("Stockfish protocol quit command sent successfully.")
             except (chess.engine.EngineError, BrokenPipeError, Exception) as e:
                 # BrokenPipeError can happen if engine process already terminated
                 if not isinstance(e, BrokenPipeError):
-                     print(f"Error sending quit command to Stockfish engine: {e}")
+                     print(f"Error sending quit command to Stockfish protocol: {e}")
 
-        # Regardless of engine quit success, close the transport
+        # Regardless of protocol quit success, close the transport
         if self.transport:
             transport_to_close = self.transport
             self.transport = None # Set to None immediately
@@ -1846,6 +1845,6 @@ async def setup(bot: commands.Bot):
     if stockfish_available:
         print("GamesCog loaded successfully with Stockfish.")
     else:
-        print("GamesCog loaded, but Stockfish engine not found or not executable. Chess bot commands will fail.")
+         print("GamesCog loaded, but Stockfish engine not found or not executable. Chess bot commands will fail.")
 
-    # Note: The `chessbot` commands already handle the `view.engine is None` case gracefully.
+    # Note: The `chessbot` commands already handle the `view.protocol is None` case gracefully.
