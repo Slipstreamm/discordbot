@@ -970,12 +970,17 @@ class ChessBotView(ui.View):
             stockfish_path = get_stockfish_path()
             print(f"Attempting to start Stockfish from: {stockfish_path}")
 
-            # SimpleEngine.popen_uci is synchronous, returns the engine instance directly
-            self.engine = chess.engine.SimpleEngine.popen_uci(stockfish_path)
-            print(f"Stockfish process opened. Engine object type: {type(self.engine)}")
+            # Use the async popen_uci to get transport and protocol
+            self.transport, protocol = await chess.engine.popen_uci(stockfish_path)
+            print(f"Stockfish process opened via popen_uci. Transport: {self.transport}, Protocol: {type(protocol)}")
 
-            # Check if engine object seems valid before proceeding
+            # Wrap the protocol with SimpleEngine
+            self.engine = chess.engine.SimpleEngine(protocol)
+            print(f"Protocol wrapped in SimpleEngine. Engine object type: {type(self.engine)}")
+
+            # Check if engine object seems valid before proceeding (methods should be on SimpleEngine)
             if not hasattr(self.engine, 'configure') or not hasattr(self.engine, 'position'):
+                 # If this happens, something is fundamentally wrong with the SimpleEngine wrapper
                  raise chess.engine.EngineError(f"SimpleEngine object is missing expected methods (configure/position). Type: {type(self.engine)}")
 
             # Configure Stockfish
@@ -1172,17 +1177,28 @@ class ChessBotView(ui.View):
         # Don't edit the message here, let end_game or on_timeout handle the final update
 
     async def stop_engine(self):
-        """Safely quits the chess engine."""
+        """Safely quits the chess engine and closes the transport."""
+        # First, try to quit the engine via UCI protocol
         if self.engine:
             engine_to_stop = self.engine
             self.engine = None # Set to None immediately to prevent further use
             try:
                 await engine_to_stop.quit()
-                print("Stockfish engine quit successfully.")
+                print("Stockfish engine quit command sent successfully.")
             except (chess.engine.EngineError, BrokenPipeError, Exception) as e:
                 # BrokenPipeError can happen if engine process already terminated
                 if not isinstance(e, BrokenPipeError):
-                     print(f"Error quitting Stockfish engine: {e}")
+                     print(f"Error sending quit command to Stockfish engine: {e}")
+
+        # Regardless of engine quit success, close the transport
+        if self.transport:
+            transport_to_close = self.transport
+            self.transport = None # Set to None immediately
+            try:
+                transport_to_close.close()
+                print("Stockfish transport closed successfully.")
+            except Exception as e:
+                print(f"Error closing Stockfish transport: {e}")
 
     async def on_timeout(self):
         if not self.is_finished(): # Only act if not already stopped
