@@ -153,7 +153,7 @@ class Rule34Cog(commands.Cog):
             content = f"{random_result['file_url']}"
             await interaction.response.edit_message(content=content, view=self)
 
-        @discord.ui.button(label="New Message", style=discord.ButtonStyle.success)
+        @discord.ui.button(label="Random In New Message", style=discord.ButtonStyle.success)
         async def new_message(self, interaction: discord.Interaction, button: Button):
             random_result = random.choice(self.all_results)
             content = f"{random_result['file_url']}"
