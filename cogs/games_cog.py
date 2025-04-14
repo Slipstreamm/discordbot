@@ -1,12 +1,6 @@
 import discord
 from discord.ext import commands
 from discord import app_commands, ui
-import discord
-from discord.ext import commands
-from discord import app_commands, ui
-import discord
-from discord.ext import commands
-from discord import app_commands, ui
 import random
 import asyncio
 from typing import Optional, List, Union # Added Union
@@ -26,13 +20,16 @@ def generate_board_image(board: chess.Board, last_move: Optional[chess.Move] = N
     DARK_COLOR = (181, 136, 99)  # Dark wood
     HIGHLIGHT_LIGHT = (205, 210, 106, 180) # Semi-transparent yellow for light squares
     HIGHLIGHT_DARK = (170, 162, 58, 180)   # Semi-transparent yellow for dark squares
-
-    img = Image.new("RGB", (BOARD_SIZE, BOARD_SIZE), DARK_COLOR)
-    draw = ImageDraw.Draw(img, "RGBA") # Use RGBA for transparency support
-
-    # Load the bundled DejaVu Sans font
+    MARGIN = 20  # Add margin for rank and file labels
+    TOTAL_SIZE = BOARD_SIZE + 2 * MARGIN
+    
+    # Create image with margins
+    img = Image.new("RGB", (TOTAL_SIZE, TOTAL_SIZE), (50, 50, 50))  # Dark gray background
+    draw = ImageDraw.Draw(img, "RGBA") # Use RGBA for transparency support    # Load the bundled DejaVu Sans font
     font = None
+    label_font = None
     font_size = int(SQUARE_SIZE * 0.8)
+    label_font_size = int(SQUARE_SIZE * 0.4)
     try:
         # Construct path relative to this script file
         SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,12 +39,12 @@ def generate_board_image(board: chess.Board, last_move: Optional[chess.Move] = N
         font_path = os.path.join(PROJECT_ROOT, FONT_DIR_NAME, FONT_FILE_NAME)
 
         font = ImageFont.truetype(font_path, font_size)
+        label_font = ImageFont.truetype(font_path, label_font_size)
         print(f"[Debug] Loaded font from bundled path: {font_path}")
     except IOError:
         print(f"Warning: Could not load bundled font at '{font_path}'. Using default font. Chess pieces might not render correctly.")
         font = ImageFont.load_default() # Fallback
-
-    # Determine squares to highlight based on the last move
+        label_font = ImageFont.load_default() # Fallback for labels too    # Determine squares to highlight based on the last move
     highlight_squares = set()
     if last_move:
         highlight_squares.add(last_move.from_square)
@@ -60,8 +57,8 @@ def generate_board_image(board: chess.Board, last_move: Optional[chess.Move] = N
             display_rank = rank if perspective_white else 7 - rank
             display_file = file if perspective_white else 7 - file
 
-            x0 = display_file * SQUARE_SIZE
-            y0 = (7 - display_rank) * SQUARE_SIZE # Y is inverted in PIL
+            x0 = MARGIN + display_file * SQUARE_SIZE
+            y0 = MARGIN + (7 - display_rank) * SQUARE_SIZE # Y is inverted in PIL
             x1 = x0 + SQUARE_SIZE
             y1 = y0 + SQUARE_SIZE
 
@@ -75,29 +72,106 @@ def generate_board_image(board: chess.Board, last_move: Optional[chess.Move] = N
                  highlight_color = HIGHLIGHT_LIGHT if is_light else HIGHLIGHT_DARK
                  draw.rectangle([x0, y0, x1, y1], fill=highlight_color)
 
+    # Load piece images from the pieces-png directory
+    PIECES_DIR = os.path.join(PROJECT_ROOT, "pieces-png")
+    piece_images = {}
+    for color in ["white", "black"]:
+        for piece in ["king", "queen", "rook", "bishop", "knight", "pawn"]:
+            piece_key = f"{color}-{piece}"
+            piece_path = os.path.join(PIECES_DIR, f"{piece_key}.png")
+            try:
+                piece_images[piece_key] = Image.open(piece_path).convert("RGBA")
+            except IOError:
+                print(f"Warning: Could not load image for {piece_key} at {piece_path}.")
+
+    # Draw pieces using PNG images
+    for rank in range(8):
+        for file in range(8):
+            square = chess.square(file, rank)
+            # Flip board if perspective is black
+            display_rank = rank if perspective_white else 7 - rank
+            display_file = file if perspective_white else 7 - file
+
+            x0 = MARGIN + display_file * SQUARE_SIZE
+            y0 = MARGIN + (7 - display_rank) * SQUARE_SIZE # Y is inverted in PIL
+
             # Draw piece
             piece = board.piece_at(square)
             if piece:
-                piece_symbol = piece.unicode_symbol()
-                # Calculate text position to center it using textbbox for modern Pillow
-                try:
-                    bbox = draw.textbbox((0, 0), piece_symbol, font=font)
-                    text_width = bbox[2] - bbox[0]
-                    text_height = bbox[3] - bbox[1]
-                    text_x = x0 + (SQUARE_SIZE - text_width) / 2
-                    text_y = y0 + (SQUARE_SIZE - text_height) / 2 - (SQUARE_SIZE * 0.05) # Small offset adjustment
-                except AttributeError: # Fallback for older Pillow versions using getsize
-                     # Note: textsize is deprecated, but included for compatibility
-                     try:
-                         text_width, text_height = draw.textsize(piece_symbol, font=font)
-                     except AttributeError: # Even older Pillow? Unlikely but safe.
-                         text_width, text_height = font.getsize(piece_symbol)
-                     text_x = x0 + (SQUARE_SIZE - text_width) / 2
-                     text_y = y0 + (SQUARE_SIZE - text_height) / 2 - (SQUARE_SIZE * 0.05)
+                piece_color = "white" if piece.color == chess.WHITE else "black"
+                piece_type = piece.piece_type
+                piece_name = {
+                    chess.KING: "king",
+                    chess.QUEEN: "queen",
+                    chess.ROOK: "rook",
+                    chess.BISHOP: "bishop",
+                    chess.KNIGHT: "knight",
+                    chess.PAWN: "pawn"
+                }.get(piece_type, None)
 
-                # Piece color (simple black/white)
-                piece_color = (255, 255, 255) if piece.color == chess.WHITE else (0, 0, 0)
-                draw.text((text_x, text_y), piece_symbol, fill=piece_color, font=font)
+                if piece_name:
+                    piece_key = f"{piece_color}-{piece_name}"
+                    piece_image = piece_images.get(piece_key)
+                    if piece_image:
+                        piece_image_resized = piece_image.resize((SQUARE_SIZE, SQUARE_SIZE), Image.ANTIALIAS)
+                        img.paste(piece_image_resized, (x0, y0), piece_image_resized)
+
+    # Draw file labels (a-h) along the bottom
+    text_color = (220, 220, 220)  # Light gray color for labels
+    for file in range(8):
+        # Determine the correct file label based on perspective
+        display_file = file if perspective_white else 7 - file
+        file_label = chr(97 + display_file)  # 97 is ASCII for 'a'
+        
+        # Position for the file label (bottom)
+        x = MARGIN + file * SQUARE_SIZE + SQUARE_SIZE // 2
+        y = MARGIN + 8 * SQUARE_SIZE + MARGIN // 2
+        
+        # Calculate text position for centering
+        try:
+            bbox = draw.textbbox((0, 0), file_label, font=label_font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            text_x = x - text_width // 2
+            text_y = y - text_height // 2
+        except AttributeError:
+            # Fallback for older Pillow versions
+            try:
+                text_width, text_height = draw.textsize(file_label, font=label_font)
+            except:
+                text_width, text_height = label_font.getsize(file_label)
+            text_x = x - text_width // 2
+            text_y = y - text_height // 2
+        
+        draw.text((text_x, text_y), file_label, fill=text_color, font=label_font)
+        
+    # Draw rank labels (1-8) along the side
+    for rank in range(8):
+        # Determine the correct rank label based on perspective
+        display_rank = rank if perspective_white else 7 - rank
+        rank_label = str(8 - display_rank)  # Ranks go from 8 to 1
+        
+        # Position for the rank label (left side)
+        x = MARGIN // 2
+        y = MARGIN + display_rank * SQUARE_SIZE + SQUARE_SIZE // 2
+        
+        # Calculate text position for centering
+        try:
+            bbox = draw.textbbox((0, 0), rank_label, font=label_font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            text_x = x - text_width // 2
+            text_y = y - text_height // 2
+        except AttributeError:
+            # Fallback for older Pillow versions
+            try:
+                text_width, text_height = draw.textsize(rank_label, font=label_font)
+            except:
+                text_width, text_height = label_font.getsize(rank_label)
+            text_x = x - text_width // 2
+            text_y = y - text_height // 2
+        
+        draw.text((text_x, text_y), rank_label, fill=text_color, font=label_font)
 
     # Save image to a bytes buffer
     img_byte_arr = io.BytesIO()
