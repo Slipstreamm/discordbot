@@ -974,11 +974,7 @@ class ChessBotView(ui.View):
             self.transport, self.protocol = await chess.engine.popen_uci(stockfish_path)
             print(f"Stockfish process opened via popen_uci. Transport: {self.transport}, Protocol Type: {type(self.protocol)}")
 
-            # Check if protocol object seems valid before proceeding
-            if not hasattr(self.protocol, 'configure') or not hasattr(self.protocol, 'position'):
-                 raise chess.engine.EngineError(f"UciProtocol object is missing expected methods (configure/position). Type: {type(self.protocol)}")
-
-            # Initialize the engine via UCI commands
+            # Initialize the engine via UCI commands (This performs the handshake)
             await self.protocol.initialize()
             print("Stockfish initialized via UCI.")
 
