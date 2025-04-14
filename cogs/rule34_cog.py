@@ -2,6 +2,7 @@ import os
 import discord
 from discord.ext import commands
 from discord import app_commands
+from discord.ui import Button, View
 import random
 import aiohttp
 import time
@@ -35,8 +36,11 @@ class Rule34Cog(commands.Cog):
             print(f"Failed to save Rule34 cache file ({CACHE_FILE}): {e}")
 
     # Updated _rule34_logic
-    async def _rule34_logic(self, interaction_or_ctx, tags: str, hidden: bool = False) -> typing.Optional[str]:
-        """Core logic for the rule34 command. Returns error message string or None."""
+    async def _rule34_logic(self, interaction_or_ctx, tags: str, hidden: bool = False) -> typing.Union[str, tuple]:
+        """Core logic for the rule34 command. 
+        Returns either:
+        - Error message string, or
+        - Tuple of (random_result_url, all_results) on success"""
         base_url = "https://api.rule34.xxx/index.php"
         all_results = []
         current_pid = 0
@@ -83,7 +87,7 @@ class Rule34Cog(commands.Cog):
                     elif is_interaction: # Slash
                         # Send cached result respecting hidden flag
                         await interaction_or_ctx.followup.send(content, ephemeral=hidden)
-                    return None # Success, message sent
+                    return (content, all_results) # Success, return both random and all results
 
         # If no valid cache or cache is outdated, fetch from API
         all_results = [] # Reset results if cache was invalid/outdated
@@ -134,7 +138,7 @@ class Rule34Cog(commands.Cog):
                     elif is_interaction: # Slash
                         # Send result respecting hidden flag
                         await interaction_or_ctx.followup.send(result_content, ephemeral=hidden)
-                    return None # Success
+                    return (result_content, all_results) # Success, return both random and all results
 
             except Exception as e:
                 error_msg = f"An error occurred: {e}"
@@ -142,23 +146,85 @@ class Rule34Cog(commands.Cog):
                 # Return error message, ephemeral handled by caller
                 return error_msg
 
+    class Rule34Buttons(View):
+        def __init__(self, cog, tags: str, all_results: list, hidden: bool = False):
+            super().__init__(timeout=60)
+            self.cog = cog
+            self.tags = tags
+            self.all_results = all_results
+            self.hidden = hidden
+            self.current_index = 0
+
+        @discord.ui.button(label="New Random", style=discord.ButtonStyle.primary)
+        async def new_random(self, interaction: discord.Interaction, button: Button):
+            random_result = random.choice(self.all_results)
+            content = f"{random_result['file_url']}"
+            await interaction.response.edit_message(content=content, view=self)
+
+        @discord.ui.button(label="Browse Results", style=discord.ButtonStyle.secondary)
+        async def browse_results(self, interaction: discord.Interaction, button: Button):
+            if len(self.all_results) == 0:
+                await interaction.response.send_message("No results to browse", ephemeral=True)
+                return
+
+            self.current_index = 0
+            result = self.all_results[self.current_index]
+            content = f"Result 1/{len(self.all_results)}:\n{result['file_url']}"
+            view = self.BrowseView(self.cog, self.tags, self.all_results, self.hidden)
+            await interaction.response.edit_message(content=content, view=view)
+
+        class BrowseView(View):
+            def __init__(self, cog, tags: str, all_results: list, hidden: bool = False):
+                super().__init__(timeout=60)
+                self.cog = cog
+                self.tags = tags
+                self.all_results = all_results
+                self.hidden = hidden
+                self.current_index = 0
+
+            @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+            async def previous(self, interaction: discord.Interaction, button: Button):
+                if self.current_index > 0:
+                    self.current_index -= 1
+                else:
+                    self.current_index = len(self.all_results) - 1
+                result = self.all_results[self.current_index]
+                content = f"Result {self.current_index + 1}/{len(self.all_results)}:\n{result['file_url']}"
+                await interaction.response.edit_message(content=content, view=self)
+
+            @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
+            async def next(self, interaction: discord.Interaction, button: Button):
+                if self.current_index < len(self.all_results) - 1:
+                    self.current_index += 1
+                else:
+                    self.current_index = 0
+                result = self.all_results[self.current_index]
+                content = f"Result {self.current_index + 1}/{len(self.all_results)}:\n{result['file_url']}"
+                await interaction.response.edit_message(content=content, view=self)
+
+            @discord.ui.button(label="Back", style=discord.ButtonStyle.danger)
+            async def back(self, interaction: discord.Interaction, button: Button):
+                random_result = random.choice(self.all_results)
+                content = f"{random_result['file_url']}"
+                view = Rule34Cog.Rule34Buttons(self.cog, self.tags, self.all_results, self.hidden)
+                await interaction.response.edit_message(content=content, view=view)
+
     # --- Prefix Command ---
     @commands.command(name="rule34")
     async def rule34(self, ctx: commands.Context, *, tags: str = "kasane_teto"):
         """Search for images on Rule34 with the provided tags."""
         # Call logic, hidden is False by default and irrelevant for prefix
         response = await self._rule34_logic(ctx, tags)
-        # Logic handles sending/editing the message directly for prefix commands
-        # If an error message is returned, it means the loading message wasn't sent or edited
-        if response is not None:
-             # Check if loading_msg was created before trying to edit
-             # This path shouldn't normally be hit if logic works correctly
-             # but handle defensively. A simple reply might be better here.
-             print(f"Rule34 prefix command received error response unexpectedly: {response}")
-             await ctx.reply(response) # Send error as a new message
+        
+        if isinstance(response, tuple):
+            content, all_results = response
+            view = self.Rule34Buttons(self, tags, all_results)
+            await ctx.send(content, view=view)
+        elif response is not None:
+            print(f"Rule34 prefix command received error response unexpectedly: {response}")
+            await ctx.reply(response)
 
     # --- Slash Command ---
-    # Updated signature and logic
     @app_commands.command(name="rule34", description="Get random image from rule34 with specified tags")
     @app_commands.describe(
         tags="The tags to search for (e.g., 'kasane_teto rating:safe')",
@@ -168,23 +234,61 @@ class Rule34Cog(commands.Cog):
         """Slash command version of rule34."""
         # Pass hidden parameter to logic
         response = await self._rule34_logic(interaction, tags, hidden=hidden)
-        # If response is None, the logic already sent the result via followup/deferral
-
-        if response is not None: # An error occurred
-            # Ensure interaction hasn't already been responded to or deferred incorrectly
+        
+        if isinstance(response, tuple):
+            content, all_results = response
+            view = self.Rule34Buttons(self, tags, all_results, hidden)
+            if interaction.response.is_done():
+                await interaction.followup.send(content, view=view, ephemeral=hidden)
+            else:
+                await interaction.response.send_message(content, view=view, ephemeral=hidden)
+        elif response is not None: # An error occurred
             if not interaction.response.is_done():
-                # Send error message ephemerally if hidden is True OR if it's the NSFW channel error
                 ephemeral_error = hidden or response.startswith('This command can only be used')
                 await interaction.response.send_message(response, ephemeral=ephemeral_error)
             else:
-                # If deferred, use followup. Send ephemerally based on hidden flag.
-                # Check if we can still send a followup
                 try:
                     await interaction.followup.send(response, ephemeral=hidden)
                 except discord.errors.NotFound:
-                     print(f"Rule34 slash command: Interaction expired before sending error followup for tags '{tags}'.")
+                    print(f"Rule34 slash command: Interaction expired before sending error followup for tags '{tags}'.")
                 except discord.HTTPException as e:
-                     print(f"Rule34 slash command: Failed to send error followup for tags '{tags}': {e}")
+                    print(f"Rule34 slash command: Failed to send error followup for tags '{tags}': {e}")
+
+    # --- New Browse Command ---
+    @app_commands.command(name="rule34browse", description="Browse Rule34 results with navigation buttons")
+    @app_commands.describe(
+        tags="The tags to search for (e.g., 'kasane_teto rating:safe')",
+        hidden="Set to True to make the response visible only to you (default: False)"
+    )
+    async def rule34_browse(self, interaction: discord.Interaction, tags: str, hidden: bool = False):
+        """Browse Rule34 results with navigation buttons."""
+        response = await self._rule34_logic(interaction, tags, hidden=hidden)
+        
+        if isinstance(response, tuple):
+            _, all_results = response
+            if len(all_results) == 0:
+                content = "No results found"
+                await interaction.response.send_message(content, ephemeral=hidden)
+                return
+                
+            result = all_results[0]
+            content = f"Result 1/{len(all_results)}:\n{result['file_url']}"
+            view = self.Rule34Buttons.BrowseView(self, tags, all_results, hidden)
+            if interaction.response.is_done():
+                await interaction.followup.send(content, view=view, ephemeral=hidden)
+            else:
+                await interaction.response.send_message(content, view=view, ephemeral=hidden)
+        elif response is not None: # An error occurred
+            if not interaction.response.is_done():
+                ephemeral_error = hidden or response.startswith('This command can only be used')
+                await interaction.response.send_message(response, ephemeral=ephemeral_error)
+            else:
+                try:
+                    await interaction.followup.send(response, ephemeral=hidden)
+                except discord.errors.NotFound:
+                    print(f"Rule34 browse command: Interaction expired before sending error followup for tags '{tags}'.")
+                except discord.HTTPException as e:
+                    print(f"Rule34 browse command: Failed to send error followup for tags '{tags}': {e}")
 
 
 async def setup(bot):
