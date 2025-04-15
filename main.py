@@ -8,10 +8,6 @@ import asyncio
 from commands import load_all_cogs
 from error_handler import handle_error
 from utils import reload_script
-import hmac
-import hashlib
-from flask import Flask, request, abort
-import subprocess
 
 # Load environment variables from .env file
 load_dotenv()
@@ -20,37 +16,6 @@ load_dotenv()
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
-GITHUB_SECRET = os.getenv("GITHUB_SECRET").encode()
-app = Flask(__name__)
-
-def verify_signature(payload, signature):
-    mac = hmac.new(GITHUB_SECRET, payload, hashlib.sha256)
-    expected = "sha256=" + mac.hexdigest()
-    return hmac.compare_digest(expected, signature)
-
-@app.route("/github-webhook-123", methods=["POST"])
-def webhook():
-    signature = request.headers.get("X-Hub-Signature-256")
-    if not signature or not verify_signature(request.data, signature):
-        abort(403)
-
-    asyncio.create_task(reload_script())
-    return "OK"
-
-def run_flask():
-    while True:
-        try:
-            app.run(host="127.0.0.1", port=5000)
-            break  # Exit loop if Flask server starts successfully
-        except OSError as e:
-            if "Address already in use" in str(e):
-                print("Port 5000 is in use. Waiting before trying again...")
-                # Wait for 1 second before retrying
-                import time
-                time.sleep(1)
-            else:
-                raise
 
 # Create bot instance with command prefix '!' and enable the application commands
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -93,9 +58,6 @@ async def main():
     if not TOKEN:
         raise ValueError("No token found. Make sure to set DISCORD_TOKEN in your .env file.")
 
-    # Start Flask server as a separate process
-    flask_process = subprocess.Popen([sys.executable, "flask_server.py"], cwd=os.path.dirname(__file__))
-
     try:
         async with bot:
             # Load all cogs from the 'cogs' directory
@@ -103,8 +65,7 @@ async def main():
             # Start the bot using start() for async context
             await bot.start(TOKEN)
     finally:
-        # Terminate the Flask server process when the bot stops
-        flask_process.terminate()
+        print("Bot process terminated.")
 
 # Run the main async function
 if __name__ == '__main__':
