@@ -13,3 +13,4 @@ pynacl
 ffmpeg
 chess
 Pillow
+flask
