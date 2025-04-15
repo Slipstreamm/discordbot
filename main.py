@@ -87,14 +87,14 @@ async def main():
         # Start the bot using start() for async context
         await bot.start(TOKEN)
 
-# Run the main async function
-if __name__ == '__main__':
-    try:
         asyncio.sleep(1)
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
+
+# Run the main async function
+if __name__ == '__main__':
+    try:
         asyncio.run(main())
-        # Sleep to avoid port conflicts
     except KeyboardInterrupt:
         print("Bot stopped by user.")
     except Exception as e:
