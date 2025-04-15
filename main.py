@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 import sys
 import asyncio
+import subprocess
 from commands import load_all_cogs
 from error_handler import handle_error
 from utils import reload_script
@@ -58,6 +59,9 @@ async def main():
     if not TOKEN:
         raise ValueError("No token found. Make sure to set DISCORD_TOKEN in your .env file.")
 
+    # Start Flask server as a separate process
+    flask_process = subprocess.Popen([sys.executable, "flask_server.py"], cwd=os.path.dirname(__file__))
+
     try:
         async with bot:
             # Load all cogs from the 'cogs' directory
@@ -65,7 +69,9 @@ async def main():
             # Start the bot using start() for async context
             await bot.start(TOKEN)
     finally:
-        print("Bot process terminated.")
+        # Terminate the Flask server process when the bot stops
+        flask_process.terminate()
+        print("Flask server process terminated.")
 
 # Run the main async function
 if __name__ == '__main__':
