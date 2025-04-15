@@ -11,6 +11,7 @@ from utils import reload_script
 import hmac
 import hashlib
 from flask import Flask, request, abort
+import subprocess
 
 # Load environment variables from .env file
 load_dotenv()
@@ -92,15 +93,18 @@ async def main():
     if not TOKEN:
         raise ValueError("No token found. Make sure to set DISCORD_TOKEN in your .env file.")
 
-    # Start Flask server in a separate thread
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
+    # Start Flask server as a separate process
+    flask_process = subprocess.Popen([sys.executable, "flask_server.py"], cwd=os.path.dirname(__file__))
 
-    async with bot:
-        # Load all cogs from the 'cogs' directory
-        await load_all_cogs(bot)
-        # Start the bot using start() for async context
-        await bot.start(TOKEN)
+    try:
+        async with bot:
+            # Load all cogs from the 'cogs' directory
+            await load_all_cogs(bot)
+            # Start the bot using start() for async context
+            await bot.start(TOKEN)
+    finally:
+        # Terminate the Flask server process when the bot stops
+        flask_process.terminate()
 
 # Run the main async function
 if __name__ == '__main__':
