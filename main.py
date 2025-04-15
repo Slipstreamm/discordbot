@@ -1,14 +1,16 @@
+import threading
 import discord
 from discord.ext import commands
 import os
-from auto_updater import check_for_updates
 from dotenv import load_dotenv
-import threading
 import sys
 import asyncio
 from commands import load_all_cogs
 from error_handler import handle_error
-from utils import listen_for_reload, set_bot_instance, check_and_reload_hook # Import the hook
+from utils import reload_script
+import hmac
+import hashlib
+from flask import Flask, request, abort
 
 # Load environment variables from .env file
 load_dotenv()
@@ -17,6 +19,26 @@ load_dotenv()
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+
+GITHUB_SECRET = os.getenv("GITHUB_SECRET").encode()
+app = Flask(__name__)
+
+def verify_signature(payload, signature):
+    mac = hmac.new(GITHUB_SECRET, payload, hashlib.sha256)
+    expected = "sha256=" + mac.hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+@app.route("/github-webhook-123", methods=["POST"])
+def webhook():
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not signature or not verify_signature(request.data, signature):
+        abort(403)
+
+    reload_script()
+    return "OK"
+
+def run_flask():
+    app.run(host="127.0.0.1", port=5000)
 
 # Create bot instance with command prefix '!' and enable the application commands
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -34,7 +56,6 @@ async def on_ready():
         print(f"Synced {len(synced)} command(s)")
     except Exception as e:
         print(f"Failed to sync commands: {e}")
-    bot.loop.create_task(check_for_updates())
 
 @bot.event
 async def on_shard_disconnect(shard_id):
@@ -54,16 +75,6 @@ async def on_command_error(ctx, error):
 async def on_app_command_error(interaction, error):
     await handle_error(interaction, error)
 
-# Store the bot instance for reloading purposes (before async setup)
-set_bot_instance(bot)
-
-# Register the before_invoke hook globally
-bot.before_invoke(check_and_reload_hook)
-
-# Start the reload listener in a separate thread
-listener_thread = threading.Thread(target=listen_for_reload, daemon=True)
-listener_thread.start()
-
 async def main():
     """Main async function to load cogs and start the bot."""
     TOKEN = os.getenv('DISCORD_TOKEN')
@@ -79,6 +90,8 @@ async def main():
 # Run the main async function
 if __name__ == '__main__':
     try:
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
         asyncio.run(main())
     except KeyboardInterrupt:
         print("Bot stopped by user.")
