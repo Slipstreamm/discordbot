@@ -53,6 +53,16 @@ async def on_command_error(ctx, error):
 async def on_app_command_error(interaction, error):
     await handle_error(interaction, error)
 
+@commands.command(name="restart", help="Restarts the bot. Owner only.")
+@commands.is_owner()
+async def restart(self, ctx):
+    """Restarts the bot. (Owner Only)"""
+    await ctx.send("Restarting the bot...")
+    await self.bot.close()  # Gracefully close the bot
+    os.execv(sys.executable, [sys.executable] + sys.argv)  # Restart the bot process
+
+bot.add_command(restart)
+
 async def main():
     """Main async function to load cogs and start the bot."""
     TOKEN = os.getenv('DISCORD_TOKEN')

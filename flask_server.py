@@ -28,7 +28,7 @@ def kill_main_process():
 def webhook():
     signature = request.headers.get("X-Hub-Signature-256")
     if not signature or not verify_signature(request.data, signature):
-        abort(403)
+        abort(404) # If its a 404, nobody will suspect theres a real endpoint here
 
     # Restart main.py logic
     print("Webhook received and verified. Restarting bot...")
