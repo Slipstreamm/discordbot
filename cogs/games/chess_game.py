@@ -1238,6 +1238,13 @@ class ChessBotView(ui.View):
         self.board.push(move)
         self.last_move = move
 
+        # Reset selection mode state before updating message
+        self.move_selection_mode = False
+        self.selected_file = None
+        self.selected_rank = None
+        self.selected_square = None
+        self.valid_moves = []
+        
         # Update player's DM
         asyncio.create_task(self._send_or_update_dm())
 
