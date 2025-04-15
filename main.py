@@ -92,7 +92,7 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
         # Sleep to avoid port conflicts
-        asyncio.sleep(3)
+        asyncio.sleep(1)
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
     except KeyboardInterrupt:
