@@ -38,7 +38,18 @@ def webhook():
     return "OK"
 
 def run_flask():
-    app.run(host="127.0.0.1", port=5000)
+    while True:
+        try:
+            app.run(host="127.0.0.1", port=5000)
+            break  # Exit loop if Flask server starts successfully
+        except OSError as e:
+            if "Address already in use" in str(e):
+                print("Port 5000 is in use. Waiting before trying again...")
+                # Wait for 1 second before retrying
+                import time
+                time.sleep(1)
+            else:
+                raise
 
 # Create bot instance with command prefix '!' and enable the application commands
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -81,15 +92,15 @@ async def main():
     if not TOKEN:
         raise ValueError("No token found. Make sure to set DISCORD_TOKEN in your .env file.")
 
+    # Start Flask server in a separate thread
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
     async with bot:
         # Load all cogs from the 'cogs' directory
         await load_all_cogs(bot)
         # Start the bot using start() for async context
         await bot.start(TOKEN)
-
-    asyncio.sleep(1)
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
 
 # Run the main async function
 if __name__ == '__main__':
