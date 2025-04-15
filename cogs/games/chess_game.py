@@ -11,14 +11,22 @@ import asyncio
 from typing import Optional, List, Union
 
 # --- Chess board image generation function ---
-def generate_board_image(board: chess.Board, last_move: Optional[chess.Move] = None, perspective_white: bool = True) -> discord.File:
-    """Generates an image representation of the chess board."""
+def generate_board_image(board: chess.Board, last_move: Optional[chess.Move] = None, perspective_white: bool = True, valid_moves: Optional[List[chess.Move]] = None) -> discord.File:
+    """Generates an image representation of the chess board.
+    
+    Args:
+        board: The chess board to render
+        last_move: The last move made, to highlight source and destination squares
+        perspective_white: Whether to show the board from white's perspective
+        valid_moves: Optional list of valid moves to highlight with dots
+    """
     SQUARE_SIZE = 60
     BOARD_SIZE = 8 * SQUARE_SIZE
     LIGHT_COLOR = (240, 217, 181) # Light wood
     DARK_COLOR = (181, 136, 99)  # Dark wood
     HIGHLIGHT_LIGHT = (205, 210, 106, 180) # Semi-transparent yellow for light squares
     HIGHLIGHT_DARK = (170, 162, 58, 180)   # Semi-transparent yellow for dark squares
+    VALID_MOVE_COLOR = (100, 100, 100, 180) # Semi-transparent dark gray for valid move dots
     MARGIN = 30  # Add margin for rank and file labels
     TOTAL_SIZE = BOARD_SIZE + 2 * MARGIN
     
@@ -115,6 +123,32 @@ def generate_board_image(board: chess.Board, last_move: Optional[chess.Move] = N
                         piece_image_resized = piece_image.resize((SQUARE_SIZE, SQUARE_SIZE), Image.Resampling.LANCZOS)
                         img.paste(piece_image_resized, (x0, y0), piece_image_resized)
 
+    # Draw valid move dots if provided
+    if valid_moves:
+        valid_dest_squares = set()
+        for move in valid_moves:
+            valid_dest_squares.add(move.to_square)
+        
+        for square in valid_dest_squares:
+            file = chess.square_file(square)
+            rank = chess.square_rank(square)
+            
+            # Flip coordinates if perspective is black
+            display_rank = rank if perspective_white else 7 - rank
+            display_file = file if perspective_white else 7 - file
+            
+            # Calculate center of square for dot
+            center_x = MARGIN + display_file * SQUARE_SIZE + SQUARE_SIZE // 2
+            center_y = MARGIN + (7 - display_rank) * SQUARE_SIZE + SQUARE_SIZE // 2
+            
+            # Draw a circle (dot) to indicate valid move
+            dot_radius = SQUARE_SIZE // 6
+            draw.ellipse(
+                [(center_x - dot_radius, center_y - dot_radius), 
+                 (center_x + dot_radius, center_y + dot_radius)], 
+                fill=VALID_MOVE_COLOR
+            )
+    
     # Draw file labels (a-h) along the bottom
     text_color = (220, 220, 220)  # Light gray color for labels
     for file in range(8):
@@ -267,6 +301,13 @@ class ChessView(ui.View):
         self.last_move: Optional[chess.Move] = None # Store last move for highlighting
         self.white_dm_message: Optional[discord.Message] = None # DM message for white player
         self.black_dm_message: Optional[discord.Message] = None # DM message for black player
+        
+        # Button-driven move selection state
+        self.move_selection_mode = False  # Whether we're in button-driven move selection mode
+        self.selected_file = None  # Selected file (0-7) during move selection
+        self.selected_rank = None  # Selected rank (0-7) during move selection
+        self.selected_square = None  # Selected square (0-63) during move selection
+        self.valid_moves = []  # List of valid moves from the selected square
         self.game_pgn = chess.pgn.Game() # Initialize PGN game object
         self.game_pgn.headers["Event"] = "Discord Chess Game"
         self.game_pgn.headers["Site"] = "Discord"
@@ -282,6 +323,7 @@ class ChessView(ui.View):
 
         # Add control buttons
         self.add_item(self.MakeMoveButton())
+        self.add_item(self.SelectMoveButton())
         self.add_item(self.ResignButton())
 
     # --- Button Definitions ---
@@ -299,6 +341,28 @@ class ChessView(ui.View):
             # Open the modal for move input
             await interaction.response.send_modal(MoveInputModal(game_view=view))
 
+    class SelectMoveButton(ui.Button):
+        """Button to start the button-driven move selection process."""
+        def __init__(self):
+            super().__init__(label="Select Move", style=discord.ButtonStyle.primary, custom_id="chess_select_move")
+            
+        async def callback(self, interaction: discord.Interaction):
+            view: 'ChessView' = self.view
+            # Check if it's the correct player's turn
+            if interaction.user != view.current_player:
+                await interaction.response.send_message("It's not your turn!", ephemeral=True)
+                return
+                
+            # Start the move selection process
+            view.move_selection_mode = True
+            view.selected_file = None
+            view.selected_rank = None
+            view.selected_square = None
+            view.valid_moves = []
+            
+            # Show file selection buttons
+            await view.show_file_selection(interaction)
+    
     class ResignButton(ui.Button):
         def __init__(self):
             super().__init__(label="Resign", style=discord.ButtonStyle.danger, custom_id="chess_resign")
@@ -313,6 +377,218 @@ class ChessView(ui.View):
             winner = view.black_player if resigning_player == view.white_player else view.white_player
             await view.end_game(interaction, f"{resigning_player.mention} resigned. {winner.mention} wins! 🏳️")
 
+    # --- Button Classes for Move Selection ---
+    
+    class FileButton(ui.Button):
+        """Button for selecting a file (A-H) in the first phase of move selection."""
+        def __init__(self, file_idx: int):
+            self.file_idx = file_idx
+            file_label = chr(65 + file_idx)  # 65 is ASCII for 'A'
+            super().__init__(label=file_label, style=discord.ButtonStyle.primary)
+            
+        async def callback(self, interaction: discord.Interaction):
+            view: 'ChessView' = self.view
+            
+            # Basic checks
+            if interaction.user != view.current_player:
+                await interaction.response.send_message("It's not your turn!", ephemeral=True)
+                return
+                
+            # Store the selected file and show rank buttons
+            view.selected_file = self.file_idx
+            view.selected_rank = None
+            view.selected_square = None
+            
+            # Show rank selection buttons
+            await view.show_rank_selection(interaction)
+    
+    class RankButton(ui.Button):
+        """Button for selecting a rank (1-8) in the first phase of move selection."""
+        def __init__(self, rank_idx: int):
+            self.rank_idx = rank_idx
+            rank_label = str(8 - rank_idx)  # Ranks are displayed as 8 to 1
+            super().__init__(label=rank_label, style=discord.ButtonStyle.primary)
+            
+        async def callback(self, interaction: discord.Interaction):
+            view: 'ChessView' = self.view
+            
+            # Basic checks
+            if interaction.user != view.current_player:
+                await interaction.response.send_message("It's not your turn!", ephemeral=True)
+                return
+                
+            # Calculate the square index
+            file_idx = view.selected_file
+            rank_idx = self.rank_idx
+            square = chess.square(file_idx, 7 - rank_idx)  # Convert to chess.py square index
+            
+            # Check if the square has a piece of the current player's color
+            piece = view.board.piece_at(square)
+            if piece is None or piece.color != view.board.turn:
+                await interaction.response.send_message("You must select a square with one of your pieces.", ephemeral=True)
+                # Go back to file selection
+                await view.show_file_selection(interaction)
+                return
+                
+            # Find valid moves from this square
+            valid_moves = [move for move in view.board.legal_moves if move.from_square == square]
+            if not valid_moves:
+                await interaction.response.send_message("This piece has no legal moves.", ephemeral=True)
+                # Go back to file selection
+                await view.show_file_selection(interaction)
+                return
+                
+            # Store the selected square and valid moves
+            view.selected_square = square
+            view.valid_moves = valid_moves
+            
+            # Show valid move buttons
+            await view.show_valid_moves(interaction)
+    
+    class MoveButton(ui.Button):
+        """Button for selecting a destination square in the second phase of move selection."""
+        def __init__(self, move: chess.Move):
+            self.move = move
+            # Get the destination square coordinates
+            file_idx = chess.square_file(move.to_square)
+            rank_idx = chess.square_rank(move.to_square)
+            # Create label in algebraic notation (e.g., "e4")
+            label = f"{chr(97 + file_idx)}{rank_idx + 1}"
+            super().__init__(label=label, style=discord.ButtonStyle.success)
+            
+        async def callback(self, interaction: discord.Interaction):
+            view: 'ChessView' = self.view
+            
+            # Basic checks
+            if interaction.user != view.current_player:
+                await interaction.response.send_message("It's not your turn!", ephemeral=True)
+                return
+                
+            # Execute the move
+            await interaction.response.defer()  # Acknowledge the interaction
+            await view.handle_move(interaction, self.move)
+    
+    # --- Button-Driven Move Selection Methods ---
+    
+    async def show_file_selection(self, interaction: discord.Interaction):
+        """Shows buttons for selecting a file (A-H)."""
+        # Clear existing buttons
+        self.clear_items()
+        
+        # Add file selection buttons (A-H)
+        for file_idx in range(8):
+            self.add_item(self.FileButton(file_idx))
+            
+        # Add a cancel button to return to normal view
+        cancel_button = ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="cancel_move_selection")
+        cancel_button.callback = self._cancel_move_selection_callback
+        self.add_item(cancel_button)
+        
+        # Update the message
+        turn_color = "White" if self.board.turn == chess.WHITE else "Black"
+        content = f"Chess: {self.white_player.mention} (White) vs {self.black_player.mention} (Black)\n\nSelect a file (A-H) to choose a piece.\nTurn: **{self.current_player.mention}** ({turn_color})"
+        board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.current_player == self.white_player))
+        
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=content, attachments=[board_image], view=self)
+        else:
+            await interaction.response.edit_message(content=content, attachments=[board_image], view=self)
+    
+    async def show_rank_selection(self, interaction: discord.Interaction):
+        """Shows buttons for selecting a rank (1-8)."""
+        # Clear existing buttons
+        self.clear_items()
+        
+        # Add rank selection buttons (1-8)
+        for rank_idx in range(8):
+            self.add_item(self.RankButton(rank_idx))
+            
+        # Add a back button to return to file selection
+        back_button = ui.Button(label="Back", style=discord.ButtonStyle.secondary, custom_id="back_to_file_selection")
+        back_button.callback = self._back_to_file_selection_callback
+        self.add_item(back_button)
+        
+        # Add a cancel button to return to normal view
+        cancel_button = ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="cancel_move_selection")
+        cancel_button.callback = self._cancel_move_selection_callback
+        self.add_item(cancel_button)
+        
+        # Update the message
+        turn_color = "White" if self.board.turn == chess.WHITE else "Black"
+        file_letter = chr(65 + self.selected_file)  # Convert to A-H
+        content = f"Chess: {self.white_player.mention} (White) vs {self.black_player.mention} (Black)\n\nSelected file {file_letter}. Now select a rank (1-8).\nTurn: **{self.current_player.mention}** ({turn_color})"
+        board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.current_player == self.white_player))
+        
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=content, attachments=[board_image], view=self)
+        else:
+            await interaction.response.edit_message(content=content, attachments=[board_image], view=self)
+    
+    async def show_valid_moves(self, interaction: discord.Interaction):
+        """Shows buttons for selecting a destination square from valid moves."""
+        # Clear existing buttons
+        self.clear_items()
+        
+        # Add buttons for each valid move
+        for move in self.valid_moves:
+            self.add_item(self.MoveButton(move))
+            
+        # Add a back button to return to file selection
+        back_button = ui.Button(label="Back", style=discord.ButtonStyle.secondary, custom_id="back_to_file_selection")
+        back_button.callback = self._back_to_file_selection_callback
+        self.add_item(back_button)
+        
+        # Add a cancel button to return to normal view
+        cancel_button = ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="cancel_move_selection")
+        cancel_button.callback = self._cancel_move_selection_callback
+        self.add_item(cancel_button)
+        
+        # Update the message with valid move dots
+        turn_color = "White" if self.board.turn == chess.WHITE else "Black"
+        file_letter = chr(65 + self.selected_file)  # Convert to A-H
+        rank_number = 8 - chess.square_rank(self.selected_square)  # Convert to 1-8
+        content = f"Chess: {self.white_player.mention} (White) vs {self.black_player.mention} (Black)\n\nSelected piece at {file_letter}{rank_number}. Choose a destination square.\nTurn: **{self.current_player.mention}** ({turn_color})"
+        board_image = generate_board_image(
+            self.board, 
+            self.last_move, 
+            perspective_white=(self.current_player == self.white_player),
+            valid_moves=self.valid_moves
+        )
+        
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=content, attachments=[board_image], view=self)
+        else:
+            await interaction.response.edit_message(content=content, attachments=[board_image], view=self)
+    
+    async def _back_to_file_selection_callback(self, interaction: discord.Interaction):
+        """Callback for the 'Back' button to return to file selection."""
+        if interaction.user != self.current_player:
+            await interaction.response.send_message("It's not your turn!", ephemeral=True)
+            return
+        await self.show_file_selection(interaction)
+    
+    async def _cancel_move_selection_callback(self, interaction: discord.Interaction):
+        """Callback for the 'Cancel' button to exit move selection mode."""
+        if interaction.user != self.current_player:
+            await interaction.response.send_message("It's not your turn!", ephemeral=True)
+            return
+            
+        # Reset move selection state
+        self.move_selection_mode = False
+        self.selected_file = None
+        self.selected_rank = None
+        self.selected_square = None
+        self.valid_moves = []
+        
+        # Restore normal view
+        self.clear_items()
+        self.add_item(self.MakeMoveButton())
+        self.add_item(self.SelectMoveButton())
+        self.add_item(self.ResignButton())
+        
+        # Update the message
+        await self.update_message(interaction, "Move selection cancelled. ")
+    
     # --- Helper Methods ---
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -624,6 +900,13 @@ class ChessBotView(ui.View):
         self.is_thinking = False # Flag to prevent interaction during bot's turn
         self.last_move: Optional[chess.Move] = None # Store last move for highlighting
         self.player_dm_message: Optional[discord.Message] = None # DM message for the player
+        
+        # Button-driven move selection state
+        self.move_selection_mode = False  # Whether we're in button-driven move selection mode
+        self.selected_file = None  # Selected file (0-7) during move selection
+        self.selected_rank = None  # Selected rank (0-7) during move selection
+        self.selected_square = None  # Selected square (0-63) during move selection
+        self.valid_moves = []  # List of valid moves from the selected square
 
         # Initialize board - Use provided board or create new based on variant
         if board:
@@ -655,10 +938,118 @@ class ChessBotView(ui.View):
 
         # Add control buttons
         self.add_item(self.MakeMoveButton())
+        self.add_item(self.SelectMoveButton())
         self.add_item(self.ResignButton())
 
     # --- Button Definitions ---
-
+    
+    class FileButton(ui.Button):
+        """Button for selecting a file (A-H) in the first phase of move selection."""
+        def __init__(self, file_idx: int):
+            self.file_idx = file_idx
+            file_label = chr(65 + file_idx)  # 65 is ASCII for 'A'
+            super().__init__(label=file_label, style=discord.ButtonStyle.primary)
+            
+        async def callback(self, interaction: discord.Interaction):
+            view: 'ChessBotView' = self.view
+            
+            # Basic checks
+            if interaction.user != view.player:
+                await interaction.response.send_message("This is not your game!", ephemeral=True)
+                return
+            if view.board.turn != view.player_color:
+                await interaction.response.send_message("It's not your turn!", ephemeral=True)
+                return
+            if view.is_thinking:
+                await interaction.response.send_message("The bot is thinking, please wait.", ephemeral=True)
+                return
+                
+            # Store the selected file and show rank buttons
+            view.selected_file = self.file_idx
+            view.selected_rank = None
+            view.selected_square = None
+            
+            # Show rank selection buttons
+            await view.show_rank_selection(interaction)
+    
+    class RankButton(ui.Button):
+        """Button for selecting a rank (1-8) in the first phase of move selection."""
+        def __init__(self, rank_idx: int):
+            self.rank_idx = rank_idx
+            rank_label = str(8 - rank_idx)  # Ranks are displayed as 8 to 1
+            super().__init__(label=rank_label, style=discord.ButtonStyle.primary)
+            
+        async def callback(self, interaction: discord.Interaction):
+            view: 'ChessBotView' = self.view
+            
+            # Basic checks
+            if interaction.user != view.player:
+                await interaction.response.send_message("This is not your game!", ephemeral=True)
+                return
+            if view.board.turn != view.player_color:
+                await interaction.response.send_message("It's not your turn!", ephemeral=True)
+                return
+            if view.is_thinking:
+                await interaction.response.send_message("The bot is thinking, please wait.", ephemeral=True)
+                return
+                
+            # Calculate the square index
+            file_idx = view.selected_file
+            rank_idx = self.rank_idx
+            square = chess.square(file_idx, 7 - rank_idx)  # Convert to chess.py square index
+            
+            # Check if the square has a piece of the player's color
+            piece = view.board.piece_at(square)
+            if piece is None or piece.color != view.player_color:
+                await interaction.response.send_message("You must select a square with one of your pieces.", ephemeral=True)
+                # Go back to file selection
+                await view.show_file_selection(interaction)
+                return
+                
+            # Find valid moves from this square
+            valid_moves = [move for move in view.board.legal_moves if move.from_square == square]
+            if not valid_moves:
+                await interaction.response.send_message("This piece has no legal moves.", ephemeral=True)
+                # Go back to file selection
+                await view.show_file_selection(interaction)
+                return
+                
+            # Store the selected square and valid moves
+            view.selected_square = square
+            view.valid_moves = valid_moves
+            
+            # Show valid move buttons
+            await view.show_valid_moves(interaction)
+    
+    class MoveButton(ui.Button):
+        """Button for selecting a destination square in the second phase of move selection."""
+        def __init__(self, move: chess.Move):
+            self.move = move
+            # Get the destination square coordinates
+            file_idx = chess.square_file(move.to_square)
+            rank_idx = chess.square_rank(move.to_square)
+            # Create label in algebraic notation (e.g., "e4")
+            label = f"{chr(97 + file_idx)}{rank_idx + 1}"
+            super().__init__(label=label, style=discord.ButtonStyle.success)
+            
+        async def callback(self, interaction: discord.Interaction):
+            view: 'ChessBotView' = self.view
+            
+            # Basic checks
+            if interaction.user != view.player:
+                await interaction.response.send_message("This is not your game!", ephemeral=True)
+                return
+            if view.board.turn != view.player_color:
+                await interaction.response.send_message("It's not your turn!", ephemeral=True)
+                return
+            if view.is_thinking:
+                await interaction.response.send_message("The bot is thinking, please wait.", ephemeral=True)
+                return
+                
+            # Execute the move
+            await interaction.response.defer()  # Acknowledge the interaction
+            await view.handle_player_move(interaction, self.move)
+    
     class MakeMoveButton(ui.Button):
         def __init__(self):
             super().__init__(label="Make Move", style=discord.ButtonStyle.primary, custom_id="chessbot_make_move")
@@ -684,6 +1075,37 @@ class ChessBotView(ui.View):
 
             # Open the modal for move input
             await interaction.response.send_modal(MoveInputModal(game_view=view))
+            
+    class SelectMoveButton(ui.Button):
+        """Button to start the button-driven move selection process."""
+        def __init__(self):
+            super().__init__(label="Select Move", style=discord.ButtonStyle.primary, custom_id="chessbot_select_move")
+            
+        async def callback(self, interaction: discord.Interaction):
+            view: 'ChessBotView' = self.view
+            # Check turn and thinking state
+            if interaction.user != view.player:
+                await interaction.response.send_message("This is not your game!", ephemeral=True)
+                return
+            if view.board.turn != view.player_color:
+                await interaction.response.send_message("It's not your turn!", ephemeral=True)
+                return
+            if view.is_thinking:
+                await interaction.response.send_message("The bot is thinking, please wait.", ephemeral=True)
+                return
+            if view.engine is None:
+                await interaction.response.send_message("The engine is not running.", ephemeral=True)
+                return
+                
+            # Start the move selection process
+            view.move_selection_mode = True
+            view.selected_file = None
+            view.selected_rank = None
+            view.selected_square = None
+            view.valid_moves = []
+            
+            # Show file selection buttons
+            await view.show_file_selection(interaction)
 
     class ResignButton(ui.Button):
         def __init__(self):
@@ -1114,6 +1536,138 @@ class ChessBotView(ui.View):
         # Stop the game on error to be safe
         await self.end_game(interaction, f"An error occurred, stopping the game: {error}")
 
+    # --- Button-Driven Move Selection Methods ---
+    
+    async def show_file_selection(self, interaction: discord.Interaction):
+        """Shows buttons for selecting a file (A-H)."""
+        # Clear existing buttons
+        self.clear_items()
+        
+        # Add file selection buttons (A-H)
+        for file_idx in range(8):
+            self.add_item(self.FileButton(file_idx))
+            
+        # Add a cancel button to return to normal view
+        cancel_button = ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="cancel_move_selection")
+        cancel_button.callback = self._cancel_move_selection_callback
+        self.add_item(cancel_button)
+        
+        # Update the message
+        content = self.get_board_message("Select a file (A-H) to choose a piece. ")
+        board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.player_color == chess.WHITE))
+        
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=content, attachments=[board_image], view=self)
+        else:
+            await interaction.response.edit_message(content=content, attachments=[board_image], view=self)
+    
+    async def show_rank_selection(self, interaction: discord.Interaction):
+        """Shows buttons for selecting a rank (1-8)."""
+        # Clear existing buttons
+        self.clear_items()
+        
+        # Add rank selection buttons (1-8)
+        for rank_idx in range(8):
+            self.add_item(self.RankButton(rank_idx))
+            
+        # Add a back button to return to file selection
+        back_button = ui.Button(label="Back", style=discord.ButtonStyle.secondary, custom_id="back_to_file_selection")
+        back_button.callback = self._back_to_file_selection_callback
+        self.add_item(back_button)
+        
+        # Add a cancel button to return to normal view
+        cancel_button = ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="cancel_move_selection")
+        cancel_button.callback = self._cancel_move_selection_callback
+        self.add_item(cancel_button)
+        
+        # Update the message
+        file_letter = chr(65 + self.selected_file)  # Convert to A-H
+        content = self.get_board_message(f"Selected file {file_letter}. Now select a rank (1-8). ")
+        board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.player_color == chess.WHITE))
+        
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=content, attachments=[board_image], view=self)
+        else:
+            await interaction.response.edit_message(content=content, attachments=[board_image], view=self)
+    
+    async def show_valid_moves(self, interaction: discord.Interaction):
+        """Shows buttons for selecting a destination square from valid moves."""
+        # Clear existing buttons
+        self.clear_items()
+        
+        # Add buttons for each valid move
+        for move in self.valid_moves:
+            self.add_item(self.MoveButton(move))
+            
+        # Add a back button to return to file selection
+        back_button = ui.Button(label="Back", style=discord.ButtonStyle.secondary, custom_id="back_to_file_selection")
+        back_button.callback = self._back_to_file_selection_callback
+        self.add_item(back_button)
+        
+        # Add a cancel button to return to normal view
+        cancel_button = ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="cancel_move_selection")
+        cancel_button.callback = self._cancel_move_selection_callback
+        self.add_item(cancel_button)
+        
+        # Update the message with valid move dots
+        file_letter = chr(65 + self.selected_file)  # Convert to A-H
+        rank_number = 8 - chess.square_rank(self.selected_square)  # Convert to 1-8
+        content = self.get_board_message(f"Selected piece at {file_letter}{rank_number}. Choose a destination square. ")
+        board_image = generate_board_image(
+            self.board, 
+            self.last_move, 
+            perspective_white=(self.player_color == chess.WHITE),
+            valid_moves=self.valid_moves
+        )
+        
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=content, attachments=[board_image], view=self)
+        else:
+            await interaction.response.edit_message(content=content, attachments=[board_image], view=self)
+    
+    async def _back_to_file_selection_callback(self, interaction: discord.Interaction):
+        """Callback for the 'Back' button to return to file selection."""
+        if interaction.user != self.player:
+            await interaction.response.send_message("This is not your game!", ephemeral=True)
+            return
+        await self.show_file_selection(interaction)
+    
+    async def _cancel_move_selection_callback(self, interaction: discord.Interaction):
+        """Callback for the 'Cancel' button to exit move selection mode."""
+        if interaction.user != self.player:
+            await interaction.response.send_message("This is not your game!", ephemeral=True)
+            return
+            
+        # Reset move selection state
+        self.move_selection_mode = False
+        self.selected_file = None
+        self.selected_rank = None
+        self.selected_square = None
+        self.valid_moves = []
+        
+        # Restore normal view
+        self.clear_items()
+        self.add_item(self.MakeMoveButton())
+        self.add_item(self.SelectMoveButton())
+        self.add_item(self.ResignButton())
+        
+        # Update the message
+        content = self.get_board_message("Move selection cancelled. ")
+        board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.player_color == chess.WHITE))
+        
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=content, attachments=[board_image], view=self)
+        else:
+            await interaction.response.edit_message(content=content, attachments=[board_image], view=self)
+    
+    async def handle_square_click(self, interaction: discord.Interaction, x: int, y: int):
+        """Legacy method for handling square clicks from ChessBotButton."""
+        # This method is kept for backward compatibility
+        await interaction.response.send_message(
+            "Please use the 'Select Move' button for the new button-driven move selection interface.",
+            ephemeral=True
+        )
+    
     # --- DM Helper Methods (Adapted for Bot Game) ---
 
     async def _get_dm_content(self, result: Optional[str] = None) -> str:
