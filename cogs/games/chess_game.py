@@ -692,6 +692,12 @@ class ChessView(ui.View):
         if outcome:
             await self.end_game(interaction, self.get_game_over_message(outcome))
             return
+            
+        # Restore default buttons before updating message
+        self.clear_items()
+        self.add_item(self.MakeMoveButton())
+        self.add_item(self.SelectMoveButton())
+        self.add_item(self.ResignButton())
 
         # Update the message with the new board state
         await self.update_message(interaction)
@@ -1303,8 +1309,13 @@ class ChessBotView(ui.View):
                          print("ChessBotView Error: Cannot end game after bot move, self.message is None.")
                     return # Important: return after ending the game
 
-                # Update message for player's turn
+                # Restore default buttons for player's turn
                 if self.message and not self.is_finished(): # Check if view is still active
+                    self.clear_items()
+                    self.add_item(self.MakeMoveButton())
+                    self.add_item(self.SelectMoveButton())
+                    self.add_item(self.ResignButton())
+                    # Now update the message
                     await self.update_message(self.message, status_prefix="Your turn.")
             else:
                  print("ChessBotView: Engine returned no best move (result.move is None).")
@@ -1342,12 +1353,8 @@ class ChessBotView(ui.View):
             valid_moves=self.valid_moves if show_valid_move_dots else None
         )
 
-        # Restore default buttons if not in move selection mode
-        if not self.move_selection_mode:
-            self.clear_items()
-            self.add_item(self.MakeMoveButton())
-            self.add_item(self.SelectMoveButton())
-            self.add_item(self.ResignButton())
+        # NOTE: Button setup is now handled by the calling function (e.g., handle_player_move, make_bot_move, _cancel_move_selection_callback)
+        # This method only updates content and attachments.
 
         try:
             if isinstance(interaction_or_message, discord.Interaction):
