@@ -34,7 +34,7 @@ def webhook():
     if not signature or not verify_signature(request.data, signature):
         abort(403)
 
-    reload_script()
+    asyncio.create_task(reload_script())
     return "OK"
 
 def run_flask():
