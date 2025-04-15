@@ -87,9 +87,9 @@ async def main():
         # Start the bot using start() for async context
         await bot.start(TOKEN)
 
-        asyncio.sleep(1)
-        flask_thread = threading.Thread(target=run_flask, daemon=True)
-        flask_thread.start()
+    asyncio.sleep(1)
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
 
 # Run the main async function
 if __name__ == '__main__':
