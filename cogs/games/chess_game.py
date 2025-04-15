@@ -1324,7 +1324,23 @@ class ChessBotView(ui.View):
     async def update_message(self, interaction_or_message: Union[discord.Interaction, discord.Message], status_prefix: str = ""):
         """Updates the game message with the current board image and status."""
         content = self.get_board_message(status_prefix)
-        board_image = generate_board_image(self.board, self.last_move, perspective_white=(self.player_color == chess.WHITE))
+        
+        # Determine if we need to show valid move dots (only when showing valid move buttons)
+        show_valid_move_dots = self.move_selection_mode and self.selected_square is not None and self.valid_moves
+        
+        board_image = generate_board_image(
+            self.board, 
+            self.last_move, 
+            perspective_white=(self.player_color == chess.WHITE),
+            valid_moves=self.valid_moves if show_valid_move_dots else None
+        )
+
+        # Restore default buttons if not in move selection mode
+        if not self.move_selection_mode:
+            self.clear_items()
+            self.add_item(self.MakeMoveButton())
+            self.add_item(self.SelectMoveButton())
+            self.add_item(self.ResignButton())
 
         try:
             if isinstance(interaction_or_message, discord.Interaction):
