@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import subprocess
 import asyncio
 import re
 import os
@@ -236,6 +235,25 @@ class ShellCommandCog(commands.Cog):
         """
         Execute a command in a Docker container with session persistence.
         """
+        # First, check if Docker is available
+        docker_check_cmd = "docker --version"
+        try:
+            process = await asyncio.create_subprocess_shell(
+                docker_check_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                shell=True
+            )
+
+            # We don't need the output, just the return code
+            await process.communicate()
+
+            if process.returncode != 0:
+                return f"❌ Docker is not available on this system. Please install Docker to use this command."
+        except Exception as e:
+            logger.error(f"Error checking Docker availability: {e}")
+            return f"❌ Error checking Docker availability: {str(e)}"
+
         session = self.docker_shell_sessions[session_id]
 
         # Create a new container if one doesn't exist for this session
@@ -496,22 +514,46 @@ class ShellCommandCog(commands.Cog):
 
     async def cog_unload(self):
         """Clean up resources when the cog is unloaded."""
-        # Stop and remove all Docker containers
-        for session_id, session in self.docker_shell_sessions.items():
-            if session['created'] and session['container_id']:
-                try:
-                    # Stop the container
-                    stop_cmd = f"docker stop shell_{session_id}"
-                    process = await asyncio.create_subprocess_shell(
-                        stop_cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        shell=True
-                    )
-                    await process.communicate()
-                except Exception as e:
-                    logger.error(f"Error stopping Docker container during unload: {e}")
+        # Check if Docker is available before trying to stop containers
+        docker_check_cmd = "docker --version"
+        try:
+            process = await asyncio.create_subprocess_shell(
+                docker_check_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                shell=True
+            )
+
+            # We don't need the output, just the return code
+            await process.communicate()
+
+            if process.returncode != 0:
+                logger.warning("Docker is not available, skipping container cleanup.")
+                return
+
+            # Stop and remove all Docker containers
+            for session_id, session in self.docker_shell_sessions.items():
+                if session['created'] and session['container_id']:
+                    try:
+                        # Stop the container
+                        stop_cmd = f"docker stop shell_{session_id}"
+                        process = await asyncio.create_subprocess_shell(
+                            stop_cmd,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            shell=True
+                        )
+                        await process.communicate()
+                    except Exception as e:
+                        logger.error(f"Error stopping Docker container during unload: {e}")
+        except Exception as e:
+            logger.error(f"Error checking Docker availability during unload: {e}")
 
 async def setup(bot):
-    await bot.add_cog(ShellCommandCog(bot))
-    logger.info("ShellCommandCog loaded successfully.")
+    try:
+        logger.info("Attempting to load ShellCommandCog...")
+        await bot.add_cog(ShellCommandCog(bot))
+        logger.info("ShellCommandCog loaded successfully.")
+    except Exception as e:
+        logger.error(f"Failed to load ShellCommandCog: {e}")
+        raise  # Re-raise the exception so the bot's error handling can catch it
