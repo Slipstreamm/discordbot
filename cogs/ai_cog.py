@@ -109,6 +109,7 @@ class AICog(commands.Cog):
 
                 # Parse the response based on compatibility mode
                 ai_response = None
+                safety_cutoff = False
 
                 if AI_COMPATIBILITY_MODE == "openai":
                     # OpenAI format
@@ -125,26 +126,54 @@ class AICog(commands.Cog):
                         return error_message
 
                     ai_response = data["choices"][0]["message"]["content"]
+
+                    # Check for safety cutoff in OpenAI format
+                    if "finish_reason" in data["choices"][0] and data["choices"][0]["finish_reason"] == "content_filter":
+                        safety_cutoff = True
+                    # Check for native_finish_reason: SAFETY
+                    if "native_finish_reason" in data["choices"][0] and data["choices"][0]["native_finish_reason"] == "SAFETY":
+                        safety_cutoff = True
                 else:
                     # Custom format - try different response structures
                     # Try standard OpenAI format first
                     if "choices" in data and data["choices"] and "message" in data["choices"][0]:
                         ai_response = data["choices"][0]["message"]["content"]
+                        # Check for safety cutoff in OpenAI format
+                        if "finish_reason" in data["choices"][0] and data["choices"][0]["finish_reason"] == "content_filter":
+                            safety_cutoff = True
+                        # Check for native_finish_reason: SAFETY
+                        if "native_finish_reason" in data["choices"][0] and data["choices"][0]["native_finish_reason"] == "SAFETY":
+                            safety_cutoff = True
                     # Try Ollama/LM Studio format
                     elif "response" in data:
                         ai_response = data["response"]
+                        # Check for safety cutoff in response metadata
+                        if "native_finish_reason" in data and data["native_finish_reason"] == "SAFETY":
+                            safety_cutoff = True
                     # Try text-only format
                     elif "text" in data:
                         ai_response = data["text"]
+                        # Check for safety cutoff in response metadata
+                        if "native_finish_reason" in data and data["native_finish_reason"] == "SAFETY":
+                            safety_cutoff = True
                     # Try content-only format
                     elif "content" in data:
                         ai_response = data["content"]
+                        # Check for safety cutoff in response metadata
+                        if "native_finish_reason" in data and data["native_finish_reason"] == "SAFETY":
+                            safety_cutoff = True
                     # Try output format
                     elif "output" in data:
                         ai_response = data["output"]
+                        # Check for safety cutoff in response metadata
+                        if "native_finish_reason" in data and data["native_finish_reason"] == "SAFETY":
+                            safety_cutoff = True
                     # Try result format
                     elif "result" in data:
                         ai_response = data["result"]
+                        # Check for safety cutoff in response metadata
+                        if "native_finish_reason" in data and data["native_finish_reason"] == "SAFETY":
+                            safety_cutoff = True
                     else:
                         # If we can't find a known format, return the raw response for debugging
                         error_message = f"Could not parse API response: {data}"
@@ -153,6 +182,10 @@ class AICog(commands.Cog):
 
                 if not ai_response:
                     return "Error: Empty response from AI API."
+
+                # Add safety cutoff note if needed
+                if safety_cutoff:
+                    ai_response = f"{ai_response}\n\nThe response was cut off for safety reasons."
 
                 # Update conversation history
                 conversation_history[user_id].append({"role": "user", "content": prompt})

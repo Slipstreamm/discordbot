@@ -15,6 +15,7 @@ COG_DISPLAY_NAMES = {
     "RoleCreatorCog": "✨ Role Management (Owner Only)",
     "RoleSelectorCog": "🎭 Role Selection (Owner Only)",
     "Rule34Cog": "🔞 Rule34 Search (NSFW)",
+    "ShellCommandCog": "🖥️ Shell Command (Owner Only)",
     "SystemCheckCog": "📊 System Status",
     # Add other cogs here as needed
 }
