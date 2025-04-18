@@ -281,7 +281,9 @@ class ShellCommandCog(commands.Cog):
             logger.info(f"Created Docker container with ID: {container_id} for session {session_id}")
 
         # Execute the command in the container
-        docker_exec_cmd = f"docker exec shell_{session_id} sh -c \"{command_str.replace('"', '\\"')}\""
+        # Escape double quotes in the command string
+        escaped_cmd = command_str.replace('"', '\\"')
+        docker_exec_cmd = f"docker exec shell_{session_id} sh -c \"{escaped_cmd}\""
 
         process = await asyncio.create_subprocess_shell(
             docker_exec_cmd,
