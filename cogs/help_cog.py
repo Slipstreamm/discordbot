@@ -5,8 +5,9 @@ import asyncio
 
 # Define friendly names for cogs
 COG_DISPLAY_NAMES = {
+    "AICog": "🤖 AI Chat",
     "AudioCog": "🎵 Audio Player",
-    "GamesCog": "🎮 Games", # Added GamesCog
+    "GamesCog": "🎮 Games",
     "HelpCog": "❓ Help",
     "PingCog": "🏓 Ping",
     "RandomCog": "🎲 Random Image (NSFW)",

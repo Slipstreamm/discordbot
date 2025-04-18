@@ -58,7 +58,7 @@ async def on_app_command_error(interaction, error):
 async def restart(self, ctx):
     """Restarts the bot. (Owner Only)"""
     await ctx.send("Restarting the bot...")
-    await self.bot.close(ctx)  # Gracefully close the bot
+    await self.bot.close()  # Gracefully close the bot
     os.execv(sys.executable, [sys.executable] + sys.argv)  # Restart the bot process
 
 bot.add_command(restart)
