@@ -63,7 +63,22 @@ class LevelingCog(commands.Cog):
                     self.level_roles = {}
                     for guild_id_str, roles_dict in data.items():
                         guild_id = int(guild_id_str)
-                        self.level_roles[guild_id] = {int(level): int(role_id) for level, role_id in roles_dict.items()}
+                        self.level_roles[guild_id] = {}
+
+                        # Process each level's role data
+                        for level_str, role_data in roles_dict.items():
+                            level = int(level_str)
+
+                            # Check if this is a gendered role entry
+                            if isinstance(role_data, dict):
+                                # Handle gendered roles
+                                self.level_roles[guild_id][level] = {}
+                                for gender, role_id_str in role_data.items():
+                                    self.level_roles[guild_id][level][gender] = int(role_id_str)
+                            else:
+                                # Handle regular roles
+                                self.level_roles[guild_id][level] = int(role_data)
+
                 print(f"Loaded level roles for {len(self.level_roles)} guilds")
             except Exception as e:
                 print(f"Error loading level roles: {e}")
@@ -74,7 +89,18 @@ class LevelingCog(commands.Cog):
             # Convert int keys to strings for JSON serialization (for both guild_id and level)
             serializable_data = {}
             for guild_id, roles_dict in self.level_roles.items():
-                serializable_data[str(guild_id)] = {str(level): str(role_id) for level, role_id in roles_dict.items()}
+                serializable_data[str(guild_id)] = {}
+
+                # Handle both regular and gendered roles
+                for level, role_data in roles_dict.items():
+                    if isinstance(role_data, dict):
+                        # Handle gendered roles
+                        serializable_data[str(guild_id)][str(level)] = {
+                            gender: str(role_id) for gender, role_id in role_data.items()
+                        }
+                    else:
+                        # Handle regular roles
+                        serializable_data[str(guild_id)][str(level)] = str(role_data)
 
             with open(LEVEL_ROLES_FILE, "w") as f:
                 json.dump(serializable_data, f, indent=4)
@@ -165,10 +191,33 @@ class LevelingCog(commands.Cog):
         highest_matching_level = 0
         highest_role_id = None
 
-        for role_level, role_id in self.level_roles[guild_id].items():
+        # Check if we need to handle gendered roles
+        gender = None
+
+        # Check if the user has pronoun roles
+        for role in member.roles:
+            role_name_lower = role.name.lower()
+            if "he/him" in role_name_lower:
+                gender = "male"
+                break
+            elif "she/her" in role_name_lower:
+                gender = "female"
+                break
+
+        # Process level roles
+        for role_level, role_data in self.level_roles[guild_id].items():
             if role_level <= level and role_level > highest_matching_level:
                 highest_matching_level = role_level
-                highest_role_id = role_id
+
+                # Handle gendered roles if available
+                if isinstance(role_data, dict) and gender in role_data:
+                    highest_role_id = role_data[gender]
+                elif isinstance(role_data, dict) and "male" in role_data and "female" in role_data:
+                    # If we have gendered roles but no gender preference, use male as default
+                    highest_role_id = role_data["male"]
+                else:
+                    # Regular role ID
+                    highest_role_id = role_data
 
         if highest_role_id:
             # Get the role object
@@ -177,9 +226,18 @@ class LevelingCog(commands.Cog):
                 try:
                     # Remove any other level roles
                     roles_to_remove = []
-                    for role_level, role_id in self.level_roles[guild_id].items():
-                        if role_id != highest_role_id:
-                            other_role = guild.get_role(role_id)
+
+                    for role_level, role_data in self.level_roles[guild_id].items():
+                        # Handle both regular and gendered roles
+                        if isinstance(role_data, dict):
+                            # For gendered roles, check all gender variants
+                            for gender_role_id in role_data.values():
+                                if gender_role_id != highest_role_id:
+                                    other_role = guild.get_role(gender_role_id)
+                                    if other_role and other_role in member.roles:
+                                        roles_to_remove.append(other_role)
+                        elif role_data != highest_role_id:
+                            other_role = guild.get_role(role_data)
                             if other_role and other_role in member.roles:
                                 roles_to_remove.append(other_role)
 
@@ -461,6 +519,184 @@ class LevelingCog(commands.Cog):
         self.save_level_roles()
         self.save_restricted_channels()
         print(f'{self.__class__.__name__} cog has been unloaded and data saved.')
+
+    @commands.hybrid_command(name="setup_medieval_roles", description="Set up medieval-themed level roles")
+    @commands.has_permissions(manage_roles=True)
+    async def setup_medieval_roles(self, ctx: commands.Context):
+        """Automatically set up medieval-themed level roles with gender customization"""
+        if not ctx.guild:
+            await ctx.send("This command can only be used in a server.")
+            return
+
+        # Define the medieval role structure with levels and titles
+        medieval_roles = {
+            1: {"default": "Peasant", "male": "Peasant", "female": "Peasant"},
+            5: {"default": "Squire", "male": "Squire", "female": "Squire"},
+            10: {"default": "Knight", "male": "Knight", "female": "Dame"},
+            20: {"default": "Baron/Baroness", "male": "Baron", "female": "Baroness"},
+            30: {"default": "Count/Countess", "male": "Count", "female": "Countess"},
+            50: {"default": "Duke/Duchess", "male": "Duke", "female": "Duchess"},
+            75: {"default": "Prince/Princess", "male": "Prince", "female": "Princess"},
+            100: {"default": "King/Queen", "male": "King", "female": "Queen"}
+        }
+
+        # Colors for the roles (gradient from gray to gold)
+        colors = {
+            1: discord.Color.from_rgb(128, 128, 128),  # Gray
+            5: discord.Color.from_rgb(153, 153, 153),  # Light Gray
+            10: discord.Color.from_rgb(170, 170, 170), # Silver
+            20: discord.Color.from_rgb(218, 165, 32),  # Goldenrod
+            30: discord.Color.from_rgb(255, 215, 0),   # Gold
+            50: discord.Color.from_rgb(255, 223, 0),   # Bright Gold
+            75: discord.Color.from_rgb(255, 235, 0),   # Royal Gold
+            100: discord.Color.from_rgb(255, 255, 0)   # Yellow/Gold
+        }
+
+        # Initialize guild in level_roles if not exists
+        if ctx.guild.id not in self.level_roles:
+            self.level_roles[ctx.guild.id] = {}
+
+        status_message = await ctx.send("Creating medieval-themed level roles...")
+        created_roles = []
+        updated_roles = []
+
+        # Check if the server has pronoun roles
+        pronoun_roles = {}
+        for role in ctx.guild.roles:
+            role_name_lower = role.name.lower()
+            if "he/him" in role_name_lower:
+                pronoun_roles["male"] = role
+            elif "she/her" in role_name_lower:
+                pronoun_roles["female"] = role
+
+        has_pronoun_roles = len(pronoun_roles) > 0
+
+        # Create or update roles for each level
+        for level, titles in medieval_roles.items():
+            # For servers without pronoun roles, use the default title
+            if not has_pronoun_roles:
+                role_name = f"Level {level} - {titles['default']}"
+
+                # Check if role already exists
+                existing_role = discord.utils.get(ctx.guild.roles, name=role_name)
+
+                if existing_role:
+                    # Update existing role
+                    try:
+                        await existing_role.edit(color=colors[level], reason="Updating medieval level role")
+                        updated_roles.append(role_name)
+                    except discord.Forbidden:
+                        await ctx.send(f"Missing permissions to edit role: {role_name}")
+                    except Exception as e:
+                        await ctx.send(f"Error updating role {role_name}: {e}")
+                else:
+                    # Create new role
+                    try:
+                        role = await ctx.guild.create_role(
+                            name=role_name,
+                            color=colors[level],
+                            reason="Creating medieval level role"
+                        )
+                        created_roles.append(role_name)
+                    except discord.Forbidden:
+                        await ctx.send(f"Missing permissions to create role: {role_name}")
+                    except Exception as e:
+                        await ctx.send(f"Error creating role {role_name}: {e}")
+                        continue
+
+                # Register the role for this level
+                role_id = existing_role.id if existing_role else role.id
+                self.level_roles[ctx.guild.id][level] = role_id
+
+            # For servers with pronoun roles, create separate male and female roles
+            else:
+                # Create male role
+                male_role_name = f"Level {level} - {titles['male']}"
+                male_role = discord.utils.get(ctx.guild.roles, name=male_role_name)
+
+                if male_role:
+                    try:
+                        await male_role.edit(color=colors[level], reason="Updating medieval level role")
+                        updated_roles.append(male_role_name)
+                    except discord.Forbidden:
+                        await ctx.send(f"Missing permissions to edit role: {male_role_name}")
+                    except Exception as e:
+                        await ctx.send(f"Error updating role {male_role_name}: {e}")
+                else:
+                    try:
+                        male_role = await ctx.guild.create_role(
+                            name=male_role_name,
+                            color=colors[level],
+                            reason="Creating medieval level role"
+                        )
+                        created_roles.append(male_role_name)
+                    except discord.Forbidden:
+                        await ctx.send(f"Missing permissions to create role: {male_role_name}")
+                    except Exception as e:
+                        await ctx.send(f"Error creating role {male_role_name}: {e}")
+                        male_role = None
+
+                # Create female role
+                female_role_name = f"Level {level} - {titles['female']}"
+                female_role = discord.utils.get(ctx.guild.roles, name=female_role_name)
+
+                if female_role:
+                    try:
+                        await female_role.edit(color=colors[level], reason="Updating medieval level role")
+                        updated_roles.append(female_role_name)
+                    except discord.Forbidden:
+                        await ctx.send(f"Missing permissions to edit role: {female_role_name}")
+                    except Exception as e:
+                        await ctx.send(f"Error updating role {female_role_name}: {e}")
+                else:
+                    try:
+                        female_role = await ctx.guild.create_role(
+                            name=female_role_name,
+                            color=colors[level],
+                            reason="Creating medieval level role"
+                        )
+                        created_roles.append(female_role_name)
+                    except discord.Forbidden:
+                        await ctx.send(f"Missing permissions to create role: {female_role_name}")
+                    except Exception as e:
+                        await ctx.send(f"Error creating role {female_role_name}: {e}")
+                        female_role = None
+
+                # Create a special entry for gendered roles
+                if level not in self.level_roles[ctx.guild.id]:
+                    self.level_roles[ctx.guild.id][level] = {}
+
+                # Store the role IDs with gender information
+                if male_role:
+                    self.level_roles[ctx.guild.id][level]["male"] = male_role.id
+                if female_role:
+                    self.level_roles[ctx.guild.id][level]["female"] = female_role.id
+
+        # Save the updated level roles
+        self.save_level_roles()
+
+        # Update status message
+        created_str = "\n".join(created_roles) if created_roles else "None"
+        updated_str = "\n".join(updated_roles) if updated_roles else "None"
+
+        embed = discord.Embed(
+            title="Medieval Level Roles Setup",
+            description="The following roles have been set up for the medieval leveling system:",
+            color=discord.Color.gold()
+        )
+
+        if created_roles:
+            embed.add_field(name="Created Roles", value=created_str, inline=False)
+        if updated_roles:
+            embed.add_field(name="Updated Roles", value=updated_str, inline=False)
+
+        embed.add_field(
+            name="Gender Detection",
+            value="Gender-specific roles will be assigned based on pronoun roles." if has_pronoun_roles else "No pronoun roles detected. Using default titles.",
+            inline=False
+        )
+
+        await status_message.edit(content=None, embed=embed)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(LevelingCog(bot))
