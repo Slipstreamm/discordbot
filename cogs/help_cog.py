@@ -9,6 +9,7 @@ COG_DISPLAY_NAMES = {
     "AudioCog": "🎵 Audio Player",
     "GamesCog": "🎮 Games",
     "HelpCog": "❓ Help",
+    "LevelingCog": "⭐ Leveling System",
     "ModerationCog": "🛡️ Moderation",
     "PingCog": "🏓 Ping",
     "RandomCog": "🎲 Random Image (NSFW)",
