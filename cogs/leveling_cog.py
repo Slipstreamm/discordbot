@@ -11,10 +11,13 @@ from typing import Dict, List, Optional, Union, Set
 LEVELS_FILE = "levels_data.json"
 LEVEL_ROLES_FILE = "level_roles.json"
 RESTRICTED_CHANNELS_FILE = "level_restricted_channels.json"
+LEVEL_CONFIG_FILE = "level_config.json"
 
 # Default XP settings
 DEFAULT_XP_PER_MESSAGE = 15
-DEFAULT_XP_COOLDOWN = 60  # seconds
+DEFAULT_XP_PER_REACTION = 5
+DEFAULT_XP_COOLDOWN = 30  # seconds
+DEFAULT_REACTION_COOLDOWN = 30  # seconds
 DEFAULT_LEVEL_MULTIPLIER = 100  # XP needed per level = level * multiplier
 
 class LevelingCog(commands.Cog):
@@ -24,11 +27,22 @@ class LevelingCog(commands.Cog):
         self.level_roles = {}  # {guild_id: {level: role_id}}
         self.restricted_channels = set()  # Set of channel IDs where XP gain is disabled
         self.xp_cooldowns = {}  # {user_id: last_xp_time}
+        self.reaction_cooldowns = {}  # {user_id: last_reaction_time}
+
+        # Configuration settings
+        self.config = {
+            "xp_per_message": DEFAULT_XP_PER_MESSAGE,
+            "xp_per_reaction": DEFAULT_XP_PER_REACTION,
+            "message_cooldown": DEFAULT_XP_COOLDOWN,
+            "reaction_cooldown": DEFAULT_REACTION_COOLDOWN,
+            "reaction_xp_enabled": True
+        }
 
         # Load existing data
         self.load_user_data()
         self.load_level_roles()
         self.load_restricted_channels()
+        self.load_config()
 
     def load_user_data(self):
         """Load user XP and level data from JSON file"""
@@ -128,6 +142,28 @@ class LevelingCog(commands.Cog):
                 json.dump(serializable_data, f, indent=4)
         except Exception as e:
             print(f"Error saving restricted channels: {e}")
+
+    def load_config(self):
+        """Load leveling configuration from JSON file"""
+        if os.path.exists(LEVEL_CONFIG_FILE):
+            try:
+                with open(LEVEL_CONFIG_FILE, "r") as f:
+                    data = json.load(f)
+                    # Update config with saved values, keeping defaults for missing keys
+                    for key, value in data.items():
+                        if key in self.config:
+                            self.config[key] = value
+                print(f"Loaded leveling configuration")
+            except Exception as e:
+                print(f"Error loading leveling configuration: {e}")
+
+    def save_config(self):
+        """Save leveling configuration to JSON file"""
+        try:
+            with open(LEVEL_CONFIG_FILE, "w") as f:
+                json.dump(self.config, f, indent=4)
+        except Exception as e:
+            print(f"Error saving leveling configuration: {e}")
 
     def calculate_level(self, xp: int) -> int:
         """Calculate level based on XP"""
@@ -271,14 +307,15 @@ class LevelingCog(commands.Cog):
 
         if user_id in self.xp_cooldowns:
             time_diff = current_time - self.xp_cooldowns[user_id]
-            if time_diff < DEFAULT_XP_COOLDOWN:
+            if time_diff < self.config["message_cooldown"]:
                 return  # Still on cooldown
 
         # Update cooldown
         self.xp_cooldowns[user_id] = current_time
 
-        # Add XP with random variation (10-20 XP)
-        xp_amount = random.randint(10, 20)
+        # Add XP with random variation (base ±5 XP)
+        base_xp = self.config["xp_per_message"]
+        xp_amount = random.randint(max(1, base_xp - 5), base_xp + 5)
         new_level = await self.add_xp(user_id, message.guild.id, xp_amount)
 
         # If user leveled up, send a message
@@ -510,6 +547,52 @@ class LevelingCog(commands.Cog):
         await status_message.edit(content=f"✅ Finished processing {total_processed} messages across {total_channels} channels.")
 
     @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload):
+        """Event listener for reactions to award XP"""
+        # Check if reaction XP is enabled
+        if not self.config["reaction_xp_enabled"]:
+            return
+
+        # Ignore bot reactions
+        if payload.member and payload.member.bot:
+            return
+
+        # Get the channel
+        channel = self.bot.get_channel(payload.channel_id)
+        if not channel:
+            return
+
+        # Ignore reactions in restricted channels
+        if channel.id in self.restricted_channels:
+            return
+
+        # Check cooldown
+        user_id = payload.user_id
+        current_time = discord.utils.utcnow().timestamp()
+
+        if user_id in self.reaction_cooldowns:
+            time_diff = current_time - self.reaction_cooldowns[user_id]
+            if time_diff < self.config["reaction_cooldown"]:
+                return  # Still on cooldown
+
+        # Update cooldown
+        self.reaction_cooldowns[user_id] = current_time
+
+        # Add XP with small random variation (base ±2 XP)
+        base_xp = self.config["xp_per_reaction"]
+        xp_amount = random.randint(max(1, base_xp - 2), base_xp + 2)
+        new_level = await self.add_xp(user_id, payload.guild_id, xp_amount)
+
+        # If user leveled up, send a DM to avoid channel spam
+        if new_level:
+            try:
+                member = channel.guild.get_member(user_id)
+                if member:
+                    await member.send(f"🎉 Congratulations! You've reached level **{new_level}**!")
+            except discord.Forbidden:
+                pass  # Ignore if we can't send DMs
+
+    @commands.Cog.listener()
     async def on_ready(self):
         print(f'{self.__class__.__name__} cog has been loaded.')
 
@@ -518,7 +601,98 @@ class LevelingCog(commands.Cog):
         self.save_user_data()
         self.save_level_roles()
         self.save_restricted_channels()
+        self.save_config()
         print(f'{self.__class__.__name__} cog has been unloaded and data saved.')
+
+    @commands.hybrid_command(name="xp_config", description="Configure XP settings")
+    @commands.has_permissions(administrator=True)
+    async def xp_config(self, ctx: commands.Context, setting: str = None, value: str = None):
+        """Configure XP settings for the leveling system"""
+        if not setting:
+            # Display current settings
+            embed = discord.Embed(
+                title="XP Configuration Settings",
+                description="Current XP settings for the leveling system:",
+                color=discord.Color.blue()
+            )
+
+            embed.add_field(name="XP Per Message", value=str(self.config["xp_per_message"]), inline=True)
+            embed.add_field(name="XP Per Reaction", value=str(self.config["xp_per_reaction"]), inline=True)
+            embed.add_field(name="Message Cooldown", value=f"{self.config['message_cooldown']} seconds", inline=True)
+            embed.add_field(name="Reaction Cooldown", value=f"{self.config['reaction_cooldown']} seconds", inline=True)
+            embed.add_field(name="Reaction XP Enabled", value="Yes" if self.config["reaction_xp_enabled"] else "No", inline=True)
+
+            embed.set_footer(text="Use !xp_config <setting> <value> to change a setting")
+            await ctx.send(embed=embed)
+            return
+
+        if not value:
+            await ctx.send("Please provide a value for the setting.")
+            return
+
+        setting = setting.lower()
+
+        if setting == "xp_per_message":
+            try:
+                xp = int(value)
+                if xp < 1 or xp > 100:
+                    await ctx.send("XP per message must be between 1 and 100.")
+                    return
+                self.config["xp_per_message"] = xp
+                await ctx.send(f"✅ XP per message set to {xp}.")
+            except ValueError:
+                await ctx.send("Value must be a number.")
+
+        elif setting == "xp_per_reaction":
+            try:
+                xp = int(value)
+                if xp < 1 or xp > 50:
+                    await ctx.send("XP per reaction must be between 1 and 50.")
+                    return
+                self.config["xp_per_reaction"] = xp
+                await ctx.send(f"✅ XP per reaction set to {xp}.")
+            except ValueError:
+                await ctx.send("Value must be a number.")
+
+        elif setting == "message_cooldown":
+            try:
+                cooldown = int(value)
+                if cooldown < 0 or cooldown > 3600:
+                    await ctx.send("Message cooldown must be between 0 and 3600 seconds.")
+                    return
+                self.config["message_cooldown"] = cooldown
+                await ctx.send(f"✅ Message cooldown set to {cooldown} seconds.")
+            except ValueError:
+                await ctx.send("Value must be a number.")
+
+        elif setting == "reaction_cooldown":
+            try:
+                cooldown = int(value)
+                if cooldown < 0 or cooldown > 3600:
+                    await ctx.send("Reaction cooldown must be between 0 and 3600 seconds.")
+                    return
+                self.config["reaction_cooldown"] = cooldown
+                await ctx.send(f"✅ Reaction cooldown set to {cooldown} seconds.")
+            except ValueError:
+                await ctx.send("Value must be a number.")
+
+        elif setting == "reaction_xp_enabled":
+            value = value.lower()
+            if value in ["true", "yes", "on", "1", "enable", "enabled"]:
+                self.config["reaction_xp_enabled"] = True
+                await ctx.send("✅ Reaction XP has been enabled.")
+            elif value in ["false", "no", "off", "0", "disable", "disabled"]:
+                self.config["reaction_xp_enabled"] = False
+                await ctx.send("✅ Reaction XP has been disabled.")
+            else:
+                await ctx.send("Value must be 'true' or 'false'.")
+
+        else:
+            await ctx.send(f"Unknown setting: {setting}. Available settings: xp_per_message, xp_per_reaction, message_cooldown, reaction_cooldown, reaction_xp_enabled")
+            return
+
+        # Save the updated configuration
+        self.save_config()
 
     @commands.hybrid_command(name="setup_medieval_roles", description="Set up medieval-themed level roles")
     @commands.has_permissions(manage_roles=True)
