@@ -14,57 +14,57 @@ logger = logging.getLogger(__name__)
 
 # Comprehensive list of banned commands and patterns
 BANNED_COMMANDS = [
-    # System modification commands
-    "rm", "rmdir", "del", "format", "fdisk", "mkfs", "fsck", "dd", "shred",
+    # # System modification commands
+    # "rm", "rmdir", "del", "format", "fdisk", "mkfs", "fsck", "dd", "shred",
     
-    # File permission/ownership changes
-    "chmod", "chown", "icacls", "takeown", "attrib",
+    # # File permission/ownership changes
+    # "chmod", "chown", "icacls", "takeown", "attrib",
     
-    # User management
-    "useradd", "userdel", "adduser", "deluser", "passwd", "usermod", "net user",
+    # # User management
+    # "useradd", "userdel", "adduser", "deluser", "passwd", "usermod", "net user",
     
-    # Process control that could affect the bot
-    "kill", "pkill", "taskkill", "killall",
+    # # Process control that could affect the bot
+    # "kill", "pkill", "taskkill", "killall",
     
-    # Package management
-    "apt", "apt-get", "yum", "dnf", "pacman", "brew", "pip", "npm", "gem", "cargo",
+    # # Package management
+    # "apt", "apt-get", "yum", "dnf", "pacman", "brew", "pip", "npm", "gem", "cargo",
     
-    # Network configuration
-    "ifconfig", "ip", "route", "iptables", "firewall-cmd", "ufw", "netsh",
+    # # Network configuration
+    # "ifconfig", "ip", "route", "iptables", "firewall-cmd", "ufw", "netsh",
     
-    # System control
-    "shutdown", "reboot", "halt", "poweroff", "init", "systemctl",
+    # # System control
+    # "shutdown", "reboot", "halt", "poweroff", "init", "systemctl",
     
-    # Potentially dangerous utilities
-    "wget", "curl", "nc", "ncat", "telnet", "ssh", "scp", "ftp", "sftp",
+    # # Potentially dangerous utilities
+    # "wget", "curl", "nc", "ncat", "telnet", "ssh", "scp", "ftp", "sftp",
     
-    # Shell escapes or command chaining that could bypass restrictions
-    "bash", "sh", "cmd", "powershell", "pwsh", "python", "perl", "ruby", "php", "node",
+    # # Shell escapes or command chaining that could bypass restrictions
+    # "bash", "sh", "cmd", "powershell", "pwsh", "python", "perl", "ruby", "php", "node",
     
-    # Git commands that could modify repositories
-    "git push", "git commit", "git config", "git remote",
+    # # Git commands that could modify repositories
+    # "git push", "git commit", "git config", "git remote",
     
-    # Windows specific dangerous commands
-    "reg", "regedit", "wmic", "diskpart", "sfc", "dism",
+    # # Windows specific dangerous commands
+    # "reg", "regedit", "wmic", "diskpart", "sfc", "dism",
     
-    # Miscellaneous dangerous commands
-    "eval", "exec", "source", ">", ">>", "|", "&", "&&", ";", "||"
+    # # Miscellaneous dangerous commands
+    # "eval", "exec", "source", ">", ">>", "|", "&", "&&", ";", "||"
 ]
 
 # Regular expression patterns for more complex matching
 BANNED_PATTERNS = [
-    r"rm\s+(-[rf]\s+)*[/\\]",  # rm with path starting from root
-    r">\s*[/\\]",              # redirect output to root path
-    r">\s*~",                  # redirect output to home directory
-    r">\s*\.",                 # redirect output to current directory
-    r">\s*\.\.",               # redirect output to parent directory
-    r">\s*[a-zA-Z]:",          # redirect output to drive letter (Windows)
-    r";\s*rm",                 # command chaining with rm
-    r"&&\s*rm",                # command chaining with rm
-    r"\|\|\s*rm",              # command chaining with rm
-    r";\s*del",                # command chaining with del
-    r"&&\s*del",               # command chaining with del
-    r"\|\|\s*del",             # command chaining with del
+    # r"rm\s+(-[rf]\s+)*[/\\]",  # rm with path starting from root
+    # r">\s*[/\\]",              # redirect output to root path
+    # r">\s*~",                  # redirect output to home directory
+    # r">\s*\.",                 # redirect output to current directory
+    # r">\s*\.\.",               # redirect output to parent directory
+    # r">\s*[a-zA-Z]:",          # redirect output to drive letter (Windows)
+    # r";\s*rm",                 # command chaining with rm
+    # r"&&\s*rm",                # command chaining with rm
+    # r"\|\|\s*rm",              # command chaining with rm
+    # r";\s*del",                # command chaining with del
+    # r"&&\s*del",               # command chaining with del
+    # r"\|\|\s*del",             # command chaining with del
 ]
 
 def is_command_allowed(command):
