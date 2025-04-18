@@ -352,7 +352,6 @@ class ShellCommandCog(commands.Cog):
             await ctx.reply(result)
 
     @commands.command(name="shell", help="Execute a shell command in a Docker container (Owner only)")
-    @commands.is_owner()
     async def shell_command(self, ctx, *, command_str):
         """Execute a shell command in a Docker container (Owner only)."""
         # Get or create a session ID for this user
