@@ -15,6 +15,7 @@ COG_DISPLAY_NAMES = {
     "RandomCog": "🎲 Random Image (NSFW)",
     "RoleCreatorCog": "✨ Role Management (Owner Only)",
     "RoleSelectorCog": "🎭 Role Selection (Owner Only)",
+    "RoleplayCog": "💋 Roleplay",
     "Rule34Cog": "🔞 Rule34 Search (NSFW)",
     "ShellCommandCog": "🖥️ Shell Command",
     "SystemCheckCog": "📊 System Status",
