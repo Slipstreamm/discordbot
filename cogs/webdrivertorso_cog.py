@@ -184,16 +184,24 @@ class WebdriverTorsoCog(commands.Cog):
         Usage: !webdrivertorso [option1=value1] [option2=value2] ...
 
         Available options:
+        # Individual parameters (original method):
         - width: Video width in pixels (default: 640)
         - height: Video height in pixels (default: 480)
         - max_width: Maximum shape width (default: 200)
         - max_height: Maximum shape height (default: 200)
         - min_width: Minimum shape width (default: 20)
         - min_height: Minimum shape height (default: 20)
-        - slides: Number of slides in the video (default: 10)
-        - videos: Number of videos to generate (default: 1)
         - min_shapes: Minimum number of shapes per slide (default: 5)
         - max_shapes: Maximum number of shapes per slide (default: 15)
+
+        # Combined parameters (alternative method):
+        - dimensions: Video dimensions in format 'width,height' (e.g., '640,480')
+        - shape_size_limits: Shape size limits in format 'min_width,min_height,max_width,max_height' (e.g., '20,20,200,200')
+        - shapes_count: Number of shapes per slide in format 'min,max' (e.g., '5,15')
+
+        # Other parameters:
+        - slides: Number of slides in the video (default: 10)
+        - videos: Number of videos to generate (default: 1)
         - sound_quality: Audio sample rate (default: 44100)
         - tts_enabled: Enable text-to-speech (true/false)
         - tts_provider: TTS provider to use (gtts, pyttsx3, coqui)
@@ -230,6 +238,29 @@ class WebdriverTorsoCog(commands.Cog):
                         # Parse list of shapes
                         shapes_list = value[1:-1].split(',')
                         params[key] = [shape.strip() for shape in shapes_list]
+                    # Handle combined parameters
+                    elif key == 'dimensions' and ',' in value:
+                        width, height = value.split(',', 1)
+                        if width.strip().isdigit():
+                            params['width'] = int(width.strip())
+                        if height.strip().isdigit():
+                            params['height'] = int(height.strip())
+                    elif key == 'shape_size_limits' and ',' in value:
+                        parts = value.split(',')
+                        if len(parts) >= 1 and parts[0].strip().isdigit():
+                            params['min_width'] = int(parts[0].strip())
+                        if len(parts) >= 2 and parts[1].strip().isdigit():
+                            params['min_height'] = int(parts[1].strip())
+                        if len(parts) >= 3 and parts[2].strip().isdigit():
+                            params['max_width'] = int(parts[2].strip())
+                        if len(parts) >= 4 and parts[3].strip().isdigit():
+                            params['max_height'] = int(parts[3].strip())
+                    elif key == 'shapes_count' and ',' in value:
+                        min_shapes, max_shapes = value.split(',', 1)
+                        if min_shapes.strip().isdigit():
+                            params['min_shapes'] = int(min_shapes.strip())
+                        if max_shapes.strip().isdigit():
+                            params['max_shapes'] = int(max_shapes.strip())
                     else:
                         params[key] = value
 
@@ -248,16 +279,11 @@ class WebdriverTorsoCog(commands.Cog):
         slide_duration="Duration of each slide in milliseconds (default: 1000)",
 
         # Video dimensions
-        width="Video width in pixels (default: 640)",
-        height="Video height in pixels (default: 480)",
-        max_width="Maximum shape width (default: 200)",
-        max_height="Maximum shape height (default: 200)",
-        min_width="Minimum shape width (default: 20)",
-        min_height="Minimum shape height (default: 20)",
+        dimensions="Video dimensions in format 'width,height' (default: '640,480')",
+        shape_size_limits="Shape size limits in format 'min_width,min_height,max_width,max_height' (default: '20,20,200,200')",
 
         # Shapes
-        min_shapes="Minimum number of shapes per slide (default: 5)",
-        max_shapes="Maximum number of shapes per slide (default: 15)",
+        shapes_count="Number of shapes per slide in format 'min,max' (default: '5,15')",
         deform_level="Level of shape deformation (none, low, medium, high)",
         shape_types="Types of shapes to include (comma-separated list)",
 
@@ -372,16 +398,11 @@ class WebdriverTorsoCog(commands.Cog):
                                   slide_duration: int = None,
 
                                   # Video dimensions
-                                  width: int = None,
-                                  height: int = None,
-                                  max_width: int = None,
-                                  max_height: int = None,
-                                  min_width: int = None,
-                                  min_height: int = None,
+                                  dimensions: str = None,
+                                  shape_size_limits: str = None,
 
                                   # Shapes
-                                  min_shapes: int = None,
-                                  max_shapes: int = None,
+                                  shapes_count: str = None,
                                   deform_level: str = None,
                                   shape_types: str = None,
 
@@ -415,16 +436,16 @@ class WebdriverTorsoCog(commands.Cog):
             slide_duration=slide_duration,
 
             # Video dimensions
-            width=width,
-            height=height,
-            max_width=max_width,
-            max_height=max_height,
-            min_width=min_width,
-            min_height=min_height,
+            width=int(dimensions.split(',')[0]) if dimensions else None,
+            height=int(dimensions.split(',')[1]) if dimensions and ',' in dimensions else None,
+            min_width=int(shape_size_limits.split(',')[0]) if shape_size_limits else None,
+            min_height=int(shape_size_limits.split(',')[1]) if shape_size_limits and len(shape_size_limits.split(',')) > 1 else None,
+            max_width=int(shape_size_limits.split(',')[2]) if shape_size_limits and len(shape_size_limits.split(',')) > 2 else None,
+            max_height=int(shape_size_limits.split(',')[3]) if shape_size_limits and len(shape_size_limits.split(',')) > 3 else None,
 
             # Shapes
-            min_shapes=min_shapes,
-            max_shapes=max_shapes,
+            min_shapes=int(shapes_count.split(',')[0]) if shapes_count else None,
+            max_shapes=int(shapes_count.split(',')[1]) if shapes_count and ',' in shapes_count else None,
             deform_level=deform_level,
             allowed_shapes=shape_types.split(',') if shape_types else None,
 
