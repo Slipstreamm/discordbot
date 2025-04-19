@@ -17,6 +17,22 @@ GTTS_AVAILABLE = importlib.util.find_spec("gtts") is not None
 PYTTSX3_AVAILABLE = importlib.util.find_spec("pyttsx3") is not None
 COQUI_AVAILABLE = importlib.util.find_spec("TTS") is not None
 
+# Check for espeak-ng
+try:
+    import subprocess
+    import platform
+    if platform.system() == "Windows":
+        # On Windows, we'll check if the command exists
+        result = subprocess.run(["where", "espeak-ng"], capture_output=True, text=True)
+        ESPEAK_AVAILABLE = result.returncode == 0
+    else:
+        # On Linux/Mac, we'll use which
+        result = subprocess.run(["which", "espeak-ng"], capture_output=True, text=True)
+        ESPEAK_AVAILABLE = result.returncode == 0
+except Exception as e:
+    print(f"Error checking espeak-ng: {e}")
+    ESPEAK_AVAILABLE = False
+
 class JSON:
     def read(file):
         with open(f"{file}.json", "r", encoding="utf8") as file:
@@ -60,13 +76,22 @@ text_size = config_data.get("TEXT_SIZE", 0)  # 0 means auto-scale
 text_position = config_data.get("TEXT_POSITION", "top-left")
 
 # Get color schemes from config if available
-color_schemes = config_data.get("COLOR_SCHEMES", {
-    "pastel": [(255, 182, 193), (176, 224, 230), (240, 230, 140), (221, 160, 221), (152, 251, 152)],
-    "dark_gritty": [(47, 79, 79), (105, 105, 105), (0, 0, 0), (85, 107, 47), (139, 69, 19)],
-    "nature": [(34, 139, 34), (107, 142, 35), (46, 139, 87), (32, 178, 170), (154, 205, 50)],
-    "vibrant": [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255)],
-    "ocean": [(0, 105, 148), (72, 209, 204), (70, 130, 180), (135, 206, 250), (176, 224, 230)]
+color_schemes_data = config_data.get("COLOR_SCHEMES", {
+    "pastel": [[255, 182, 193], [176, 224, 230], [240, 230, 140], [221, 160, 221], [152, 251, 152]],
+    "dark_gritty": [[47, 79, 79], [105, 105, 105], [0, 0, 0], [85, 107, 47], [139, 69, 19]],
+    "nature": [[34, 139, 34], [107, 142, 35], [46, 139, 87], [32, 178, 170], [154, 205, 50]],
+    "vibrant": [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0], [255, 0, 255]],
+    "ocean": [[0, 105, 148], [72, 209, 204], [70, 130, 180], [135, 206, 250], [176, 224, 230]]
 })
+
+# Convert color schemes from lists to tuples for PIL
+color_schemes = {}
+for scheme_name, colors in color_schemes_data.items():
+    color_schemes[scheme_name] = [tuple(color) for color in colors]
+
+# Default color scheme if the specified one doesn't exist
+if color_scheme not in color_schemes:
+    color_schemes[color_scheme] = [(128, 128, 128)]
 
 # Vibe presets for wave sound
 wave_vibes = config_data.get("WAVE_VIBES", {
@@ -122,7 +147,7 @@ def generate_word(theme="random"):
 def generate_wave_sample(x, freq, wave_type, amplitude=1.0):
     """Generate a sample for different wave types"""
     t = x / sample_rate
-    
+
     if wave_type == "sine":
         return amplitude * math.sin(2 * math.pi * freq * t)
     elif wave_type == "square":
@@ -213,6 +238,42 @@ def generate_tts_audio(text, output_file):
             return True
         except Exception as e:
             print(f"Error with Coqui TTS: {e}")
+            return False
+    elif tts_provider == "espeak" and ESPEAK_AVAILABLE:
+        try:
+            # Create a WAV file first
+            wav_file = output_file.replace(".mp3", ".wav")
+
+            # Run espeak-ng to generate the audio
+            cmd = ["espeak-ng", "-w", wav_file, text]
+            process = subprocess.run(cmd, capture_output=True, text=True)
+
+            if process.returncode != 0:
+                print(f"Error running espeak-ng: {process.stderr}")
+                return False
+
+            # Convert WAV to MP3 if needed
+            if output_file.endswith(".mp3"):
+                try:
+                    # Try to use pydub for conversion
+                    sound = AudioSegment.from_wav(wav_file)
+                    sound.export(output_file, format="mp3")
+                    # Remove the temporary WAV file
+                    os.remove(wav_file)
+                    print(f"espeak-ng audio saved to {output_file}")
+                except Exception as e:
+                    # If pydub fails, just use the WAV file
+                    print(f"Warning: Could not convert WAV to MP3: {e}")
+                    print(f"Using WAV file instead: {wav_file}")
+                    output_file = wav_file
+            else:
+                # If the output file doesn't end with .mp3, we're already using the WAV file
+                output_file = wav_file
+                print(f"espeak-ng audio saved to {output_file}")
+
+            return True
+        except Exception as e:
+            print(f"Error with espeak-ng: {e}")
             return False
     else:
         print(f"TTS provider {tts_provider} not available. Falling back to no TTS.")
@@ -309,7 +370,7 @@ for xyz in range(AMOUNT):
                 random_top_left_text = generate_word(words_topic)
             else:
                 random_top_left_text = ""
-                
+
             # Position text based on text_position setting
             if text_position == "top-left" or text_position == "random" and random.random() < 0.2:
                 img1.text((10, 10), random_top_left_text, font=fnt, fill=parsed_text_color)
@@ -386,9 +447,9 @@ for xyz in range(AMOUNT):
         frames, fps=fps
     )
     clip.write_videofile(
-        f'./OUTPUT/{video_name}.mp4', 
-        audio="./SOUND/output.m4a", 
-        codec="libx264", 
+        f'./OUTPUT/{video_name}.mp4',
+        audio="./SOUND/output.m4a",
+        codec="libx264",
         audio_codec="aac"
     )
 
