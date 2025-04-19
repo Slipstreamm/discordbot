@@ -14,3 +14,7 @@ ffmpeg
 chess
 Pillow
 Flask
+moviepy
+pydub
+gTTS
+nltk
