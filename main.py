@@ -30,10 +30,31 @@ async def on_ready():
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="!help"))
     print("Bot status set to 'Listening to !help'")
     try:
+        print("Starting command sync process...")
+        # List commands before sync
+        commands_before = [cmd.name for cmd in bot.tree.get_commands()]
+        print(f"Commands before sync: {commands_before}")
+
+        # Perform sync
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s)")
+
+        # List commands after sync
+        commands_after = [cmd.name for cmd in bot.tree.get_commands()]
+        print(f"Commands after sync: {commands_after}")
+
+        # Check for specific commands
+        for cmd in bot.tree.get_commands():
+            if cmd.name == "webdrivertorso":
+                print(f"Found webdrivertorso command with {len(cmd.parameters)} parameters")
+                for param in cmd.parameters:
+                    print(f"  - Parameter: {param.name}, Type: {type(param.type).__name__}")
+                    if hasattr(param, 'choices') and param.choices:
+                        print(f"    Choices: {[choice.name for choice in param.choices]}")
     except Exception as e:
         print(f"Failed to sync commands: {e}")
+        import traceback
+        traceback.print_exc()
 
 @bot.event
 async def on_shard_disconnect(shard_id):
