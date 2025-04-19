@@ -17,4 +17,6 @@ Flask
 moviepy
 pydub
 gTTS
+pyttsx3
+TTS
 nltk

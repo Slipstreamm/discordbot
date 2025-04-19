@@ -10,8 +10,9 @@
     "MIN_SHAPES": 5,
     "MAX_SHAPES": 15,
     "SOUND_QUALITY": 44100,
-    "TTS_ENABLED": true,
+    "TTS_ENABLED": false,
     "TTS_TEXT": "This is a Webdriver Torso style test video created by the bot.",
+    "TTS_PROVIDER": "gtts",
     "AUDIO_WAVE_TYPE": "sawtooth",
     "SLIDE_DURATION": 1000,
     "DEFORM_LEVEL": "medium",
@@ -22,5 +23,52 @@
     "WAVE_VIBE": "random",
     "TOP_LEFT_TEXT_ENABLED": true,
     "TOP_LEFT_TEXT_MODE": "random",
-    "WORDS_TOPIC": "random"
+    "WORDS_TOPIC": "random",
+    "TEXT_COLOR": "#000000",
+    "TEXT_SIZE": 0,
+    "TEXT_POSITION": "top-left",
+
+    "COLOR_SCHEMES": {
+        "pastel": [[255, 182, 193], [176, 224, 230], [240, 230, 140], [221, 160, 221], [152, 251, 152]],
+        "dark_gritty": [[47, 79, 79], [105, 105, 105], [0, 0, 0], [85, 107, 47], [139, 69, 19]],
+        "nature": [[34, 139, 34], [107, 142, 35], [46, 139, 87], [32, 178, 170], [154, 205, 50]],
+        "vibrant": [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0], [255, 0, 255]],
+        "ocean": [[0, 105, 148], [72, 209, 204], [70, 130, 180], [135, 206, 250], [176, 224, 230]],
+        "neon": [[255, 0, 102], [0, 255, 255], [255, 255, 0], [0, 255, 0], [255, 0, 255]],
+        "monochrome": [[0, 0, 0], [50, 50, 50], [100, 100, 100], [150, 150, 150], [200, 200, 200]],
+        "autumn": [[165, 42, 42], [210, 105, 30], [139, 69, 19], [160, 82, 45], [205, 133, 63]],
+        "cyberpunk": [[255, 0, 128], [0, 255, 255], [128, 0, 255], [255, 255, 0], [0, 255, 128]],
+        "retro": [[255, 204, 0], [255, 102, 0], [204, 0, 0], [0, 102, 204], [0, 204, 102]]
+    },
+
+    "WAVE_VIBES": {
+        "calm": {"frequency": 200, "amplitude": 0.3, "modulation": 0.1},
+        "eerie": {"frequency": 600, "amplitude": 0.5, "modulation": 0.7},
+        "random": {},
+        "energetic": {"frequency": 800, "amplitude": 0.7, "modulation": 0.2},
+        "dreamy": {"frequency": 400, "amplitude": 0.4, "modulation": 0.5},
+        "chaotic": {"frequency": 1000, "amplitude": 1.0, "modulation": 1.0},
+        "glitchy": {"frequency": 1200, "amplitude": 0.8, "modulation": 0.9},
+        "underwater": {"frequency": 300, "amplitude": 0.6, "modulation": 0.3},
+        "mechanical": {"frequency": 500, "amplitude": 0.5, "modulation": 0.1},
+        "ethereal": {"frequency": 700, "amplitude": 0.4, "modulation": 0.8},
+        "pulsating": {"frequency": 900, "amplitude": 0.7, "modulation": 0.6}
+    },
+
+    "WORD_TOPICS": {
+        "introspective": ["reflection", "thought", "solitude", "ponder", "meditation", "introspection", "awareness", "contemplation", "silence", "stillness"],
+        "action": ["run", "jump", "climb", "race", "fight", "explore", "build", "create", "overcome", "achieve"],
+        "nature": ["tree", "mountain", "river", "ocean", "flower", "forest", "animal", "sky", "valley", "meadow"],
+        "technology": ["computer", "robot", "network", "data", "algorithm", "innovation", "digital", "machine", "software", "hardware"],
+        "space": ["star", "planet", "galaxy", "cosmos", "orbit", "nebula", "asteroid", "comet", "universe", "void"],
+        "ocean": ["wave", "coral", "fish", "shark", "seaweed", "tide", "reef", "abyss", "current", "marine"],
+        "fantasy": ["dragon", "wizard", "magic", "quest", "sword", "spell", "kingdom", "myth", "legend", "fairy"],
+        "science": ["experiment", "theory", "hypothesis", "research", "discovery", "laboratory", "element", "molecule", "atom", "energy"],
+        "art": ["canvas", "paint", "sculpture", "gallery", "artist", "creativity", "expression", "masterpiece", "composition", "design"],
+        "music": ["melody", "rhythm", "harmony", "song", "instrument", "concert", "symphony", "chord", "note", "beat"],
+        "food": ["cuisine", "flavor", "recipe", "ingredient", "taste", "dish", "spice", "dessert", "meal", "delicacy"],
+        "emotions": ["joy", "sorrow", "anger", "fear", "love", "hate", "surprise", "disgust", "anticipation", "trust"],
+        "colors": ["red", "blue", "green", "yellow", "purple", "orange", "black", "white", "pink", "teal"],
+        "abstract": ["concept", "idea", "thought", "theory", "philosophy", "abstraction", "notion", "principle", "essence", "paradigm"]
+    }
 }
