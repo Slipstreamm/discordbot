@@ -20,3 +20,4 @@ gTTS
 pyttsx3
 TTS
 nltk
+coqui-tts
