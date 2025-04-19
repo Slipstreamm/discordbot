@@ -45,7 +45,7 @@ class RandomTimeoutCog(commands.Cog):
         # Add message information
         embed.add_field(
             name="💬 Message Information",
-            value=f"**Channel:** {message.channel.mention}\n**Message Link:** [Click Here]({message.jump_url})\n**Content:** {message.content[:200] + '...' if len(message.content) > 200 else message.content}",
+            value=f"**Channel:** {message.channel.mention}\n**Message Link:** [Click Here]({message.jump_url})",
             inline=False
         )
 
