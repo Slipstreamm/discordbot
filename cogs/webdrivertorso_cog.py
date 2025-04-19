@@ -223,17 +223,40 @@ class WebdriverTorsoCog(commands.Cog):
     # --- Slash Command ---
     @app_commands.command(name="webdrivertorso", description="Generate a Webdriver Torso style test video")
     @app_commands.describe(
+        # Video structure
         slides="Number of slides in the video (default: 10)",
-        min_shapes="Minimum number of shapes per slide (default: 5)",
-        max_shapes="Maximum number of shapes per slide (default: 15)",
+        videos="Number of videos to generate (default: 1)",
         slide_duration="Duration of each slide in milliseconds (default: 1000)",
-        tts_text="Text to be spoken in the video",
-        tts_enabled="Enable text-to-speech (default: true)",
+
+        # Video dimensions
         width="Video width in pixels (default: 640)",
         height="Video height in pixels (default: 480)",
+        max_width="Maximum shape width (default: 200)",
+        max_height="Maximum shape height (default: 200)",
+        min_width="Minimum shape width (default: 20)",
+        min_height="Minimum shape height (default: 20)",
+
+        # Shapes
+        min_shapes="Minimum number of shapes per slide (default: 5)",
+        max_shapes="Maximum number of shapes per slide (default: 15)",
         deform_level="Level of shape deformation (none, low, medium, high)",
+
+        # Colors
         color_mode="Color mode for shapes (random, scheme, solid)",
-        wave_vibe="Audio wave vibe (calm, eerie, random, energetic, dreamy, chaotic)"
+        color_scheme="Color scheme to use (pastel, dark_gritty, nature, vibrant, ocean)",
+        solid_color="Hex color code for solid color mode (#RRGGBB)",
+
+        # Audio
+        sound_quality="Audio sample rate (default: 44100)",
+        audio_wave_type="Type of audio wave (sawtooth, sine, square)",
+        wave_vibe="Audio wave vibe (calm, eerie, random, energetic, dreamy, chaotic)",
+        tts_enabled="Enable text-to-speech (default: true)",
+        tts_text="Text to be spoken in the video",
+
+        # Text
+        top_left_text_enabled="Show text in top-left corner (default: true)",
+        top_left_text_mode="Mode for top-left text (random, word)",
+        words_topic="Topic for word generation (random, introspective, action, nature, technology)"
     )
     @app_commands.choices(deform_level=[
         app_commands.Choice(name="None", value="none"),
@@ -246,6 +269,18 @@ class WebdriverTorsoCog(commands.Cog):
         app_commands.Choice(name="Color Scheme", value="scheme"),
         app_commands.Choice(name="Solid Color", value="solid")
     ])
+    @app_commands.choices(color_scheme=[
+        app_commands.Choice(name="Pastel", value="pastel"),
+        app_commands.Choice(name="Dark Gritty", value="dark_gritty"),
+        app_commands.Choice(name="Nature", value="nature"),
+        app_commands.Choice(name="Vibrant", value="vibrant"),
+        app_commands.Choice(name="Ocean", value="ocean")
+    ])
+    @app_commands.choices(audio_wave_type=[
+        app_commands.Choice(name="Sawtooth", value="sawtooth"),
+        app_commands.Choice(name="Sine", value="sine"),
+        app_commands.Choice(name="Square", value="square")
+    ])
     @app_commands.choices(wave_vibe=[
         app_commands.Choice(name="Calm", value="calm"),
         app_commands.Choice(name="Eerie", value="eerie"),
@@ -254,33 +289,91 @@ class WebdriverTorsoCog(commands.Cog):
         app_commands.Choice(name="Dreamy", value="dreamy"),
         app_commands.Choice(name="Chaotic", value="chaotic")
     ])
+    @app_commands.choices(top_left_text_mode=[
+        app_commands.Choice(name="Random", value="random"),
+        app_commands.Choice(name="Word", value="word")
+    ])
+    @app_commands.choices(words_topic=[
+        app_commands.Choice(name="Random", value="random"),
+        app_commands.Choice(name="Introspective", value="introspective"),
+        app_commands.Choice(name="Action", value="action"),
+        app_commands.Choice(name="Nature", value="nature"),
+        app_commands.Choice(name="Technology", value="technology")
+    ])
     async def webdrivertorso_slash(self, interaction: discord.Interaction,
+                                  # Video structure
                                   slides: int = None,
-                                  min_shapes: int = None,
-                                  max_shapes: int = None,
+                                  videos: int = None,
                                   slide_duration: int = None,
-                                  tts_text: str = None,
-                                  tts_enabled: bool = None,
+
+                                  # Video dimensions
                                   width: int = None,
                                   height: int = None,
+                                  max_width: int = None,
+                                  max_height: int = None,
+                                  min_width: int = None,
+                                  min_height: int = None,
+
+                                  # Shapes
+                                  min_shapes: int = None,
+                                  max_shapes: int = None,
                                   deform_level: str = None,
+
+                                  # Colors
                                   color_mode: str = None,
-                                  wave_vibe: str = None):
+                                  color_scheme: str = None,
+                                  solid_color: str = None,
+
+                                  # Audio
+                                  sound_quality: int = None,
+                                  audio_wave_type: str = None,
+                                  wave_vibe: str = None,
+                                  tts_enabled: bool = None,
+                                  tts_text: str = None,
+
+                                  # Text
+                                  top_left_text_enabled: bool = None,
+                                  top_left_text_mode: str = None,
+                                  words_topic: str = None):
         """Slash command version of webdrivertorso."""
         await interaction.response.defer(thinking=True)
         result = await self._generate_video_logic(
             interaction,
+            # Video structure
             slides=slides,
-            min_shapes=min_shapes,
-            max_shapes=max_shapes,
+            videos=videos,
             slide_duration=slide_duration,
-            tts_text=tts_text,
-            tts_enabled=tts_enabled,
+
+            # Video dimensions
             width=width,
             height=height,
+            max_width=max_width,
+            max_height=max_height,
+            min_width=min_width,
+            min_height=min_height,
+
+            # Shapes
+            min_shapes=min_shapes,
+            max_shapes=max_shapes,
             deform_level=deform_level,
+
+            # Colors
             color_mode=color_mode,
+            color_scheme=color_scheme,
+            solid_color=solid_color,
+
+            # Audio
+            sound_quality=sound_quality,
+            audio_wave_type=audio_wave_type,
             wave_vibe=wave_vibe,
+            tts_enabled=tts_enabled,
+            tts_text=tts_text,
+
+            # Text
+            top_left_text_enabled=top_left_text_enabled,
+            top_left_text_mode=top_left_text_mode,
+            words_topic=words_topic,
+
             already_deferred=True
         )
 
