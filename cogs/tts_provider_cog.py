@@ -11,9 +11,63 @@ class TTSProviderCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         print("TTSProviderCog initialized!")
+        self.cleanup_old_files()
 
-    async def generate_tts_directly(self, provider, text, output_file="./SOUND/tts_direct.mp3"):
+        # Schedule periodic cleanup
+        self.cleanup_task = self.bot.loop.create_task(self.periodic_cleanup())
+
+    async def periodic_cleanup(self):
+        """Periodically clean up old TTS files."""
+        import asyncio
+        while not self.bot.is_closed():
+            # Clean up every hour
+            await asyncio.sleep(3600)  # 1 hour
+            self.cleanup_old_files()
+
+    def cog_unload(self):
+        """Cancel the cleanup task when the cog is unloaded."""
+        if hasattr(self, 'cleanup_task') and self.cleanup_task:
+            self.cleanup_task.cancel()
+
+    def cleanup_old_files(self):
+        """Clean up old TTS files to prevent disk space issues."""
+        try:
+            import glob
+            import time
+            import os
+
+            # Create the SOUND directory if it doesn't exist
+            os.makedirs("./SOUND", exist_ok=True)
+
+            # Get current time
+            current_time = time.time()
+
+            # Find all TTS files older than 1 hour
+            old_files = []
+            for pattern in ["./SOUND/tts_*.mp3", "./SOUND/tts_direct_*.mp3", "./SOUND/tts_test_*.mp3"]:
+                for file in glob.glob(pattern):
+                    if os.path.exists(file) and os.path.getmtime(file) < current_time - 3600:  # 1 hour = 3600 seconds
+                        old_files.append(file)
+
+            # Delete old files
+            for file in old_files:
+                try:
+                    os.remove(file)
+                    print(f"Cleaned up old TTS file: {file}")
+                except Exception as e:
+                    print(f"Error removing old TTS file {file}: {e}")
+
+            print(f"Cleaned up {len(old_files)} old TTS files")
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+
+    async def generate_tts_directly(self, provider, text, output_file=None):
         """Generate TTS audio directly without using a subprocess."""
+        # Create a unique output file if none is provided
+        if output_file is None:
+            import uuid
+            output_file = f"./SOUND/tts_direct_{uuid.uuid4().hex}.mp3"
+
         # Create output directory if it doesn't exist
         os.makedirs("./SOUND", exist_ok=True)
 
@@ -174,8 +228,13 @@ def generate_tts_audio(provider, text, output_file):
 # Create output directory if it doesn't exist
 os.makedirs("./SOUND", exist_ok=True)
 
+# Generate a unique filename
+import uuid
+unique_id = uuid.uuid4().hex
+output_file = f"./SOUND/tts_test_{{unique_id}}.mp3"
+print(f"Using output file: {{output_file}}")
+
 # Generate TTS audio
-output_file = "./SOUND/tts_test.mp3"
 try:
     success = generate_tts_audio("{provider}", "{text}", output_file)
     print(f"TTS generation {{'' if success else 'un'}}successful")
@@ -214,12 +273,37 @@ else:
         # Combine stdout and stderr for complete output
         full_output = f"STDOUT:\n{stdout_text}\n\nSTDERR:\n{stderr_text}"
 
+        # Extract the output filename from the stdout
+        output_filename = None
+        for line in stdout_text.split('\n'):
+            if line.startswith("Using output file:"):
+                output_filename = line.split(":", 1)[1].strip()
+                break
+
+        # If we couldn't find the filename in the output, use a default pattern to search
+        if not output_filename:
+            # Look for any tts_test_*.mp3 files created in the last minute
+            import glob
+            import time
+            current_time = time.time()
+            tts_files = []
+            for file in glob.glob("./SOUND/tts_test_*.mp3"):
+                if os.path.exists(file) and os.path.getmtime(file) > current_time - 60:
+                    tts_files.append(file)
+
+            if tts_files:
+                # Use the most recently created file
+                output_filename = max(tts_files, key=os.path.getmtime)
+            else:
+                # Fallback to the old filename pattern
+                output_filename = "./SOUND/tts_test.mp3"
+
         # Check if the TTS file was generated
-        if os.path.exists("./SOUND/tts_test.mp3") and os.path.getsize("./SOUND/tts_test.mp3") > 0:
+        if os.path.exists(output_filename) and os.path.getsize(output_filename) > 0:
             # Success! Send the audio file
             await interaction.followup.send(
-                f"✅ Successfully tested TTS provider: {provider}\nText: {text}",
-                file=discord.File("./SOUND/tts_test.mp3")
+                f"✅ Successfully tested TTS provider: {provider}\nText: {text}\nFile: {os.path.basename(output_filename)}",
+                file=discord.File(output_filename)
             )
         else:
             # Failed to generate audio with subprocess, try direct method as fallback
