@@ -196,17 +196,21 @@ class WebdriverTorsoCog(commands.Cog):
         - max_shapes: Maximum number of shapes per slide (default: 15)
         - sound_quality: Audio sample rate (default: 44100)
         - tts_enabled: Enable text-to-speech (true/false)
+        - tts_provider: TTS provider to use (gtts, pyttsx3, coqui)
         - tts_text: Text to be spoken in the video
-        - audio_wave_type: Type of audio wave (sawtooth, sine, square)
+        - audio_wave_type: Type of audio wave (sawtooth, sine, square, triangle, noise, pulse, harmonic)
         - slide_duration: Duration of each slide in milliseconds (default: 1000)
         - deform_level: Level of shape deformation (none, low, medium, high)
         - color_mode: Color mode for shapes (random, scheme, solid)
-        - color_scheme: Color scheme to use (pastel, dark_gritty, nature, vibrant, ocean)
+        - color_scheme: Color scheme to use (pastel, dark_gritty, nature, vibrant, ocean, neon, monochrome, autumn, cyberpunk, retro)
         - solid_color: Hex color code for solid color mode (#RRGGBB)
-        - wave_vibe: Audio wave vibe (calm, eerie, random, energetic, dreamy, chaotic)
+        - wave_vibe: Audio wave vibe (calm, eerie, random, energetic, dreamy, chaotic, glitchy, underwater, mechanical, ethereal, pulsating)
         - top_left_text_enabled: Show text in top-left corner (true/false)
         - top_left_text_mode: Mode for top-left text (random, word)
-        - words_topic: Topic for word generation (random, introspective, action, nature, technology)
+        - words_topic: Topic for word generation (random, introspective, action, nature, technology, space, ocean, fantasy, science, art, music, food, emotions, colors, abstract)
+        - text_color: Color of text (hex code or name)
+        - text_size: Size of text (default: auto-scaled)
+        - text_position: Position of text (top-left, top-right, bottom-left, bottom-right, center, random)
         """
         # Parse options from the string
         params = {}
