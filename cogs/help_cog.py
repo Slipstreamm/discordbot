@@ -10,6 +10,7 @@ COG_DISPLAY_NAMES = {
     "GamesCog": "🎮 Games",
     "HelpCog": "❓ Help",
     "LevelingCog": "⭐ Leveling System",
+    "MarriageCog": "💍 Marriage System",
     "ModerationCog": "🛡️ Moderation",
     "PingCog": "🏓 Ping",
     "RandomCog": "🎲 Random Image (NSFW)",
