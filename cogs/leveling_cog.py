@@ -18,7 +18,7 @@ DEFAULT_XP_PER_MESSAGE = 15
 DEFAULT_XP_PER_REACTION = 5
 DEFAULT_XP_COOLDOWN = 30  # seconds
 DEFAULT_REACTION_COOLDOWN = 30  # seconds
-DEFAULT_LEVEL_MULTIPLIER = 60  # XP needed per level = level * multiplier
+DEFAULT_LEVEL_MULTIPLIER = 50  # XP needed per level = level * multiplier
 
 class LevelingCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
