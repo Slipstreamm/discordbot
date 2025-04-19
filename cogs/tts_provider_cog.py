@@ -112,6 +112,56 @@ class TTSProviderCog(commands.Cog):
             except Exception as e:
                 return False, f"Error with Coqui TTS: {str(e)}"
 
+        elif provider == "espeak":
+            # Check if we can run espeak-ng command
+            import subprocess
+            import platform
+
+            try:
+                # Check if espeak-ng is available
+                if platform.system() == "Windows":
+                    # On Windows, we'll check if the command exists
+                    result = subprocess.run(["where", "espeak-ng"], capture_output=True, text=True)
+                    espeak_available = result.returncode == 0
+                else:
+                    # On Linux/Mac, we'll use which
+                    result = subprocess.run(["which", "espeak-ng"], capture_output=True, text=True)
+                    espeak_available = result.returncode == 0
+
+                if not espeak_available:
+                    return False, "espeak-ng is not installed or not in PATH. Install espeak-ng and make sure it's in your PATH."
+
+                # Create a WAV file first
+                wav_file = output_file.replace(".mp3", ".wav")
+
+                # Run espeak-ng to generate the audio
+                cmd = ["espeak-ng", "-w", wav_file, text]
+                process = subprocess.run(cmd, capture_output=True, text=True)
+
+                if process.returncode != 0:
+                    return False, f"Error running espeak-ng: {process.stderr}"
+
+                # Convert WAV to MP3 if needed
+                if output_file.endswith(".mp3"):
+                    try:
+                        # Try to use pydub for conversion
+                        from pydub import AudioSegment
+                        sound = AudioSegment.from_wav(wav_file)
+                        sound.export(output_file, format="mp3")
+                        # Remove the temporary WAV file
+                        os.remove(wav_file)
+                    except Exception as e:
+                        # If pydub fails, just use the WAV file
+                        print(f"Warning: Could not convert WAV to MP3: {e}")
+                        output_file = wav_file
+                else:
+                    # If the output file doesn't end with .mp3, we're already using the WAV file
+                    output_file = wav_file
+
+                return True, output_file
+            except Exception as e:
+                return False, f"Error with espeak-ng: {str(e)}"
+
         else:
             return False, f"Unknown TTS provider: {provider}"
 
@@ -123,7 +173,8 @@ class TTSProviderCog(commands.Cog):
     @app_commands.choices(provider=[
         app_commands.Choice(name="Google TTS (Online)", value="gtts"),
         app_commands.Choice(name="pyttsx3 (Offline)", value="pyttsx3"),
-        app_commands.Choice(name="Coqui TTS (AI Voice)", value="coqui")
+        app_commands.Choice(name="Coqui TTS (AI Voice)", value="coqui"),
+        app_commands.Choice(name="eSpeak-NG (Offline)", value="espeak")
     ])
     async def ttsprovider_slash(self, interaction: discord.Interaction,
                                provider: str,
@@ -182,6 +233,30 @@ except Exception as e:
     print(f"Error checking TTS: {{e}}")
     COQUI_AVAILABLE = False
 
+# Check for espeak-ng
+try:
+    import subprocess
+    import platform
+    if platform.system() == "Windows":
+        # On Windows, we'll check if the command exists
+        result = subprocess.run(["where", "espeak-ng"], capture_output=True, text=True)
+        ESPEAK_AVAILABLE = result.returncode == 0
+    else:
+        # On Linux/Mac, we'll use which
+        result = subprocess.run(["which", "espeak-ng"], capture_output=True, text=True)
+        ESPEAK_AVAILABLE = result.returncode == 0
+    print(f"ESPEAK_AVAILABLE: {{ESPEAK_AVAILABLE}}")
+    if ESPEAK_AVAILABLE:
+        # Try to get version
+        version_result = subprocess.run(["espeak-ng", "--version"], capture_output=True, text=True)
+        if version_result.returncode == 0:
+            print(f"espeak-ng version: {{version_result.stdout.strip()}}")
+        else:
+            print("espeak-ng found but couldn't get version")
+except Exception as e:
+    print(f"Error checking espeak-ng: {{e}}")
+    ESPEAK_AVAILABLE = False
+
 def generate_tts_audio(provider, text, output_file):
     print(f"Testing TTS provider: {{provider}}")
     print(f"Text: {{text}}")
@@ -219,6 +294,45 @@ def generate_tts_audio(provider, text, output_file):
             return True
         except Exception as e:
             print(f"Error with Coqui TTS: {{e}}")
+            traceback.print_exc()
+            return False
+    elif provider == "espeak" and ESPEAK_AVAILABLE:
+        try:
+            # Create a WAV file first
+            wav_file = output_file.replace(".mp3", ".wav")
+
+            # Run espeak-ng to generate the audio
+            cmd = ["espeak-ng", "-w", wav_file, text]
+            process = subprocess.run(cmd, capture_output=True, text=True)
+
+            if process.returncode != 0:
+                print(f"Error running espeak-ng: {{process.stderr}}")
+                traceback.print_exc()
+                return False
+
+            # Convert WAV to MP3 if needed
+            if output_file.endswith(".mp3"):
+                try:
+                    # Try to use pydub for conversion
+                    from pydub import AudioSegment
+                    sound = AudioSegment.from_wav(wav_file)
+                    sound.export(output_file, format="mp3")
+                    # Remove the temporary WAV file
+                    os.remove(wav_file)
+                    print(f"espeak-ng audio saved to {{output_file}}")
+                except Exception as e:
+                    # If pydub fails, just use the WAV file
+                    print(f"Warning: Could not convert WAV to MP3: {{e}}")
+                    print(f"Using WAV file instead: {{wav_file}}")
+                    output_file = wav_file
+            else:
+                # If the output file doesn't end with .mp3, we're already using the WAV file
+                output_file = wav_file
+                print(f"espeak-ng audio saved to {{output_file}}")
+
+            return True
+        except Exception as e:
+            print(f"Error with espeak-ng: {{e}}")
             traceback.print_exc()
             return False
     else:
@@ -413,17 +527,45 @@ else:
             except Exception as e:
                 coqui_version = f"Error importing: {str(e)}"
 
+        # Check for espeak-ng
+        espeak_version = "Not installed"
+        try:
+            import subprocess
+            import platform
+            if platform.system() == "Windows":
+                # On Windows, we'll check if the command exists
+                result = subprocess.run(["where", "espeak-ng"], capture_output=True, text=True)
+                espeak_available = result.returncode == 0
+            else:
+                # On Linux/Mac, we'll use which
+                result = subprocess.run(["which", "espeak-ng"], capture_output=True, text=True)
+                espeak_available = result.returncode == 0
+
+            if espeak_available:
+                # Try to get version
+                version_result = subprocess.run(["espeak-ng", "--version"], capture_output=True, text=True)
+                if version_result.returncode == 0:
+                    espeak_version = version_result.stdout.strip()
+                else:
+                    espeak_version = "Installed (version unknown)"
+            else:
+                espeak_version = "Not installed"
+        except Exception as e:
+            espeak_version = f"Error checking: {str(e)}"
+
         # Create a report
         report = "**TTS Libraries Status:**\n"
         report += f"- Google TTS (gtts): {gtts_version}\n"
         report += f"- pyttsx3: {pyttsx3_version}\n"
-        report += f"- Coqui TTS: {coqui_version}\n\n"
+        report += f"- Coqui TTS: {coqui_version}\n"
+        report += f"- eSpeak-NG: {espeak_version}\n\n"
 
         # Add installation instructions
         report += "**Installation Instructions:**\n"
         report += "- Google TTS: `pip install gtts`\n"
         report += "- pyttsx3: `pip install pyttsx3`\n"
-        report += "- Coqui TTS: `pip install TTS`\n\n"
+        report += "- Coqui TTS: `pip install TTS`\n"
+        report += "- eSpeak-NG: Install from https://github.com/espeak-ng/espeak-ng/releases\n\n"
 
         report += "After installing, restart the bot for the changes to take effect."
 
