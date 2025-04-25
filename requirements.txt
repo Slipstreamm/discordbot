@@ -1,0 +1,23 @@
+discord.py
+WMI
+pyopencl
+pyadl
+aiohttp
+python-dotenv
+yt-dlp
+psutil
+GPUtil
+py-cpuinfo
+distro
+pynacl
+ffmpeg
+chess
+Pillow
+Flask
+moviepy
+pydub
+gTTS
+pyttsx3
+nltk
+# coqui-tts
+tavily-python
