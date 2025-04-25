@@ -10,7 +10,7 @@ async def load_all_cogs(bot: commands.Bot):
     failed_cogs = []
 
     for filename in os.listdir(cogs_dir):
-        if filename.endswith(".py") and not filename.startswith("__"):
+        if filename.endswith(".py") and not filename.startswith("__") and not filename.startswith("gurt"):
             cog_name = f"{cogs_dir}.{filename[:-3]}"
             try:
                 await bot.load_extension(cog_name)
