@@ -2617,7 +2617,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
         messages.append({
             "role": "user",
-            "content": f"Given the preceding conversation context and the last message, decide if you (gurt) should respond. **ABSOLUTELY CRITICAL: Your response MUST consist *only* of the raw JSON object itself, with NO additional text, explanations, or markdown formatting (like \\`\\`\\`json ... \\`\\`\\`) surrounding it. The entire response must be *just* the JSON matching this schema:**\n```json\n{{{{\n  \"should_respond\": boolean,\n  \"content\": string,\n  \"react_with_emoji\": string | null\n}}}}\n```\n**Ensure there is absolutely nothing before or after the JSON object.**{message_length_guidance}"
+            "content": f"Given the preceding conversation context and the last message, decide if you (gurt) should respond. **ABSOLUTELY CRITICAL: Your response MUST consist *only* of the raw JSON object itself, with NO additional text, explanations, or markdown formatting (like \\`\\`\\`json ... \\`\\`\\`) surrounding it. The entire response must be *just* the JSON matching this schema:**\n\n{{{{\n  \"should_respond\": boolean,\n  \"content\": string,\n  \"react_with_emoji\": string | null\n}}}}\n\n**Ensure there is absolutely nothing before or after the JSON object.**{message_length_guidance}"
         })
 
         # Prepare the request payload
