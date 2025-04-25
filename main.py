@@ -14,7 +14,7 @@ from utils import reload_script
 # Import the unified API service runner
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from bot.run_unified_api import start_api_in_thread
+from discordbot.run_unified_api import start_api_in_thread
 
 # Check if API dependencies are available
 try:
