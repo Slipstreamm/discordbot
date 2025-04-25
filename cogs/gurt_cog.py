@@ -46,7 +46,7 @@ class GurtCog(commands.Cog):
             "chattiness": 0.5,  # How likely to respond to non-direct messages
             "emoji_usage": 0.6,  # How frequently to use emojis
             "slang_level": 1,  # How much slang to use (increased from 0.75)
-            "randomness": 0.6,   # How unpredictable responses should be (slightly increased)
+            "randomness": 0.5,   # How unpredictable responses should be (slightly increased)
             "verbosity": 0.4     # How verbose responses should be
         }
         self.mood_change_interval = random.randint(1200, 2400)  # 20-40 minutes, randomized
