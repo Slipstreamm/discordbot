@@ -6,6 +6,9 @@ venv/
 certs/
 data/
 .env
+IMG/
+OUTPUT/
+SOUND/
 
 # C extensions
 *.so
