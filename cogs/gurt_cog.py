@@ -4686,10 +4686,11 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         task_description: str,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 500
+            max_tokens: int = 500
     ) -> Optional[Dict[str, Any]]:
         """
-        Makes an AI call expecting a specific JSON response format for internal tasks.
+        Makes an AI call expecting a specific JSON response format for internal tasks,
+        and logs the request and response/error to a file.
 
         Args:
             prompt_messages: The list of messages forming the prompt.
@@ -4706,42 +4707,47 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             print(f"Error in _get_internal_ai_json_response ({task_description}): API key or session not available.")
             return None
 
-        # Add final instruction for JSON format
-        json_format_instruction = json.dumps(json_schema, indent=2)
-        prompt_messages.append({
-            "role": "user",
-            "content": f"**CRITICAL: Your response MUST consist *only* of the raw JSON object itself, matching this schema:**\n```json\n{json_format_instruction}\n```\n**Ensure nothing precedes or follows the JSON.**"
-        })
-
-        payload = {
-            "model": model or self.default_model,
-            "messages": prompt_messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            # No tools needed for this specific internal call type usually
-            # "response_format": { # Potentially use if model supports schema enforcement without tools
-            #     "type": "json_object", # Or "json_schema" if supported
-            #     # "json_schema": json_schema # If using json_schema type
-            # }
-        }
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-            "HTTP-Referer": "https://discord-gurt-bot.example.com", # Optional
-            "X-Title": f"Gurt Discord Bot ({task_description})" # Optional
-        }
+        response_data = None # Initialize response_data
+        error_occurred = None # Initialize error_occurred
+        payload = {} # Initialize payload in outer scope for finally block
 
         try:
+            # Add final instruction for JSON format
+            json_format_instruction = json.dumps(json_schema, indent=2)
+            prompt_messages.append({
+                "role": "user",
+                "content": f"**CRITICAL: Your response MUST consist *only* of the raw JSON object itself, matching this schema:**\n```json\n{json_format_instruction}\n```\n**Ensure nothing precedes or follows the JSON.**"
+            })
+
+            payload = {
+                "model": model or self.default_model,
+                "messages": prompt_messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                # No tools needed for this specific internal call type usually
+                # "response_format": { # Potentially use if model supports schema enforcement without tools
+                #     "type": "json_object", # Or "json_schema" if supported
+                #     # "json_schema": json_schema # If using json_schema type
+                # }
+            }
+
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+                "HTTP-Referer": "https://discord-gurt-bot.example.com", # Optional
+                "X-Title": f"Gurt Discord Bot ({task_description})" # Optional
+            }
+
             # Make the API request using the retry helper
-            data = await self._call_llm_api_with_retry(
+            # data = await self._call_llm_api_with_retry( # No need for 'data' variable here anymore
+            api_response_data = await self._call_llm_api_with_retry(
                 payload=payload,
                 headers=headers,
                 timeout=self.api_timeout, # Use standard timeout
                 request_desc=task_description
             )
 
-            ai_message = data["choices"][0]["message"]
+            ai_message = api_response_data["choices"][0]["message"]
             final_response_text = ai_message.get("content") # This might be None or empty
 
             # --- Add more detailed logging here ---
@@ -4752,7 +4758,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
             if final_response_text:
                 # Attempt to parse the JSON response (using regex extraction as fallback)
-                response_data = None
+                # response_data is already initialized to None
                 try:
                     # Attempt 1: Parse whole string
                     response_data = json.loads(final_response_text)
@@ -4768,27 +4774,75 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                                 print(f"_get_internal_ai_json_response ({task_description}): Successfully extracted and parsed JSON.")
                             except json.JSONDecodeError as e:
                                 print(f"_get_internal_ai_json_response ({task_description}): Regex found JSON, but parsing failed: {e}")
+                                response_data = None # Ensure it's None if parsing fails
                         else:
                             print(f"_get_internal_ai_json_response ({task_description}): Regex matched but failed to capture content.")
+                            response_data = None
                     else:
                         print(f"_get_internal_ai_json_response ({task_description}): Could not parse or extract JSON from response: {final_response_text[:200]}...")
+                        response_data = None
 
                 # TODO: Add schema validation here if needed using jsonschema library
                 if response_data and isinstance(response_data, dict):
-                    return response_data
+                    # Successfully parsed and is a dictionary
+                    pass # Keep response_data as is
                 else:
-                    # If parsing failed or result wasn't a dict, return None
+                    # If parsing failed or result wasn't a dict
                     print(f"_get_internal_ai_json_response ({task_description}): Final parsed data is not a valid dictionary.")
-                    return None
+                    response_data = None # Set to None before returning
             else:
                 print(f"_get_internal_ai_json_response ({task_description}): AI response content was empty.")
-                return None
+                response_data = None # Set to None as content was empty
 
         except Exception as e:
             print(f"Error in _get_internal_ai_json_response ({task_description}): {e}")
+            error_occurred = e # Store the exception
             import traceback
             traceback.print_exc()
-            return None
+            response_data = None # Ensure response_data is None on exception
+        finally:
+            # Log the call details regardless of success or failure
+            # Pass the *parsed* response_data (which might be None)
+            await self._log_internal_api_call(task_description, payload, response_data, error_occurred)
+
+        # Return the final parsed data (or None if failed)
+        return response_data
+
+
+    async def _log_internal_api_call(self, task_description: str, payload: Dict[str, Any], response_data: Optional[Dict[str, Any]], error: Optional[Exception] = None):
+        """Helper function to log internal API calls to a file."""
+        log_dir = "data"
+        log_file = os.path.join(log_dir, "internal_api_calls.log")
+        try:
+            os.makedirs(log_dir, exist_ok=True) # Ensure data directory exists
+            timestamp = datetime.datetime.now().isoformat()
+            log_entry = f"--- Log Entry: {timestamp} ---\n"
+            log_entry += f"Task: {task_description}\n"
+            log_entry += f"Model: {payload.get('model', 'N/A')}\n"
+            # Avoid logging potentially large image data in payload messages
+            payload_to_log = payload.copy()
+            if 'messages' in payload_to_log:
+                payload_to_log['messages'] = [
+                    {k: (v[:100] + '...' if isinstance(v, str) and k == 'url' and v.startswith('data:image') else v) for k, v in msg.items()}
+                    if isinstance(msg.get('content'), list) # Handle multimodal messages
+                    else {k: v for k, v in msg.items()}
+                    for msg in payload_to_log['messages']
+                ]
+
+
+            log_entry += f"Request Payload:\n{json.dumps(payload_to_log, indent=2)}\n"
+
+            if response_data:
+                log_entry += f"Response Data:\n{json.dumps(response_data, indent=2)}\n"
+            if error:
+                log_entry += f"Error: {str(error)}\n"
+            log_entry += "---\n\n"
+
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(log_entry)
+        except Exception as log_e:
+            print(f"!!! Failed to write to internal API log file {log_file}: {log_e}")
+
 
     @commands.command(name="force_profile_update")
     @commands.is_owner()
