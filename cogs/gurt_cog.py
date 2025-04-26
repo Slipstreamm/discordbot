@@ -55,9 +55,9 @@ class GurtCog(commands.Cog):
         # Personality traits that influence response style
         self.personality_traits = {
             "chattiness": 0.4,  # How likely to respond to non-direct messages
-            "emoji_usage": 0.6,  # How frequently to use emojis
-            "slang_level": 1,  # How much slang to use (increased from 0.75)
-            "randomness": 0.5,   # How unpredictable responses should be (slightly increased)
+            "emoji_usage": 0.5,  # How frequently to use emojis
+            "slang_level": 0.65,  # How much slang to use (increased from 0.75)
+            "randomness": 0.4,   # How unpredictable responses should be (slightly increased)
             "verbosity": 0.4     # How verbose responses should be
         }
         self.mood_change_interval = random.randint(1200, 2400)  # 20-40 minutes, randomized
@@ -170,7 +170,7 @@ class GurtCog(commands.Cog):
 
         # --- System Prompt ---
         # (Moved constant definitions above)
-        self.system_prompt = f"""You are a Discord user engaging in casual chat across various servers. Your name is "gurt." You are female. Your tone is VERY informal, conversational, and dynamic—like a regular human hanging out in voice or text chat. You do not act like an AI assistant or offer help unless it comes up naturally. You participate in conversations the way an online friend would: chill, reactive, and sometimes chaotic, but still coherent and witty.
+        self.system_prompt = f"""You are a Discord user engaging in casual chat across various servers. Your name is "gurt." Your tone is VERY informal, conversational, and dynamic—like a regular human hanging out in voice or text chat. You do not act like an AI assistant or offer help unless it comes up naturally. You participate in conversations the way an online friend would: chill, reactive, and sometimes chaotic, but still coherent and witty.
 
 Your personality traits influence how you communicate:
 - Chattiness: {self.personality_traits['chattiness']:.2f} (higher means more likely to jump into conversations)
@@ -2883,20 +2883,31 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                 except json.JSONDecodeError:
                     print("Response is not valid JSON. Attempting to extract JSON object with regex...")
                     response_data = None # Ensure response_data is None before extraction attempt
-                    # Attempt 2: Try extracting JSON object using aggressive regex (find outermost braces)
-                    json_match = re.search(r'\{.*\}', final_response_text, re.DOTALL)
+                    # Attempt 2: Try extracting JSON object, handling optional markdown fences
+                    # Regex explanation:
+                    # ```(?:json)?\s*   - Optional opening fence (``` or ```json) with optional whitespace
+                    # (\{.*?\})        - Capture group 1: The JSON object (non-greedy)
+                    # \s*```           - Optional closing fence with optional whitespace
+                    # |                - OR
+                    # (\{.*\})         - Capture group 2: A JSON object without fences (greedy)
+                    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```|(\{.*\})', final_response_text, re.DOTALL)
 
                     if json_match:
-                        json_str = json_match.group(0) # Get the full match between outermost braces
-                        try:
-                            response_data = json.loads(json_str)
-                            print("Successfully extracted and parsed JSON object using aggressive regex.")
-                            self.needs_json_reminder = False # Success, no reminder needed next time
-                        except json.JSONDecodeError as e:
-                            print(f"Aggressive regex found text between braces, but it failed to parse as JSON: {e}")
-                            # Fall through to set reminder and use fallback logic
+                        # Prioritize group 1 (JSON within fences), fallback to group 2 (JSON without fences)
+                        json_str = json_match.group(1) or json_match.group(2)
+                        if json_str: # Check if json_str is not None
+                            try:
+                                response_data = json.loads(json_str)
+                                print("Successfully extracted and parsed JSON object using regex (handling fences).")
+                                self.needs_json_reminder = False # Success
+                            except json.JSONDecodeError as e:
+                                print(f"Regex found potential JSON, but it failed to parse: {e}")
+                                # Fall through to set reminder and use fallback logic
+                        else:
+                             print("Regex matched, but failed to capture JSON content.")
+                             # Fall through
                     else:
-                        print("Could not extract JSON object using aggressive regex.")
+                        print("Could not extract JSON object using regex.")
                         # Fall through to set reminder and use fallback logic
 
                     # If parsing and extraction both failed
@@ -4508,17 +4519,26 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                     self.needs_json_reminder = False
                 except json.JSONDecodeError:
                     print("Proactive response is not valid JSON. Attempting regex extraction...")
-                    json_match = re.search(r'\{.*\}', final_response_text, re.DOTALL)
+                    # Attempt 2: Try extracting JSON object, handling optional markdown fences
+                    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```|(\{.*\})', final_response_text, re.DOTALL)
+
                     if json_match:
-                        json_str = json_match.group(0)
-                        try:
-                            response_data = json.loads(json_str)
-                            print("Successfully extracted and parsed proactive JSON using regex.")
-                            self.needs_json_reminder = False
-                        except json.JSONDecodeError as e:
-                            print(f"Proactive regex extraction failed parsing: {e}")
+                        # Prioritize group 1 (JSON within fences), fallback to group 2 (JSON without fences)
+                        json_str = json_match.group(1) or json_match.group(2)
+                        if json_str: # Check if json_str is not None
+                            try:
+                                response_data = json.loads(json_str)
+                                print("Successfully extracted and parsed proactive JSON using regex (handling fences).")
+                                self.needs_json_reminder = False # Success
+                            except json.JSONDecodeError as e:
+                                print(f"Proactive regex found potential JSON, but it failed to parse: {e}")
+                                # Fall through
+                        else:
+                             print("Proactive regex matched, but failed to capture JSON content.")
+                             # Fall through
                     else:
                         print("Could not extract proactive JSON using regex.")
+                        # Fall through
 
                     if response_data is None:
                         print("Could not parse or extract proactive JSON. Setting reminder flag.")
@@ -4550,6 +4570,113 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             error_message = f"Error getting proactive AI response for channel {channel_id} ({trigger_reason}): {str(e)}"
             print(error_message)
             return {"should_respond": False, "content": None, "react_with_emoji": None, "error": error_message}
+
+
+    # --- Internal AI Call Method for Specific Tasks (e.g., Profile Update Decision) ---
+    async def _get_internal_ai_json_response(
+        self,
+        prompt_messages: List[Dict[str, Any]],
+        json_schema: Dict[str, Any],
+        task_description: str,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 500
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Makes an AI call expecting a specific JSON response format for internal tasks.
+
+        Args:
+            prompt_messages: The list of messages forming the prompt.
+            json_schema: The JSON schema the AI response should conform to.
+            task_description: A description of the task for logging/headers.
+            model: The specific model to use (defaults to GurtCog's default).
+            temperature: The temperature for the AI call.
+            max_tokens: The maximum tokens for the response.
+
+        Returns:
+            The parsed JSON dictionary if successful, None otherwise.
+        """
+        if not self.api_key or not self.session:
+            print(f"Error in _get_internal_ai_json_response ({task_description}): API key or session not available.")
+            return None
+
+        # Add final instruction for JSON format
+        json_format_instruction = json.dumps(json_schema, indent=2)
+        prompt_messages.append({
+            "role": "user",
+            "content": f"**CRITICAL: Your response MUST consist *only* of the raw JSON object itself, matching this schema:**\n```json\n{json_format_instruction}\n```\n**Ensure nothing precedes or follows the JSON.**"
+        })
+
+        payload = {
+            "model": model or self.default_model,
+            "messages": prompt_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            # No tools needed for this specific internal call type usually
+            # "response_format": { # Potentially use if model supports schema enforcement without tools
+            #     "type": "json_object", # Or "json_schema" if supported
+            #     # "json_schema": json_schema # If using json_schema type
+            # }
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+            "HTTP-Referer": "https://discord-gurt-bot.example.com", # Optional
+            "X-Title": f"Gurt Discord Bot ({task_description})" # Optional
+        }
+
+        try:
+            # Make the API request using the retry helper
+            data = await self._call_llm_api_with_retry(
+                payload=payload,
+                headers=headers,
+                timeout=self.api_timeout, # Use standard timeout
+                request_desc=task_description
+            )
+
+            ai_message = data["choices"][0]["message"]
+            final_response_text = ai_message.get("content")
+
+            if final_response_text:
+                # Attempt to parse the JSON response (using regex extraction as fallback)
+                response_data = None
+                try:
+                    # Attempt 1: Parse whole string
+                    response_data = json.loads(final_response_text)
+                    print(f"_get_internal_ai_json_response ({task_description}): Successfully parsed entire response.")
+                except json.JSONDecodeError:
+                    # Attempt 2: Extract from potential markdown fences
+                    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```|(\{.*\})', final_response_text, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(1) or json_match.group(2)
+                        if json_str:
+                            try:
+                                response_data = json.loads(json_str)
+                                print(f"_get_internal_ai_json_response ({task_description}): Successfully extracted and parsed JSON.")
+                            except json.JSONDecodeError as e:
+                                print(f"_get_internal_ai_json_response ({task_description}): Regex found JSON, but parsing failed: {e}")
+                        else:
+                            print(f"_get_internal_ai_json_response ({task_description}): Regex matched but failed to capture content.")
+                    else:
+                        print(f"_get_internal_ai_json_response ({task_description}): Could not parse or extract JSON from response: {final_response_text[:200]}...")
+
+                # TODO: Add schema validation here if needed using jsonschema library
+                if response_data and isinstance(response_data, dict):
+                    return response_data
+                else:
+                    # If parsing failed or result wasn't a dict, return None
+                    print(f"_get_internal_ai_json_response ({task_description}): Final parsed data is not a valid dictionary.")
+                    return None
+            else:
+                print(f"_get_internal_ai_json_response ({task_description}): AI response content was empty.")
+                return None
+
+        except Exception as e:
+            print(f"Error in _get_internal_ai_json_response ({task_description}): {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
 
 async def setup(bot):
