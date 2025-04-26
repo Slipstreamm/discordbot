@@ -4760,6 +4760,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             )
 
             ai_message = api_response_data["choices"][0]["message"]
+            print(f"_get_internal_ai_json_response ({task_description}): Raw AI Response: {json.dumps(ai_message, indent=2)}")
             final_response_text = ai_message.get("content") # This might be None or empty
 
             # --- Add more detailed logging here ---
