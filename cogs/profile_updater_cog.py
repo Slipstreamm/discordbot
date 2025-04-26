@@ -89,17 +89,25 @@ class ProfileUpdaterCog(commands.Cog):
             updates_to_perform = decision.get("updates", {})
             print(f"ProfileUpdaterTask: AI requested updates: {updates_to_perform}")
 
-            if updates_to_perform.get("avatar_query"):
-                await self._update_avatar(updates_to_perform["avatar_query"])
+            # All fields are required in the schema, but they might be null
+            # Only call the update methods if the value is not None
+            avatar_query = updates_to_perform.get("avatar_query")
+            if avatar_query is not None:
+                await self._update_avatar(avatar_query)
 
-            if updates_to_perform.get("new_bio"):
-                await self._update_bio(updates_to_perform["new_bio"])
+            new_bio = updates_to_perform.get("new_bio")
+            if new_bio is not None:
+                await self._update_bio(new_bio)
 
-            if updates_to_perform.get("role_theme"):
-                await self._update_roles(updates_to_perform["role_theme"])
+            role_theme = updates_to_perform.get("role_theme")
+            if role_theme is not None:
+                await self._update_roles(role_theme)
 
-            if updates_to_perform.get("new_activity"):
-                await self._update_activity(updates_to_perform["new_activity"])
+            # new_activity is always an object with type and text fields
+            # The _update_activity method handles the case where both are null
+            new_activity = updates_to_perform.get("new_activity")
+            if new_activity is not None:
+                await self._update_activity(new_activity)
 
             print("ProfileUpdaterTask: Update cycle finished.")
 
@@ -244,26 +252,24 @@ Current State:
                             "description": "A theme for role selection, e.g., 'cool color roles', 'anime fan roles', or null"
                         },
                         "new_activity": {
-                            "type": "object", # Define as object
+                            "type": "object",
                             "description": "Object containing the new activity details. Set type and text to null if no change is desired.",
                             "properties": {
                                 "type": {
-                                    # Allow type to be string (enum) or null
                                     "anyOf": [{"type": "string", "enum": ["playing", "watching", "listening", "competing"]}, {"type": "null"}],
                                     "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null."
                                 },
                                 "text": {
-                                    # Allow text to be string or null
                                     "anyOf": [{"type": "string"}, {"type": "null"}],
                                     "description": "The activity text, or null."
                                 }
                             },
-                            "required": ["type", "text"], # Add required fields as per error message
-                            "additionalProperties": False # Keep this for the nested activity object
+                            "required": ["type", "text"],
+                            "additionalProperties": False
                         }
                     },
-                    # No required fields within 'updates' itself, as any part can be null/omitted by AI
-                    "additionalProperties": False # Keep this for the 'updates' object as required by the error
+                    "required": ["avatar_query", "new_bio", "role_theme", "new_activity"],
+                    "additionalProperties": False
                 }
             },
             "required": ["should_update", "reasoning", "updates"],
@@ -476,8 +482,21 @@ Current State:
 
         # Define the JSON schema for the role selection AI response
         role_selection_schema = {
-            "roles_to_add": ["list of role names (strings) to add (max 2)"],
-            "roles_to_remove": ["list of role names (strings) to remove (max 2, only from current roles)"]
+            "type": "object",
+            "properties": {
+                "roles_to_add": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of role names to add (max 2)"
+                },
+                "roles_to_remove": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of role names to remove (max 2, only from current roles)"
+                }
+            },
+            "required": ["roles_to_add", "roles_to_remove"],
+            "additionalProperties": False
         }
         role_selection_format = json.dumps(role_selection_schema, indent=2)
 
@@ -489,9 +508,20 @@ Current State:
 
         try:
             # Make the AI call to select roles
+            # Define the payload for the response_format parameter
+            role_selection_format_payload = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "role_selection_decision",
+                    "strict": True,
+                    "schema": role_selection_schema
+                }
+            }
+
             role_decision = await self.gurt_cog._get_internal_ai_json_response(
                 prompt_messages=role_prompt_messages,
-                json_schema=role_selection_schema,
+                model="openai/o4-mini-high", # Use the specified OpenAI model
+                response_format=role_selection_format_payload, # Enforce structured output
                 task_description=f"Role Selection for Guild {guild.id}",
                 temperature=0.5 # More deterministic for role selection
             )
@@ -565,8 +595,22 @@ Current State:
         activity_type_str = activity_info.get("type")
         activity_text = activity_info.get("text")
 
-        if not activity_type_str or not activity_text:
-            print("ProfileUpdaterTask: Invalid activity info received from AI.")
+        # Check if both values are None - this means we should clear the activity
+        if activity_type_str is None and activity_text is None:
+            print("ProfileUpdaterTask: Clearing activity status.")
+            try:
+                await self.bot.change_presence(activity=None)
+                print("ProfileUpdaterTask: Activity cleared successfully.")
+                return
+            except Exception as e:
+                print(f"ProfileUpdaterTask: Error clearing activity: {e}")
+                import traceback
+                traceback.print_exc()
+                return
+
+        # If only one is None but not both, that's invalid
+        if activity_type_str is None or activity_text is None:
+            print("ProfileUpdaterTask: Invalid activity info received from AI - one field is null but not both.")
             return
 
         print(f"ProfileUpdaterTask: Attempting to set activity to {activity_type_str}: '{activity_text}'")
