@@ -244,31 +244,26 @@ Current State:
                             "description": "A theme for role selection, e.g., 'cool color roles', 'anime fan roles', or null"
                         },
                         "new_activity": {
-                            "description": "The new activity object, or null if no change.",
-                            "anyOf": [
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "type": {
-                                            "type": "string",
-                                            "enum": ["playing", "watching", "listening", "competing"],
-                                            "description": "Activity type: 'playing', 'watching', 'listening', or 'competing'."
-                                        },
-                                        "text": {
-                                            "type": "string",
-                                            "description": "The activity text."
-                                        }
-                                    },
-                                    "required": ["type", "text"], # If object is provided, type and text are required
-                                    "additionalProperties": False
+                            "type": "object", # Define as object
+                            "description": "Object containing the new activity details. Set type and text to null if no change is desired.",
+                            "properties": {
+                                "type": {
+                                    # Allow type to be string (enum) or null
+                                    "anyOf": [{"type": "string", "enum": ["playing", "watching", "listening", "competing"]}, {"type": "null"}],
+                                    "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null."
                                 },
-                                {
-                                    "type": "null"
+                                "text": {
+                                    # Allow text to be string or null
+                                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                                    "description": "The activity text, or null."
                                 }
-                            ]
+                            },
+                            # No 'required' here, allows sending {"type": null, "text": null} to clear activity
+                            "additionalProperties": False # Keep this for the nested activity object
                         }
                     },
                     # No required fields within 'updates' itself, as any part can be null/omitted by AI
+                    "additionalProperties": False # Keep this for the 'updates' object as required by the error
                 }
             },
             "required": ["should_update", "reasoning", "updates"],
