@@ -341,17 +341,17 @@ DO NOT fall into these patterns:
 **CRITICAL: You MUST respond ONLY with a valid JSON object matching this schema:**
 
 ```json
-{
+{{
   "should_respond": true, // Whether to send a text message in response.
   "content": "example message",  // The text content of the bot's response. Can be empty or a placeholder if tool_requests is present.
   "react_with_emoji": "👍", // Optional: A standard Discord emoji to react with, or null if no reaction.
   "tool_requests": [         // Optional: List of tools to execute.
-    {
+    {{
       "name": "web_search",  // Name of the tool.
-      "arguments": {"query": "example search"}  // JSON object of arguments for the tool.
-    }
+      "arguments": {{"query": "example search"}}  // JSON object of arguments for the tool.
+    }}
   ]
-}
+}}
 ```
 
 **Do NOT include any other text, explanations, or markdown formatting outside of this JSON structure.**
@@ -3018,7 +3018,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
         messages.append({
             "role": "user",
-            "content": f"Given the preceding conversation context and the last message, decide if you (gurt) should respond. **ABSOLUTELY CRITICAL: Your response MUST consist *only* of the raw JSON object itself, with NO additional text, explanations, or markdown formatting (like \\`\\`\\`json ... \\`\\`\\`) surrounding it. The entire response must be *just* the JSON matching this schema:**\n\n{{{{\n  \"should_respond\": boolean,\n  \"content\": string,\n  \"react_with_emoji\": string | null\n}}}}\n\n**Ensure there is absolutely nothing before or after the JSON object.**{message_length_guidance}"
+            "content": f"Given the preceding conversation context and the last message, decide if you (gurt) should respond. **ABSOLUTELY CRITICAL: Your response MUST consist *only* of the raw JSON object itself, with NO additional text, explanations, or markdown formatting (like \\`\\`\\`json ... \\`\\`\\`) surrounding it. The entire response must be *just* the JSON matching this schema:**\n\n{{{{\n  \"should_respond\": boolean,\n  \"content\": string,\n  \"react_with_emoji\": string | null,\n  \"tool_requests\": array | null\n}}}}\n\n**Ensure there is absolutely nothing before or after the JSON object.**{message_length_guidance}"
         })
 
         # Prepare the request payload
@@ -3136,7 +3136,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                 # Add a new final instruction for the AI
                 messages_for_follow_up.append({
                     "role": "user",
-                    "content": f"Okay, the requested tools have been executed. Here are the results. Now, generate the final user-facing response based on these results and the previous conversation context. **CRITICAL: Your response MUST be ONLY the raw JSON object matching the standard schema (should_respond, content, react_with_emoji). Do NOT include the 'tool_requests' field this time.**\n\n**Ensure nothing precedes or follows the JSON.**{message_length_guidance}"
+                    "content": f"Okay, the requested tools have been executed. Here are the results. Now, generate the final user-facing response based on these results and the previous conversation context. **CRITICAL: Your response MUST be ONLY the raw JSON object matching the standard schema (should_respond, content, react_with_emoji). Do NOT include the 'tool_requests' field this time.**\n\n**Ensure nothing precedes or follows the JSON.**{message_length_guidance}" # Removed tool_requests from schema example here
                 })
 
                 # Update the payload for the second call (remove tools parameter)
@@ -4738,7 +4738,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         messages = [
             {"role": "system", "content": proactive_system_prompt},
             # Add final instruction for JSON format
-            {"role": "user", "content": f"Generate a response based on the situation and context provided. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{{{{\n  \"should_respond\": boolean,\n  \"content\": string,\n  \"react_with_emoji\": string | null\n}}}}\n\n**Ensure nothing precedes or follows the JSON.**"}
+            {"role": "user", "content": f"Generate a response based on the situation and context provided. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{{{{\n  \"should_respond\": boolean,\n  \"content\": string,\n  \"react_with_emoji\": string | null\n}}}}\n\n**Ensure nothing precedes or follows the JSON.**"} # Removed tool_requests from schema example here
         ]
 
         # --- Prepare API Payload ---
