@@ -241,7 +241,7 @@ Current State:
                     "properties": {
                         "avatar_query": {
                             "anyOf": [{"type": "string"}, {"type": "null"}],
-                            "description": "Search query for a new avatar, e.g., 'Kasane Teto fanart', or null"
+                            "description": "Search query for a new avatar"
                         },
                         "new_bio": {
                             "anyOf": [{"type": "string"}, {"type": "null"}],
@@ -249,7 +249,7 @@ Current State:
                         },
                         "role_theme": {
                             "anyOf": [{"type": "string"}, {"type": "null"}],
-                            "description": "A theme for role selection, e.g., 'cool color roles', 'anime fan roles', or null"
+                            "description": "A theme for role selection, could be a specific name color role, interest, or theme, or null"
                         },
                         "new_activity": {
                             "type": "object",
