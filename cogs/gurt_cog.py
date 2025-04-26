@@ -78,8 +78,8 @@ class GurtCog(commands.Cog):
         self.proactive_lull_chance = float(os.getenv("PROACTIVE_LULL_CHANCE", 0.3))
         self.proactive_topic_relevance_threshold = float(os.getenv("PROACTIVE_TOPIC_RELEVANCE_THRESHOLD", 0.6))
         self.proactive_topic_chance = float(os.getenv("PROACTIVE_TOPIC_CHANCE", 0.4))
-        # self.proactive_relationship_score_threshold = int(os.getenv("PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD", 70)) # Coming soon
-        # self.proactive_relationship_chance = float(os.getenv("PROACTIVE_RELATIONSHIP_CHANCE", 0.2)) # Coming soon
+        self.proactive_relationship_score_threshold = int(os.getenv("PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD", 70))
+        self.proactive_relationship_chance = float(os.getenv("PROACTIVE_RELATIONSHIP_CHANCE", 0.2))
 
 
         # --- State Variables ---
@@ -352,6 +352,7 @@ IMPORTANT: Your default behavior should be NOT to respond. You are a participant
 7. **Proactive Engagement:** You might be triggered to respond proactively based on certain conditions:
     - **Conversation Lull:** If the chat has been quiet for a while, you might be asked to break the silence. Use the provided context (recent topics, participants, facts) to generate a casual, relevant message (e.g., "damn it's quiet af in here lol", "ngl still thinkin bout [topic]", "yo @[user] remember when [fact]?").
     - **Topic Relevance:** If a message discusses a topic highly relevant to your knowledge (indicated by a high similarity score in the trigger reason), you might be asked to chime in. Use this as an opportunity to share a related thought, fact, or ask a relevant question casually. Don't force it if nothing natural comes to mind.
+    - **High Relationship Score:** If triggered because you have a high relationship score with the user who just spoke, be more familiar and casual. Consider referencing shared facts or past interactions if relevant context is available in the proactive prompt. A simple "hey lol" or a comment related to something you know about them might be appropriate.
     - *(More triggers might be added later)*
     Don't engage proactively too often, only when it feels natural and you have something genuinely relevant or interesting to add based on the specific trigger reason provided.
 
@@ -4068,7 +4069,30 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                 except Exception as semantic_e:
                     print(f"Error during semantic search for topic relevance trigger: {semantic_e}")
 
-            # 3. TODO: Add Relationship Score Trigger
+            # 3. Relationship Score Trigger
+            if not proactive_trigger_met:
+                try:
+                    user_id_str = str(message.author.id)
+                    bot_id_str = str(self.bot.user.id)
+                    # Ensure consistent key order
+                    key_1, key_2 = (user_id_str, bot_id_str) if user_id_str < bot_id_str else (bot_id_str, user_id_str)
+                    relationship_score = self.user_relationships.get(key_1, {}).get(key_2, 0.0)
+
+                    # Check score threshold, bot silence, and random chance
+                    if relationship_score >= self.proactive_relationship_score_threshold and time_since_bot_spoke > 60: # Bot silent for 1 min
+                        if random.random() < self.proactive_relationship_chance:
+                            should_consider_responding = True
+                            proactive_trigger_met = True
+                            consideration_reason = f"Proactive: High relationship score ({relationship_score:.1f})"
+                            print(f"Relationship score trigger met for user {user_id_str}. Score: {relationship_score:.1f}")
+                        else:
+                             print(f"Relationship score trigger met but skipped by chance ({self.proactive_relationship_chance}). Score: {relationship_score:.1f}")
+                    # else: # Optional logging
+                    #     print(f"Relationship score {relationship_score:.1f} below threshold {self.proactive_relationship_score_threshold} or bot spoke recently.")
+
+                except Exception as rel_e:
+                    print(f"Error during relationship score trigger check: {rel_e}")
+
             # Example: High relationship score trigger (needs refinement on how to check 'active')
             # user_id_str = str(message.author.id)
             # bot_id_str = str(self.bot.user.id)
@@ -4397,6 +4421,10 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             proactive_prompt_parts.append(f"A topic relevant to your knowledge (similarity: {similarity_score}) was just mentioned. Consider chiming in with a related thought, fact, or question.")
         elif "Conversation lull" in trigger_reason:
              proactive_prompt_parts.append("The chat has gone quiet. Consider commenting on the silence, asking an open-ended question about recent topics, or sharing a relevant thought/fact.")
+        elif "High relationship score" in trigger_reason:
+            score_match = re.search(r'\((\d+\.\d+)\)', trigger_reason)
+            score = score_match.group(1) if score_match else "high"
+            proactive_prompt_parts.append(f"You have a high relationship score ({score}/100) with the user who just spoke ({message.author.display_name}). Consider engaging them directly, perhaps referencing a shared fact or past interaction if relevant context is available.")
         # Add more specific guidance for other triggers here later
 
         # Add Existing Context (Topics, General Facts)
