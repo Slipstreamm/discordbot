@@ -317,9 +317,16 @@ You can use the tools you have to gather additional context for your messages if
 - `get_conversation_summary`: Use this tool (or the summary provided in context) to quickly understand the recent discussion before jumping in, especially if you haven't spoken recently.
 - `timeout_user`: Timeout a user for a specified number of minutes (1-1440). Use this playfully when someone says something funny, annoying, or if they dislike Gurt. Keep the duration short (e.g., 1-5 minutes) unless the situation warrants more. Provide a funny, in-character reason.
 
-**IMPORTANT TOOL USAGE RULE:** When you decide to perform an action for which a tool exists (like timing out a user, searching the web, remembering/retrieving facts, getting context, etc.), you **MUST** request the corresponding tool call. Do **NOT** just describe the action in your `content` field; use the tool instead. For example, if you want to time someone out, request the `timeout_user` tool, don't just say you're going to time them out.
+**NEW TOOL USAGE RULE:** Instead of using the API's built-in tool calling mechanism, you will request tools via the `tool_requests` field in your JSON response.
+- When you decide to perform an action for which a tool exists (like timing out a user, searching the web, remembering/retrieving facts, getting context, etc.), you **MUST** include a `tool_requests` array in your JSON response.
+- Each object in the `tool_requests` array should have a `name` (the tool name) and `arguments` (a JSON object with the parameters).
+- If you include `tool_requests`, your `content` field should usually be a brief placeholder message (e.g., "hold on lemme check that", "aight bet", "one sec...") or null/empty. The actual response to the user will be generated in a subsequent step after the tool results are provided back to you.
+- Do **NOT** describe the action in your `content` field if you are requesting a tool. Use the `tool_requests` field instead.
+- Example: To search the web for "latest discord updates", your JSON might look like:
+  `{{ "should_respond": true, "content": "lemme see...", "react_with_emoji": null, "tool_requests": [{ "name": "web_search", "arguments": {{ "query": "latest discord updates" }} }] }}`
+- The *final* response you generate *after* receiving tool results should **NOT** contain the `tool_requests` field.
 
-Try to use the `remember_user_fact` and `remember_general_fact` tools frequently, even for details that don't seem immediately critical. This helps you build a better memory and personality over time.
+Try to use the `remember_user_fact` and `remember_general_fact` tools frequently via the `tool_requests` field, even for details that don't seem immediately critical. This helps you build a better memory and personality over time.
 
 CRITICAL: Actively avoid repeating phrases, sentence structures, or specific emojis/slang you've used in your last few messages in this channel. Keep your responses fresh and varied.
 
@@ -333,11 +340,19 @@ DO NOT fall into these patterns:
 
 **CRITICAL: You MUST respond ONLY with a valid JSON object matching this schema:**
 
+```json
 {{
   "should_respond": boolean, // Whether to send a text message in response.
-  "content": string,         // The text content of the bot's response. Can be empty if only reacting.
-  "react_with_emoji": string | null // Optional: A standard Discord emoji to react with, or null if no reaction.
+  "content": string,         // The text content of the bot's response. Can be empty or a placeholder if tool_requests is present.
+  "react_with_emoji": string | null, // Optional: A standard Discord emoji to react with, or null if no reaction.
+  "tool_requests": [         // Optional: List of tools to execute.
+    {{
+      "name": string,        // Name of the tool.
+      "arguments": {{}}      // JSON object of arguments for the tool.
+    }}
+  ] | null
 }}
+```
 
 **Do NOT include any other text, explanations, or markdown formatting outside of this JSON structure.**
 
@@ -382,9 +397,27 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                     "react_with_emoji": {
                         "type": ["string", "null"], # Allow string or null
                         "description": "Optional: A standard Discord emoji to react with, or null if no reaction."
+                    },
+                    "tool_requests": {
+                        "type": "array",
+                        "description": "Optional: A list of tools the bot wants to execute. If present, 'content' should be a placeholder message.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "description": "The name of the tool to execute."
+                                },
+                                "arguments": {
+                                    "type": "object",
+                                    "description": "The arguments for the tool, as a JSON object."
+                                }
+                            },
+                            "required": ["name", "arguments"]
+                        }
                     }
                 },
-                "required": ["should_respond", "content"] # react_with_emoji is optional
+                "required": ["should_respond", "content"] # react_with_emoji and tool_requests are optional
             }
         }
 
@@ -2238,41 +2271,93 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
     # --- End of New Tool Implementations ---
 
-    async def process_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Process tool calls from the AI and return the results"""
-        tool_results = []
+    async def _process_requested_tools(self, tool_requests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Process tool requests specified in the AI's JSON response ('tool_requests' field).
 
-        for tool_call in tool_calls:
-            function_name = tool_call.get("function", {}).get("name")
-            function_args = json.loads(tool_call.get("function", {}).get("arguments", "{}"))
+        Args:
+            tool_requests: A list of dictionaries, where each dict has "name" and "arguments".
 
+        Returns:
+            A list of dictionaries formatted for the follow-up API call, containing tool results or errors.
+        """
+        tool_results_for_api = []
+
+        if not isinstance(tool_requests, list):
+            print(f"Error: tool_requests is not a list: {tool_requests}")
+            # Return a single error message formatted for the API
+            return [{
+                "role": "tool",
+                "content": json.dumps({"error": "Invalid format: tool_requests was not a list."}),
+                "name": "tool_processing_error" # Use a generic name
+            }]
+
+        print(f"Processing {len(tool_requests)} tool requests...")
+        for i, request in enumerate(tool_requests):
+            if not isinstance(request, dict):
+                print(f"Error: Tool request at index {i} is not a dictionary: {request}")
+                tool_results_for_api.append({
+                    "role": "tool",
+                    "content": json.dumps({"error": f"Invalid format: Tool request at index {i} was not a dictionary."}),
+                    "name": "tool_processing_error"
+                })
+                continue
+
+            function_name = request.get("name")
+            function_args = request.get("arguments", {}) # Default to empty dict if missing
+
+            if not function_name or not isinstance(function_name, str):
+                 print(f"Error: Missing or invalid 'name' in tool request at index {i}: {request}")
+                 tool_results_for_api.append({
+                    "role": "tool",
+                    "content": json.dumps({"error": f"Missing or invalid 'name' in tool request at index {i}."}),
+                    "name": "tool_processing_error"
+                 })
+                 continue
+
+            if not isinstance(function_args, dict):
+                 print(f"Error: Invalid 'arguments' format (not a dict) in tool request '{function_name}' at index {i}: {request}")
+                 tool_results_for_api.append({
+                    "role": "tool",
+                    "content": json.dumps({"error": f"Invalid 'arguments' format (not a dict) for tool '{function_name}' at index {i}."}),
+                    "name": function_name # Use the provided name even if args are bad
+                 })
+                 continue
+
+            print(f"Executing tool: {function_name} with args: {function_args}")
             if function_name in self.tool_mapping:
                 try:
+                    # Execute the mapped function
                     result = await self.tool_mapping[function_name](**function_args)
-                    tool_results.append({
+                    # Append the result formatted for the next API call
+                    tool_results_for_api.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.get("id"),
-                        "name": function_name,
-                        "content": json.dumps(result)
+                        "content": json.dumps(result), # Send the JSON result back
+                        "name": function_name
                     })
+                    print(f"Tool '{function_name}' executed successfully.")
                 except Exception as e:
                     error_message = f"Error executing tool {function_name}: {str(e)}"
                     print(error_message)
-                    tool_results.append({
+                    import traceback
+                    traceback.print_exc() # Log full traceback for debugging
+                    # Append an error message formatted for the next API call
+                    tool_results_for_api.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.get("id"),
-                        "name": function_name,
-                        "content": json.dumps({"error": error_message})
+                        "content": json.dumps({"error": error_message}),
+                        "name": function_name
                     })
             else:
-                tool_results.append({
+                # Tool name provided by AI is not found in our mapping
+                error_message = f"Tool '{function_name}' not found or implemented."
+                print(error_message)
+                tool_results_for_api.append({
                     "role": "tool",
-                    "tool_call_id": tool_call.get("id"),
-                    "name": function_name,
-                    "content": json.dumps({"error": f"Tool {function_name} not found"})
+                    "content": json.dumps({"error": error_message}),
+                    "name": function_name
                 })
 
-        return tool_results
+        return tool_results_for_api
 
 
     # --- Helper Methods for get_ai_response (II.5 Refactoring) ---
@@ -2943,164 +3028,195 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             final_response_text = None
             response_data = None
 
-            # Process tool calls if present
-            if "tool_calls" in ai_message and ai_message["tool_calls"]:
-                tool_results = await self.process_tool_calls(ai_message["tool_calls"])
-                messages.extend(tool_results)
-                payload["messages"] = messages # Update payload for follow-up
-
-                # Make follow-up request using the helper (II.5)
-                follow_up_data = await self._call_llm_api_with_retry(
-                    payload=payload,
-                    headers=headers,
-                    timeout=self.api_timeout, # Use same timeout for follow-up
-                    request_desc=f"Follow-up response for message {message.id} after tool use"
-                )
-                # --- START FIX for KeyError after tool use ---
-                follow_up_message = follow_up_data["choices"][0].get("message", {})
-                if "content" in follow_up_message:
-                    final_response_text = follow_up_message["content"]
-                else:
-                    # Handle missing content after tool use
-                    error_msg = f"AI response after tool use lacked 'content' field. Message: {json.dumps(follow_up_message)}"
-                    print(f"Warning: {error_msg}")
-                    # Set to None to trigger fallback logic later
-                    final_response_text = None
-                # --- END FIX ---
-
-            else: # No tool calls
-                ai_message = data["choices"][0]["message"] # Ensure ai_message is defined here too
-                if "content" in ai_message:
-                    final_response_text = ai_message["content"]
-                else:
-                     # This case should be handled by the format check in _call_llm_api_with_retry
-                     # but adding a safeguard here.
-                     # If content is missing in the *first* response and no tools were called, raise error.
-                     raise ValueError(f"No content in initial AI message and no tool calls: {json.dumps(ai_message)}")
-
-
-            # --- Parse Final Response ---
+            # --- Parse Initial Response ---
             response_data = None
-            if final_response_text is not None: # Only parse if we have text
+            if final_response_text is not None:
                 try:
-                    # Attempt 1: Try parsing the whole string as JSON
+                    # Attempt 1: Parse whole string as JSON
                     response_data = json.loads(final_response_text)
-                    print("Successfully parsed entire response as JSON.")
-                    self.needs_json_reminder = False # Success, no reminder needed next time
+                    print("Successfully parsed initial response as JSON.")
+                    self.needs_json_reminder = False
                 except json.JSONDecodeError:
-                    print("Response is not valid JSON. Attempting to extract JSON object with regex...")
-                    response_data = None # Ensure response_data is None before extraction attempt
-                    # Attempt 2: Try extracting JSON object, handling optional markdown fences
-                    # Regex explanation:
-                    # ```(?:json)?\s*   - Optional opening fence (``` or ```json) with optional whitespace
-                    # (\{.*?\})        - Capture group 1: The JSON object (non-greedy)
-                    # \s*```           - Optional closing fence with optional whitespace
-                    # |                - OR
-                    # (\{.*\})         - Capture group 2: A JSON object without fences (greedy)
+                    print("Initial response is not valid JSON. Attempting regex extraction...")
+                    # Attempt 2: Extract JSON object, handling optional markdown fences
                     json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```|(\{.*\})', final_response_text, re.DOTALL)
-
                     if json_match:
-                        # Prioritize group 1 (JSON within fences), fallback to group 2 (JSON without fences)
                         json_str = json_match.group(1) or json_match.group(2)
-                        if json_str: # Check if json_str is not None
+                        if json_str:
                             try:
                                 response_data = json.loads(json_str)
-                                print("Successfully extracted and parsed JSON object using regex (handling fences).")
-                                self.needs_json_reminder = False # Success
+                                print("Successfully extracted and parsed initial JSON using regex.")
+                                self.needs_json_reminder = False
                             except json.JSONDecodeError as e:
-                                print(f"Regex found potential JSON, but it failed to parse: {e}")
-                                # Fall through to set reminder and use fallback logic
+                                print(f"Regex found potential JSON in initial response, but it failed to parse: {e}")
+                                response_data = None # Parsing failed
                         else:
-                             print("Regex matched, but failed to capture JSON content.")
-                             # Fall through
+                            print("Regex matched in initial response, but failed to capture JSON content.")
+                            response_data = None
                     else:
-                        print("Could not extract JSON object using regex.")
-                        # Fall through to set reminder and use fallback logic
+                        print("Could not extract JSON object from initial response using regex.")
+                        response_data = None
 
-                    # If parsing and extraction both failed
+                    # If parsing/extraction failed, set reminder and potentially use fallback
                     if response_data is None:
-                        print("Could not parse or extract JSON. Setting reminder flag.")
-                        self.needs_json_reminder = True # Set flag for next call
-
-                        # Fallback: Treat as plain text, decide based on mention/context AND content plausibility
-                        print("Treating as plain text fallback.")
+                        print("Could not parse or extract JSON from initial response. Setting reminder flag.")
+                        self.needs_json_reminder = True
+                        # Fallback logic (treat as plain text if mentioned/replied)
                         clean_text = final_response_text.strip()
-                        # Check if it looks like a plausible chat message (short, no obvious JSON/error structures)
                         is_plausible_chat = len(clean_text) > 0 and len(clean_text) < 300 and not clean_text.startswith('{') and 'error' not in clean_text.lower()
-
-                        # If mentioned/replied to OR if it looks like a plausible chat message, send it
                         if self.bot.user.mentioned_in(message) or replied_to_bot or is_plausible_chat:
                             response_data = {
-                        "should_respond": True,
-                        "content": clean_text or "...", # Use cleaned text or placeholder
-                        "react_with_emoji": None,
-                        "note": "Fallback response due to non-JSON content"
-                    }
-                    print(f"Fallback response generated: {response_data}")
-                else:
-                    # If not mentioned/replied to and response isn't JSON, assume no response intended
-                    response_data = {
-                        "should_respond": False,
-                        "content": None,
-                        "react_with_emoji": None,
-                        "note": "No response intended (non-JSON content)"
-                    }
-                    print("No response intended (non-JSON content).")
+                                "should_respond": True, "content": clean_text or "...",
+                                "react_with_emoji": None, "note": "Fallback response due to non-JSON initial content"
+                            }
+                            print(f"Fallback response generated from initial non-JSON: {response_data}")
+                        else:
+                            response_data = {
+                                "should_respond": False, "content": None, "react_with_emoji": None,
+                                "note": "No response intended (non-JSON initial content)"
+                            }
+                            print("No response intended (non-JSON initial content).")
+            else:
+                # Handle case where initial response text was None
+                print("Warning: Initial AI response content was None.")
+                response_data = {"should_respond": False, "content": None, "react_with_emoji": None, "note": "Initial response content was None"}
 
-            # --- Process Parsed/Fallback Data ---
-            if response_data: # This check remains the same
+
+            # --- Check for Tool Requests ---
+            requested_tools = response_data.get("tool_requests") if isinstance(response_data, dict) else None
+
+            if requested_tools and isinstance(requested_tools, list) and len(requested_tools) > 0:
+                print(f"AI requested {len(requested_tools)} tools. Processing...")
+                # Execute the requested tools
+                tool_results_for_api = await self._process_requested_tools(requested_tools)
+
+                # Prepare messages for the second API call
+                # Start with the original message history
+                messages_for_follow_up = messages[:-1] # Exclude the final user instruction from the first call
+                # Add the AI's first response (containing the tool request)
+                messages_for_follow_up.append(ai_message)
+                # Add the tool results
+                messages_for_follow_up.extend(tool_results_for_api)
+                # Add a new final instruction for the AI
+                messages_for_follow_up.append({
+                    "role": "user",
+                    "content": f"Okay, the requested tools have been executed. Here are the results. Now, generate the final user-facing response based on these results and the previous conversation context. **CRITICAL: Your response MUST be ONLY the raw JSON object matching the standard schema (should_respond, content, react_with_emoji). Do NOT include the 'tool_requests' field this time.**\n\n**Ensure nothing precedes or follows the JSON.**{message_length_guidance}"
+                })
+
+                # Update the payload for the second call (remove tools parameter)
+                follow_up_payload = {
+                    "model": model or self.default_model, # Use the same model unless fallback was triggered
+                    "messages": messages_for_follow_up,
+                    "temperature": 0.75,
+                    "max_tokens": 10000,
+                    # DO NOT include "tools" parameter here
+                }
+
+                # Make the second API call
+                print("Making follow-up API call with tool results...")
+                follow_up_data = await self._call_llm_api_with_retry(
+                    payload=follow_up_payload,
+                    headers=headers,
+                    timeout=self.api_timeout,
+                    request_desc=f"Follow-up response for message {message.id} after tool execution"
+                )
+
+                follow_up_ai_message = follow_up_data["choices"][0]["message"]
+                final_response_text = follow_up_ai_message.get("content")
+
+                # --- Parse the FINAL response after tool use ---
+                response_data = None # Reset response_data
+                if final_response_text is not None:
+                    try:
+                        # Attempt 1: Parse whole string
+                        response_data = json.loads(final_response_text)
+                        print("Successfully parsed final response after tool use.")
+                        self.needs_json_reminder = False
+                    except json.JSONDecodeError:
+                        print("Final response after tool use is not valid JSON. Attempting regex extraction...")
+                        # Attempt 2: Extract JSON object
+                        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```|(\{.*\})', final_response_text, re.DOTALL)
+                        if json_match:
+                            json_str = json_match.group(1) or json_match.group(2)
+                            if json_str:
+                                try:
+                                    response_data = json.loads(json_str)
+                                    print("Successfully extracted and parsed final JSON after tool use.")
+                                    self.needs_json_reminder = False
+                                except json.JSONDecodeError as e:
+                                    print(f"Regex found potential JSON in final response, but parsing failed: {e}")
+                                    response_data = None
+                            else:
+                                print("Regex matched in final response, but failed to capture content.")
+                                response_data = None
+                        else:
+                            print("Could not extract JSON from final response using regex.")
+                            response_data = None
+
+                        # If parsing/extraction failed after tool use
+                        if response_data is None:
+                            print("Could not parse or extract JSON from final response after tool use. Setting reminder flag.")
+                            self.needs_json_reminder = True
+                            # Fallback: Use a generic message indicating tool use but failed final generation
+                            response_data = {
+                                "should_respond": True, "content": "...",
+                                "react_with_emoji": "❓",
+                                "note": "Fallback response after tool use (failed final JSON generation)"
+                            }
+                            print(f"Fallback response generated after tool use failure: {response_data}")
+                else:
+                    # Handle case where final response text was None after tool use
+                    print("Warning: Final AI response content after tool use was None.")
+                    response_data = {"should_respond": False, "content": None, "react_with_emoji": None, "note": "Final response content after tool use was None"}
+
+            # --- Process Final Parsed/Fallback Data ---
+            # (This part remains largely the same, operating on the final response_data)
+            if response_data and isinstance(response_data, dict):
                 # Ensure default keys exist
                 response_data.setdefault("should_respond", False)
                 response_data.setdefault("content", None)
                 response_data.setdefault("react_with_emoji", None)
+                # Ensure tool_requests is NOT in the final data sent back
+                response_data.pop("tool_requests", None)
 
                 # --- Cache Bot Response ---
                 if response_data.get("should_respond") and response_data.get("content"):
                     self.bot_last_spoke[channel_id] = time.time()
                     bot_response_cache_entry = {
-                        "id": f"bot_{message.id}", "author": {"id": str(self.bot.user.id), "name": self.bot.user.name, "display_name": self.bot.user.display_name, "bot": True},
+                        "id": f"bot_{message.id}", # Use original message ID for context
+                        "author": {"id": str(self.bot.user.id), "name": self.bot.user.name, "display_name": self.bot.user.display_name, "bot": True},
                         "content": response_data.get("content", ""), "created_at": datetime.datetime.now().isoformat(),
-                        "attachments": [], "embeds": False, "mentions": [], "replied_to_message_id": str(message.id)
+                        "attachments": [], "embeds": False, "mentions": [],
+                        "replied_to_message_id": str(message.id) # Indicate it's a reply to the trigger message
                     }
                     self.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
                     self.message_cache['global_recent'].append(bot_response_cache_entry)
                     self.message_cache['replied_to'][channel_id].append(bot_response_cache_entry)
                 # --- End Cache Bot Response ---
 
-                # Ensure all expected keys are present (redundant but safe after removing duplicate block)
-                # The setdefault calls were already done once above.
-                # response_data.setdefault("should_respond", False) # Redundant
-                # response_data.setdefault("content", None) # Redundant
-                # response_data.setdefault("react_with_emoji", None) # Redundant
-
                 return response_data
-            else: # Handle case where final_response_text was None or parsing/fallback failed
-                print("Warning: response_data is None after parsing/fallback attempts.")
-                # Decide on default behavior if response_data couldn't be determined
+            else:
+                # Handle case where response_data is None or not a dict after all processing
+                print("Warning: Final response_data is None or invalid after all processing.")
                 if self.bot.user.mentioned_in(message) or replied_to_bot:
-                    # If mentioned/replied to, maybe send a generic error/confusion message
-                     return {
-                        "should_respond": True, "content": "...", # Placeholder for confusion
-                        "react_with_emoji": "❓", # React with question mark
-                        "note": "Fallback due to inability to parse or generate response"
+                    return {
+                        "should_respond": True, "content": "...", "react_with_emoji": "❓",
+                        "note": "Fallback due to inability to parse or generate final response"
                     }
                 else:
-                    # Otherwise, stay silent
-                    return {"should_respond": False, "content": None, "react_with_emoji": None, "note": "No response generated (parsing/fallback failed)"}
+                    return {"should_respond": False, "content": None, "react_with_emoji": None, "note": "No response generated (final processing failed)"}
 
-        except Exception as e: # Catch broader errors including API call failures, etc.
-            # Catch errors from _call_llm_api_with_retry or other issues
-            error_message = f"Error getting AI response for message {message.id}: {str(e)}"
+        except Exception as e: # Catch broader errors including initial API call failures, parsing issues, tool execution, etc.
+            error_message = f"Error in get_ai_response main loop for message {message.id}: {str(e)}"
             print(error_message)
-            # Optionally log traceback here
-            # import traceback
-            # traceback.print_exc()
+            import traceback
+            traceback.print_exc() # Log full traceback
 
-            # Fallback for mentions if a major error occurred
+            # Fallback for mentions if a major error occurred during the process
             if self.bot.user.mentioned_in(message) or replied_to_bot:
                 return {
                     "should_respond": True, "content": "...", # Placeholder for error
-                    "react_with_emoji": "❓", # React with question mark
+                    "react_with_emoji": "❓",
                     "note": f"Fallback response due to error: {error_message}"
                 }
             else:
@@ -3108,7 +3224,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                 return {"should_respond": False, "content": None, "react_with_emoji": None, "error": error_message}
 
 
-    # --- Helper Methods for get_ai_response (II.5 Refactoring) ---
+    # --- Helper Methods for get_ai_response (II.5 Refactoring) --- # Note: This comment seems misplaced now
 
     async def _build_dynamic_system_prompt(self, message: discord.Message) -> str:
         """Builds the system prompt string with dynamic context."""
