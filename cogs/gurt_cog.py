@@ -2906,9 +2906,9 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             "messages": messages,
             "tools": self.tools,
             "temperature": 0.75, # Slightly increased temperature for more variety
-            "max_tokens": 1500, # Increased slightly for potential image analysis overhead
-            # "frequency_penalty": 0.2, # Removed: Not supported by Gemini Flash
-            # "presence_penalty": 0.1, # Removed: Not supported by Gemini Flash
+            "max_tokens": 10000, # Increased slightly for potential image analysis overhead
+            "frequency_penalty": 0.2, # Removed: Not supported by Gemini Flash
+            "presence_penalty": 0.1, # Removed: Not supported by Gemini Flash
             # Note: Models supporting image input might have different requirements or limitations.
             # Ensure the selected model (self.default_model) actually supports multimodal input.
             # "response_format": { # Commented out again due to conflict with tools/function calling
