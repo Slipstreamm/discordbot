@@ -232,30 +232,38 @@ Current State:
                     "type": "object",
                     "properties": {
                         "avatar_query": {
-                            "type": ["string", "null"],
+                            "anyOf": [{"type": "string"}, {"type": "null"}],
                             "description": "Search query for a new avatar, e.g., 'Kasane Teto fanart', or null"
                         },
                         "new_bio": {
-                            "type": ["string", "null"],
+                            "anyOf": [{"type": "string"}, {"type": "null"}],
                             "description": "The new bio text, or null"
                         },
                         "role_theme": {
-                            "type": ["string", "null"],
+                            "anyOf": [{"type": "string"}, {"type": "null"}],
                             "description": "A theme for role selection, e.g., 'cool color roles', 'anime fan roles', or null"
                         },
                         "new_activity": {
-                            "type": ["object", "null"],
-                            "properties": {
-                                "type": {
-                                    "type": ["string", "null"],
-                                    "enum": ["playing", "watching", "listening", "competing", None],
-                                    "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null"
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {
+                                            "anyOf": [{"type": "string", "enum": ["playing", "watching", "listening", "competing"]}, {"type": "null"}],
+                                            "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null"
+                                        },
+                                        "text": {
+                                            "anyOf": [{"type": "string"}, {"type": "null"}],
+                                            "description": "The activity text, or null"
+                                        }
+                                    },
+                                    # If the object is provided, both type and text should ideally be present,
+                                    # but allow nulls within for flexibility. The handling logic checks this.
+                                    # "required": ["type", "text"] # Making these required might be too strict if AI wants to clear activity
                                 },
-                                "text": {
-                                    "type": ["string", "null"],
-                                    "description": "The activity text, or null"
-                                }
-                            },
+                                {"type": "null"}
+                            ],
+                            "description": "The new activity object, or null to clear activity."
                             # If new_activity is not null, both type and text should ideally be present,
                             # but allow nulls within the object for flexibility if AI omits one.
                             # The handling logic in _update_activity already checks for nulls.
