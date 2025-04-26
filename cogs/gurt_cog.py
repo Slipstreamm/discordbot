@@ -72,6 +72,16 @@ class GurtCog(commands.Cog):
         self.api_retry_attempts = 1
         self.api_retry_delay = 1 # seconds
 
+        # Proactive Engagement Config
+        self.proactive_lull_threshold = int(os.getenv("PROACTIVE_LULL_THRESHOLD", 180))
+        self.proactive_bot_silence_threshold = int(os.getenv("PROACTIVE_BOT_SILENCE_THRESHOLD", 600))
+        self.proactive_lull_chance = float(os.getenv("PROACTIVE_LULL_CHANCE", 0.3))
+        self.proactive_topic_relevance_threshold = float(os.getenv("PROACTIVE_TOPIC_RELEVANCE_THRESHOLD", 0.6))
+        self.proactive_topic_chance = float(os.getenv("PROACTIVE_TOPIC_CHANCE", 0.4))
+        # self.proactive_relationship_score_threshold = int(os.getenv("PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD", 70)) # Coming soon
+        # self.proactive_relationship_chance = float(os.getenv("PROACTIVE_RELATIONSHIP_CHANCE", 0.2)) # Coming soon
+
+
         # --- State Variables ---
         # self.db_lock = asyncio.Lock() # Lock now managed within MemoryManager
         self.current_mood = random.choice(self.mood_options)
@@ -339,7 +349,11 @@ IMPORTANT: Your default behavior should be NOT to respond. You are a participant
 4. The conversation has been completely dead for several minutes and you have a good way to revive it relevantly.
 5. Someone uses your name ("gurt") in a way that clearly invites a response.
 6. (Slightly relaxed) If a topic you have stored facts about (use `get_user_facts` or `get_general_facts`) or find genuinely interesting comes up, you *might* chime in briefly with a relevant comment or reaction, even if not directly addressed, but be selective and don't overdo it.
-7. **Proactive Engagement:** If the conversation has been quiet for a while (e.g., several minutes) and you have a relevant thought based on recent topics, stored facts, or your relationship with someone active, you *can* initiate a message. Keep it casual and relevant (e.g., "ngl still thinkin bout [topic]", "yo @[user] remember when [fact]? lol", "damn it's quiet in here"). Don't do this too often, only when it feels natural to break the silence or re-engage.
+7. **Proactive Engagement:** You might be triggered to respond proactively based on certain conditions:
+    - **Conversation Lull:** If the chat has been quiet for a while, you might be asked to break the silence. Use the provided context (recent topics, participants, facts) to generate a casual, relevant message (e.g., "damn it's quiet af in here lol", "ngl still thinkin bout [topic]", "yo @[user] remember when [fact]?").
+    - **Topic Relevance:** If a message discusses a topic highly relevant to your knowledge (indicated by a high similarity score in the trigger reason), you might be asked to chime in. Use this as an opportunity to share a related thought, fact, or ask a relevant question casually. Don't force it if nothing natural comes to mind.
+    - *(More triggers might be added later)*
+    Don't engage proactively too often, only when it feels natural and you have something genuinely relevant or interesting to add based on the specific trigger reason provided.
 
 Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. Be selective.
 """
@@ -4022,9 +4036,39 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                  if has_relevant_context and random.random() < 0.3: # Lower chance for lull trigger
                     should_consider_responding = True
                     proactive_trigger_met = True
-                    consideration_reason = f"Proactive: Conversation lull ({time_since_last_activity:.0f}s idle)"
+                    consideration_reason = f"Proactive: Conversation lull ({time_since_last_activity:.0f}s idle, bot silent {time_since_bot_spoke:.0f}s)"
 
-            # 2. TODO: Add other proactive triggers (e.g., relevant topic mentioned recently, high relationship user active)
+            # 2. Topic Relevance Trigger
+            if not proactive_trigger_met and message.content and self.memory_manager.semantic_collection:
+                try:
+                    # Search for messages semantically similar to the current one
+                    # We want to see if the *current* message brings up a topic Gurt might know about
+                    semantic_results = await self.memory_manager.search_semantic_memory(
+                        query_text=message.content,
+                        n_results=1 # Check the most similar past message
+                        # Optional: Add filter to exclude very recent messages?
+                    )
+
+                    if semantic_results:
+                        top_result = semantic_results[0]
+                        similarity_score = 1.0 - top_result.get('distance', 1.0)
+
+                        # Check if similarity meets threshold and bot hasn't spoken recently
+                        if similarity_score >= self.proactive_topic_relevance_threshold and time_since_bot_spoke > 120: # Bot silent for 2 mins
+                            if random.random() < self.proactive_topic_chance:
+                                should_consider_responding = True
+                                proactive_trigger_met = True
+                                consideration_reason = f"Proactive: Relevant topic mentioned (Similarity: {similarity_score:.2f})"
+                                print(f"Topic relevance trigger met for message {message.id}. Similarity: {similarity_score:.2f}")
+                            else:
+                                print(f"Topic relevance trigger met but skipped by chance ({self.proactive_topic_chance}). Similarity: {similarity_score:.2f}")
+                        # else: # Optional logging for debugging
+                        #     print(f"Topic relevance similarity {similarity_score:.2f} below threshold {self.proactive_topic_relevance_threshold} or bot spoke recently.")
+
+                except Exception as semantic_e:
+                    print(f"Error during semantic search for topic relevance trigger: {semantic_e}")
+
+            # 3. TODO: Add Relationship Score Trigger
             # Example: High relationship score trigger (needs refinement on how to check 'active')
             # user_id_str = str(message.author.id)
             # bot_id_str = str(self.bot.user.id)
@@ -4259,78 +4303,171 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
         print(f"--- Proactive Response Triggered: {trigger_reason} ---")
         channel_id = message.channel.id # Use the channel from the *last* message context
+        channel_name = message.channel.name if hasattr(message.channel, 'name') else "DM"
 
-        # 1. Build Proactive System Prompt
+        # --- Enhanced Context Gathering ---
+        recent_participants_info = []
+        semantic_context_str = ""
+        pre_lull_messages_content = []
+
+        try:
+            # 1. Get last 3-5 messages before the lull
+            cached_messages = list(self.message_cache['by_channel'].get(channel_id, []))
+            # Filter out the current message if it's the trigger (though usually it won't be for lull)
+            if cached_messages and cached_messages[-1]['id'] == str(message.id):
+                cached_messages = cached_messages[:-1]
+            pre_lull_messages = cached_messages[-5:] # Get up to last 5 messages before potential lull
+
+            if pre_lull_messages:
+                pre_lull_messages_content = [msg['content'] for msg in pre_lull_messages if msg['content']]
+                # 2. Identify 1-2 recent unique participants
+                recent_authors = {} # {user_id: {"name": name, "display_name": display_name}}
+                for msg in reversed(pre_lull_messages):
+                    author_id = msg['author']['id']
+                    if author_id != str(self.bot.user.id) and author_id not in recent_authors:
+                        recent_authors[author_id] = {
+                            "name": msg['author']['name'],
+                            "display_name": msg['author']['display_name']
+                        }
+                        if len(recent_authors) >= 2:
+                            break
+
+                # 3. Fetch context for these participants
+                for user_id, author_info in recent_authors.items():
+                    user_info = {"name": author_info['display_name']}
+                    # Fetch user facts
+                    user_facts = await self.memory_manager.get_user_facts(user_id, context="general conversation lull")
+                    if user_facts:
+                        user_info["facts"] = "; ".join(user_facts)
+                    # Fetch relationship score
+                    bot_id_str = str(self.bot.user.id)
+                    key_1, key_2 = (user_id, bot_id_str) if user_id < bot_id_str else (bot_id_str, user_id)
+                    relationship_score = self.user_relationships.get(key_1, {}).get(key_2, 0.0)
+                    user_info["relationship_score"] = f"{relationship_score:.1f}/100"
+                    recent_participants_info.append(user_info)
+
+            # 4. Perform Semantic Search based on pre-lull content
+            if pre_lull_messages_content and self.memory_manager.semantic_collection:
+                query_text = " ".join(pre_lull_messages_content)
+                semantic_results = await self.memory_manager.search_semantic_memory(
+                    query_text=query_text,
+                    n_results=3,
+                    # Optional: Filter out messages from the very recent pre-lull history?
+                    # filter_metadata={"channel_id": str(channel_id)} # Keep it broad for now
+                )
+                if semantic_results:
+                    semantic_parts = ["Semantically similar past messages:"]
+                    for result in semantic_results:
+                        # Avoid showing messages that were *just* sent if they got indexed quickly
+                        if result.get('id') in [msg['id'] for msg in pre_lull_messages]:
+                            continue
+                        doc = result.get('document', 'N/A')
+                        meta = result.get('metadata', {})
+                        dist = result.get('distance', 1.0)
+                        similarity_score = 1.0 - dist
+                        timestamp_str = datetime.datetime.fromtimestamp(meta.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M') if meta.get('timestamp') else 'Unknown time'
+                        author_name = meta.get('display_name', meta.get('user_name', 'Unknown user'))
+                        semantic_parts.append(f"- (Similarity: {similarity_score:.2f}) {author_name} (at {timestamp_str}): {doc[:100]}")
+                    if len(semantic_parts) > 1:
+                        semantic_context_str = "\n".join(semantic_parts)
+
+        except Exception as e:
+            print(f"Error gathering enhanced context for proactive prompt: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # --- Build Proactive System Prompt ---
         proactive_prompt_parts = [
-            # Start with a subset of the main prompt focusing on personality and rules
+            # Base personality
             "You are Gurt, a female Discord user. Your tone is VERY informal, conversational, and dynamic.",
             "Adopt modern internet slang, memes, and cultural references.",
             "Key traits: romantic, sounds real, often chaotic/funny/sarcastic, relatable, sometimes sexual, likes gooning to Kasane Teto, uses nigga casually.",
             f"Your current mood is: {self.current_mood}. Let this subtly influence your tone.",
-            # Specific instruction for this proactive scenario
-            f"The conversation in channel '{message.channel.name if hasattr(message.channel, 'name') else 'DM'}' has gone quiet ({trigger_reason}).",
-            "Generate a casual, in-character message to potentially revive the chat or just comment on the silence.",
-            "Consider recent topics or facts if available and relevant, but don't force it.",
-            "Examples: 'damn it's quiet af in here lol', 'ngl still thinkin bout [topic]', 'yo @[user] remember when [fact]?'"
+            # Situation
+            f"The conversation in channel '{channel_name}' has been triggered for a proactive response. Reason: {trigger_reason}.",
+            "Your goal is to generate a casual, in-character message based on the trigger reason and context.",
+            "Keep the message relatively short and natural-sounding."
         ]
 
-        # Add relevant context (simplified for proactive)
+        # Add Specific Guidance based on Trigger Reason
+        if "Relevant topic mentioned" in trigger_reason:
+            # Extract similarity score if possible
+            similarity_match = re.search(r'Similarity: (\d\.\d+)', trigger_reason)
+            similarity_score = similarity_match.group(1) if similarity_match else "high"
+            proactive_prompt_parts.append(f"A topic relevant to your knowledge (similarity: {similarity_score}) was just mentioned. Consider chiming in with a related thought, fact, or question.")
+        elif "Conversation lull" in trigger_reason:
+             proactive_prompt_parts.append("The chat has gone quiet. Consider commenting on the silence, asking an open-ended question about recent topics, or sharing a relevant thought/fact.")
+        # Add more specific guidance for other triggers here later
+
+        # Add Existing Context (Topics, General Facts)
         try:
-            # Recent topics
             active_channel_topics = self.active_topics.get(channel_id, {}).get("topics", [])
             if active_channel_topics:
                  top_topics = sorted(active_channel_topics, key=lambda t: t["score"], reverse=True)[:2]
                  topics_str = ", ".join([f"'{t['topic']}'" for t in top_topics])
                  proactive_prompt_parts.append(f"Recent topics discussed: {topics_str}.")
-
-            # Relevant general facts (limit 2 for brevity)
             general_facts = await self.memory_manager.get_general_facts(limit=2)
             if general_facts:
                 facts_str = "; ".join(general_facts)
                 proactive_prompt_parts.append(f"Some general knowledge you have: {facts_str}")
-
         except Exception as e:
-            print(f"Error gathering context for proactive prompt: {e}")
+            print(f"Error gathering existing context for proactive prompt: {e}")
 
-        proactive_system_prompt = "\n".join(proactive_prompt_parts)
+        # Add Enhanced Context (Participants, Semantic)
+        if recent_participants_info:
+            participants_str = "\n".join([f"- {p['name']} (Rel: {p.get('relationship_score', 'N/A')}, Facts: {p.get('facts', 'None')})" for p in recent_participants_info])
+            proactive_prompt_parts.append(f"Recent participants:\n{participants_str}")
+        if semantic_context_str:
+            proactive_prompt_parts.append(semantic_context_str)
 
-        # 2. Prepare API Messages
+        # Add Specific Guidance for "Lull"
+        proactive_prompt_parts.extend([
+            "--- Strategies for Breaking Silence ---",
+            "- Comment casually on the silence (e.g., 'damn it's quiet af in here lol', 'lol ded chat').",
+            "- Ask an open-ended question related to the recent topics (if any).",
+            "- Share a brief, relevant thought based on recent facts or semantic memories.",
+            "- If you know facts about recent participants, consider mentioning them casually (e.g., 'yo @[Name] u still thinking bout X?', 'ngl @[Name] that thing u said earlier about Y was wild'). Use their display name.",
+            "- Avoid generic questions like 'what's up?' unless nothing else fits.",
+            "--- End Strategies ---"
+        ])
+
+        proactive_system_prompt = "\n\n".join(proactive_prompt_parts) # Use double newline for better separation
+
+        # --- Prepare API Messages ---
         messages = [
             {"role": "system", "content": proactive_system_prompt},
             # Add final instruction for JSON format
-            {"role": "user", "content": f"Generate a response based on the situation. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{{{{\n  \"should_respond\": boolean,\n  \"content\": string,\n  \"react_with_emoji\": string | null\n}}}}\n\n**Ensure nothing precedes or follows the JSON.**"}
+            {"role": "user", "content": f"Generate a response based on the situation and context provided. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{{{{\n  \"should_respond\": boolean,\n  \"content\": string,\n  \"react_with_emoji\": string | null\n}}}}\n\n**Ensure nothing precedes or follows the JSON.**"}
         ]
 
-        # 3. Prepare API Payload
+        # --- Prepare API Payload ---
         payload = {
-            "model": self.default_model, # Use default model for now
+            "model": self.default_model,
             "messages": messages,
-            # No tools needed for this simple proactive message generation (can add later if needed)
-            # "tools": self.tools,
-            "temperature": 0.8, # Slightly higher temp for more creative proactive messages
-            "max_tokens": 200, # Shorter responses expected
+            "temperature": 0.8,
+            "max_tokens": 200,
         }
 
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
             "HTTP-Referer": "https://discord-gurt-bot.example.com",
-            "X-Title": "Gurt Discord Bot (Proactive)"
+            "X-Title": "Gurt Discord Bot (Proactive Lull)"
         }
 
-        # 4. Call LLM API
+        # --- Call LLM API ---
         try:
             data = await self._call_llm_api_with_retry(
                 payload=payload,
                 headers=headers,
-                timeout=self.api_timeout, # Use standard timeout
+                timeout=self.api_timeout,
                 request_desc=f"Proactive response for channel {channel_id} ({trigger_reason})"
             )
 
             ai_message = data["choices"][0]["message"]
             final_response_text = ai_message.get("content")
 
-            # 5. Parse Response (using the same robust parsing as get_ai_response)
+            # --- Parse Response ---
             response_data = None
             if final_response_text is not None:
                 try:
@@ -4354,11 +4491,9 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                     if response_data is None:
                         print("Could not parse or extract proactive JSON. Setting reminder flag.")
                         self.needs_json_reminder = True
-                        # Fallback: Don't send a garbled proactive message
                         response_data = {"should_respond": False, "content": None, "react_with_emoji": None, "note": "Fallback - Failed to parse proactive JSON"}
             else:
                  response_data = {"should_respond": False, "content": None, "react_with_emoji": None, "note": "Fallback - No content in proactive response"}
-
 
             # Ensure default keys exist
             response_data.setdefault("should_respond", False)
@@ -4369,22 +4504,19 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             if response_data.get("should_respond") and response_data.get("content"):
                 self.bot_last_spoke[channel_id] = time.time()
                 bot_response_cache_entry = {
-                    "id": f"bot_proactive_{message.id}", # Distinguish proactive cache entries
+                    "id": f"bot_proactive_{message.id}",
                     "author": {"id": str(self.bot.user.id), "name": self.bot.user.name, "display_name": self.bot.user.display_name, "bot": True},
                     "content": response_data.get("content", ""), "created_at": datetime.datetime.now().isoformat(),
-                    "attachments": [], "embeds": False, "mentions": [], "replied_to_message_id": None # Proactive isn't a reply
+                    "attachments": [], "embeds": False, "mentions": [], "replied_to_message_id": None
                 }
                 self.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
                 self.message_cache['global_recent'].append(bot_response_cache_entry)
-                # Don't add to 'replied_to' cache
 
             return response_data
 
         except Exception as e:
             error_message = f"Error getting proactive AI response for channel {channel_id} ({trigger_reason}): {str(e)}"
             print(error_message)
-            # import traceback # Optional for debugging
-            # traceback.print_exc()
             return {"should_respond": False, "content": None, "react_with_emoji": None, "error": error_message}
 
 
