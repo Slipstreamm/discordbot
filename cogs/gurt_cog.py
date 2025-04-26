@@ -4015,6 +4015,9 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         should_consider_responding = False
         consideration_reason = "Default"
 
+        # Initialize proactive_trigger_met variable
+        proactive_trigger_met = False
+
         # Always consider if mentioned, replied to, or name used directly
         if bot_mentioned or replied_to_bot or gurt_in_message:
             should_consider_responding = True
@@ -4023,7 +4026,6 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             # --- Proactive Engagement Triggers ---
             time_since_last_activity = now - self.channel_activity.get(channel_id, 0)
             time_since_bot_spoke = now - self.bot_last_spoke.get(channel_id, 0)
-            proactive_trigger_met = False
 
             # 1. Conversation Lull Trigger
             lull_threshold = 180 # 3 minutes quiet
@@ -4140,6 +4142,8 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
                 if random.random() < final_chance:
                     should_consider_responding = True
+                    # This is a regular contextual response, not a proactive one
+                    proactive_trigger_met = False
                     consideration_reason = f"Contextual chance ({final_chance:.2f})"
                 else:
                      consideration_reason = f"Skipped (chance {final_chance:.2f})"
