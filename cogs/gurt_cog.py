@@ -27,7 +27,7 @@ class GurtCog(commands.Cog):
         self.api_url = "https://openrouter.ai/api/v1/chat/completions"
         self.session = None
         self.tavily_client = TavilyClient(api_key=self.tavily_api_key) if self.tavily_api_key else None # Initialize Tavily client
-        self.default_model = "google/gemini-2.5-pro-preview-03-25"
+        self.default_model = "google/gemini-2.5-flash-preview"
         self.fallback_model = "openai/gpt-4.1-nano"
         self.current_channel = None
 
