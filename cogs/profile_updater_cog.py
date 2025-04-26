@@ -315,7 +315,8 @@ Current State:
                 model="openai/o4-mini-high", # Use the specified OpenAI model
                 response_format=response_format_payload, # Enforce structured output
                 task_description="Profile Update Decision",
-                temperature=0.5 # Keep temperature for some creativity
+                temperature=0.5, # Keep temperature for some creativity
+                max_tokens=5000
             )
 
             if result_json and isinstance(result_json, dict):

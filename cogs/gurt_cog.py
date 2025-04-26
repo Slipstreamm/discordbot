@@ -4685,7 +4685,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         task_description: str,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 500,
+        max_tokens: int = 5000,
         response_format: Optional[Dict[str, Any]] = None, # Added response_format parameter
         json_schema: Optional[Dict[str, Any]] = None # Keep for backward compatibility or simple cases? Or remove? Let's remove for clarity.
     ) -> Optional[Dict[str, Any]]:
