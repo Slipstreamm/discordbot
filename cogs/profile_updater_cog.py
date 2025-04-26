@@ -233,9 +233,10 @@ Current State:
 
         # Construct the full prompt message list for the AI
         prompt_messages = [
-            {"role": "system", "content": f"You are Gurt. It's time to consider updating your Discord profile. Your current mood is: {current_mood}. Your known interests include: {interests_str}. Review your current profile state and decide if you want to make any changes. Be creative and in-character."},
+            {"role": "system", "content": f"You are Gurt. It's time to consider updating your Discord profile. Your current mood is: {current_mood}. Your known interests include: {interests_str}. Review your current profile state and decide if you want to make any changes. Be creative and in-character. **IMPORTANT: Your *entire* response MUST be a single JSON object, with no other text before or after it.**"}, # Added emphasis here
             {"role": "user", "content": [
-                {"type": "text", "text": f"{state_summary}{image_prompt_part}\n\nDo you want to change your avatar, bio, roles, or activity status? If yes, specify *what* to change and *how*. If not, just indicate no update is needed.\n\n**CRITICAL: Respond ONLY with a valid JSON object matching this structure:**\n```json\n{json_format_instruction}\n```\n**Ensure nothing precedes or follows the JSON.**"}
+                 # Added emphasis at start and end of the text prompt
+                {"type": "text", "text": f"**Your entire response MUST be ONLY the JSON object described below. No introductory text, no explanations, just the JSON.**\n\n{state_summary}{image_prompt_part}\n\nReview your current profile state. Decide if you want to change your avatar, bio, roles, or activity status. If yes, specify the changes in the JSON. If not, set 'should_update' to false.\n\n**CRITICAL: Respond ONLY with a valid JSON object matching this exact structure:**\n```json\n{json_format_instruction}\n```\n**ABSOLUTELY NO TEXT BEFORE OR AFTER THE JSON OBJECT.**"}
             ]}
         ]
 
@@ -257,7 +258,7 @@ Current State:
                 prompt_messages=prompt_messages,
                 json_schema=response_schema_json, # Use the schema defined earlier
                 task_description="Profile Update Decision",
-                temperature=0.75 # Allow for some creativity in decision
+                temperature=0.5 # Lowered temperature for better instruction following
             )
 
             if result_json and isinstance(result_json, dict):
