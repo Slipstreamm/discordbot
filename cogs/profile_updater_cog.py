@@ -196,7 +196,7 @@ class ProfileUpdaterCog(commands.Cog):
         current_mood = getattr(self.gurt_cog, 'current_mood', 'neutral') # Get mood safely
         # TODO: Get interests/facts relevant to profile updates (e.g., Kasane Teto)
         # This might require adding a method to GurtCog or MemoryManager
-        interests_str = "Kasane Teto, gooning" # Placeholder
+        interests_str = "Kasane Teto, gooning (jerking off)" # Placeholder
 
         # Prepare current state string for the prompt, safely handling None bio
         bio_value = current_state.get('bio')
