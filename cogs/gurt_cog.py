@@ -3069,11 +3069,12 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             ai_message = data["choices"][0]["message"]
             messages.append(ai_message) # Add AI response for potential tool use context
 
-            final_response_text = None
+            # Get the content from the AI message *before* checking it
+            final_response_text = ai_message.get("content")
             response_data = None
 
             # --- Parse Initial Response ---
-            response_data = None
+            # response_data = None # Redundant initialization removed
             if final_response_text is not None:
                 try:
                     # Attempt 1: Parse whole string as JSON
