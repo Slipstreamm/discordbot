@@ -149,7 +149,7 @@ class ProfileUpdaterCog(commands.Cog):
         if self.bot_token:
             headers = {
                 'Authorization': f'Bot {self.bot_token}',
-                'User-Agent': 'GurtDiscordBot (ProfileUpdaterCog, v0.1)'
+                'User-Agent': 'GurtDiscordBot (https://github.com/Slipstreamm/discordbot, v0.1)'
             }
             # Try both potential endpoints
             for url in ('https://discord.com/api/v9/users/@me', 'https://discord.com/api/v9/users/@me/profile'):
@@ -399,7 +399,7 @@ Current State:
         headers = {
             'Authorization': f'Bot {self.bot_token}',
             'Content-Type': 'application/json',
-            'User-Agent': 'GurtDiscordBot (ProfileUpdaterCog, v0.1)'
+            'User-Agent': 'GurtDiscordBot (https://github.com/Slipstreamm/discordbot, v0.1)'
         }
         payload = {'bio': new_bio}
         url = 'https://discord.com/api/v9/users/@me' # Primary endpoint
