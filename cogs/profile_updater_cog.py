@@ -216,20 +216,68 @@ Current State:
         if current_state.get('avatar_image_data'):
              image_prompt_part = "\n(Current avatar image data is provided below)" # Text hint for the AI
 
-        # Define the expected JSON structure for the AI's response
+        # Define the JSON schema for the AI's response content
         response_schema_json = {
-            "should_update": "boolean (true if you want to change anything, false otherwise)",
-            "updates": {
-                "avatar_query": "string | null (Search query for a new avatar, e.g., 'Kasane Teto fanart', or null)",
-                "new_bio": "string | null (The new bio text, or null)",
-                "role_theme": "string | null (A theme for role selection, e.g., 'cool color roles', 'anime fan roles', or null)",
-                "new_activity": {
-                    "type": "string | null (Activity type: 'playing', 'watching', 'listening', 'competing')",
-                    "text": "string | null (The activity text)"
-                 } # Can be null if no activity change
+            "type": "object",
+            "properties": {
+                "should_update": {
+                    "type": "boolean",
+                    "description": "True if you want to change anything, false otherwise"
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": "Your reasoning for the decision and chosen updates (or lack thereof)."
+                },
+                "updates": {
+                    "type": "object",
+                    "properties": {
+                        "avatar_query": {
+                            "type": ["string", "null"],
+                            "description": "Search query for a new avatar, e.g., 'Kasane Teto fanart', or null"
+                        },
+                        "new_bio": {
+                            "type": ["string", "null"],
+                            "description": "The new bio text, or null"
+                        },
+                        "role_theme": {
+                            "type": ["string", "null"],
+                            "description": "A theme for role selection, e.g., 'cool color roles', 'anime fan roles', or null"
+                        },
+                        "new_activity": {
+                            "type": ["object", "null"],
+                            "properties": {
+                                "type": {
+                                    "type": ["string", "null"],
+                                    "enum": ["playing", "watching", "listening", "competing", None],
+                                    "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null"
+                                },
+                                "text": {
+                                    "type": ["string", "null"],
+                                    "description": "The activity text, or null"
+                                }
+                            },
+                            # If new_activity is not null, both type and text should ideally be present,
+                            # but allow nulls within the object for flexibility if AI omits one.
+                            # The handling logic in _update_activity already checks for nulls.
+                        }
+                    },
+                    # No required fields within 'updates' itself, as any part can be null
+                }
+            },
+            "required": ["should_update", "reasoning", "updates"],
+            "additionalProperties": False # Enforce strictness at schema level too
+        }
+        json_format_instruction = json.dumps(response_schema_json, indent=2) # For the prompt
+
+        # Define the payload for the response_format parameter
+        response_format_payload = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "profile_update_decision",
+                "strict": True, # Enforce strict adherence to the schema
+                "schema": response_schema_json
             }
         }
-        json_format_instruction = json.dumps(response_schema_json, indent=2)
 
         # Construct the full prompt message list for the AI
         prompt_messages = [
@@ -253,20 +301,22 @@ Current State:
         try:
             # Need a way to call GurtCog's core AI logic directly
             # This might require refactoring GurtCog or adding a dedicated method
-            # Call the internal AI method from GurtCog
+            # Call the internal AI method from GurtCog, specifying the model and structured output format
             result_json = await self.gurt_cog._get_internal_ai_json_response(
                 prompt_messages=prompt_messages,
-                json_schema=response_schema_json, # Use the schema defined earlier
+                model="openai/o4-mini-high", # Use the specified OpenAI model
+                response_format=response_format_payload, # Enforce structured output
                 task_description="Profile Update Decision",
-                temperature=0.5 # Lowered temperature for better instruction following
+                temperature=0.5 # Keep temperature for some creativity
             )
 
             if result_json and isinstance(result_json, dict):
-                # Basic validation of the received structure
-                if "should_update" in result_json and "updates" in result_json:
+                # Basic validation of the received structure (now includes reasoning)
+                if "should_update" in result_json and "updates" in result_json and "reasoning" in result_json:
+                    print(f"ProfileUpdaterTask: AI Reasoning: {result_json.get('reasoning', 'N/A')}") # Log the reasoning
                     return result_json
                 else:
-                    print(f"ProfileUpdaterTask: AI response missing required keys. Response: {result_json}")
+                    print(f"ProfileUpdaterTask: AI response missing required keys (should_update, updates, reasoning). Response: {result_json}")
                     return None
             else:
                  print(f"ProfileUpdaterTask: AI response was not a dictionary. Response: {result_json}")

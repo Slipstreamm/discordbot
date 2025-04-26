@@ -4682,11 +4682,12 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
     async def _get_internal_ai_json_response(
         self,
         prompt_messages: List[Dict[str, Any]],
-        json_schema: Dict[str, Any],
         task_description: str,
         model: Optional[str] = None,
         temperature: float = 0.7,
-            max_tokens: int = 500
+        max_tokens: int = 500,
+        response_format: Optional[Dict[str, Any]] = None, # Added response_format parameter
+        json_schema: Optional[Dict[str, Any]] = None # Keep for backward compatibility or simple cases? Or remove? Let's remove for clarity.
     ) -> Optional[Dict[str, Any]]:
         """
         Makes an AI call expecting a specific JSON response format for internal tasks,
@@ -4694,10 +4695,11 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
         Args:
             prompt_messages: The list of messages forming the prompt.
-            json_schema: The JSON schema the AI response should conform to.
             task_description: A description of the task for logging/headers.
             model: The specific model to use (defaults to GurtCog's default).
             temperature: The temperature for the AI call.
+            max_tokens: The maximum tokens for the response.
+            response_format: Optional dictionary defining the structured output format (e.g., for JSON schema).
             max_tokens: The maximum tokens for the response.
 
         Returns:
@@ -4712,24 +4714,34 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         payload = {} # Initialize payload in outer scope for finally block
 
         try:
-            # Add final instruction for JSON format
-            json_format_instruction = json.dumps(json_schema, indent=2)
+            # Add final instruction for JSON format (remains important for the AI)
+            # If response_format is provided and contains a schema, use that for the instruction.
+            # Otherwise, fall back to a generic JSON instruction if needed, or omit if not expecting JSON.
+            # For this function, we generally expect JSON, so let's keep a generic instruction if no schema provided.
+            json_instruction_content = "**CRITICAL: Your response MUST consist *only* of the raw JSON object itself.**"
+            if response_format and response_format.get("type") == "json_schema":
+                 schema_for_prompt = response_format.get("json_schema", {}).get("schema", {})
+                 if schema_for_prompt:
+                     json_format_instruction = json.dumps(schema_for_prompt, indent=2)
+                     json_instruction_content = f"**CRITICAL: Your response MUST consist *only* of the raw JSON object itself, matching this schema:**\n```json\n{json_format_instruction}\n```\n**Ensure nothing precedes or follows the JSON.**"
+
             prompt_messages.append({
                 "role": "user",
-                "content": f"**CRITICAL: Your response MUST consist *only* of the raw JSON object itself, matching this schema:**\n```json\n{json_format_instruction}\n```\n**Ensure nothing precedes or follows the JSON.**"
+                "content": json_instruction_content
             })
+
 
             payload = {
                 "model": model or self.default_model,
                 "messages": prompt_messages,
                 "temperature": temperature,
-                "max_tokens": max_tokens,
+                "max_tokens": max_tokens
                 # No tools needed for this specific internal call type usually
-                # "response_format": { # Potentially use if model supports schema enforcement without tools
-                #     "type": "json_object", # Or "json_schema" if supported
-                #     # "json_schema": json_schema # If using json_schema type
-                # }
             }
+
+            # Add response_format to payload if provided
+            if response_format:
+                payload["response_format"] = response_format
 
             headers = {
                 "Content-Type": "application/json",
