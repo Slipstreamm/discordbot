@@ -3242,7 +3242,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                         data = await response.json()
                         # Basic format check
                         if "choices" not in data or not data["choices"] or "message" not in data["choices"][0]:
-                            error_msg = f"Unexpected API response format for {request_desc}: {json.dumps(data)[:200]}"
+                            error_msg = f"Unexpected API response format for {request_desc}: {json.dumps(data)}"
                             print(error_msg)
                             last_exception = ValueError(error_msg) # Treat as non-retryable format error
                             break # Exit retry loop
