@@ -14,7 +14,7 @@ EXPECTED_ROLES: Dict[str, List[str]] = {
     "Pronouns": ["He/Him", "She/Her", "They/Them", "Ask Pronouns"],
     "Interests": ["Art", "Music", "Movies", "Books", "Technology", "Science", "History", "Food", "Programming", "Anime", "Photography", "Travel", "Writing", "Cooking", "Fitness", "Nature", "Gaming", "Philosophy", "Psychology", "Design", "Machine Learning", "Cryptocurrency", "Astronomy", "Mythology", "Languages", "Architecture", "DIY Projects", "Hiking", "Streaming", "Virtual Reality", "Coding Challenges", "Board Games", "Meditation", "Urban Exploration", "Tattoo Art", "Comics", "Robotics", "3D Modeling", "Podcasts"],
     "Gaming Platforms": ["PC", "PlayStation", "Xbox", "Nintendo Switch", "Mobile"],
-    "Favorite Vocaloids": ["Hatsune Miku", "Kasane Teto", "Akita Neru", "Kagamine Rin", "Kagamine Len", "Megurine Luka", "Kaito", "Meiko", "Gumi", "Kaai Yuki"],
+    "Favorite Vocaloids": ["Hatsune Miku", "Kasane Teto", "Akita Neru", "Kagamine Rin", "Kagamine Len", "Megurine Luka", "Kaito", "Meiko", "Gumi", "Kaai Yuki", "Yowane Haku"],
     "Notifications": ["Announcements"]
 }
 
@@ -450,7 +450,7 @@ class RoleSelectorCog(commands.Cog):
                 await initial_status_msg.edit(content=f"Deleted {deleted_messages} messages. Errors during deletion: {deletion_errors}.")
             else:
                 await initial_status_msg.edit(content="No existing role selector messages found to delete.")
-            
+
             await asyncio.sleep(2) # Brief pause before creating new ones
 
         except discord.Forbidden:
