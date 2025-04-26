@@ -30,7 +30,7 @@ class GurtCog(commands.Cog):
         self.api_url = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions") # Load from env
         self.session = None
         self.tavily_client = TavilyClient(api_key=self.tavily_api_key) if self.tavily_api_key else None # Initialize Tavily client
-        self.default_model = os.getenv("GURT_DEFAULT_MODEL", "google/gemini-2.5-flash-preview:thinking") # Load from env
+        self.default_model = os.getenv("GURT_DEFAULT_MODEL", "google/gemini-2.5-pro-preview-03-25") # Load from env
         self.fallback_model = os.getenv("GURT_FALLBACK_MODEL", "openai/gpt-4.1-nano") # Load from env
         self.current_channel = None
         self.db_path = os.getenv("GURT_DB_PATH", "data/gurt_memory.db") # Load from env, define database path
@@ -4742,7 +4742,13 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             )
 
             ai_message = data["choices"][0]["message"]
-            final_response_text = ai_message.get("content")
+            final_response_text = ai_message.get("content") # This might be None or empty
+
+            # --- Add more detailed logging here ---
+            if not final_response_text:
+                print(f"_get_internal_ai_json_response ({task_description}): Warning - AI response message content is empty or None. Full AI message: {json.dumps(ai_message)}")
+                # Continue, the existing logic will handle returning None
+            # --- End detailed logging ---
 
             if final_response_text:
                 # Attempt to parse the JSON response (using regex extraction as fallback)
