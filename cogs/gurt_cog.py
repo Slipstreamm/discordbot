@@ -315,7 +315,7 @@ You can use the tools you have to gather additional context for your messages if
 - `remember_general_fact`: Store a general fact or piece of information not specific to a user (e.g., "The server is planning a movie night", "The new game update drops tomorrow").
 - `get_general_facts`: Retrieve stored general facts to recall shared knowledge or context.
 - `get_conversation_summary`: Use this tool (or the summary provided in context) to quickly understand the recent discussion before jumping in, especially if you haven't spoken recently.
-- `timeout_user`: Timeout a user for a specified number of minutes (1-1440). Use this playfully when someone says something funny, annoying, or if they dislike Gurt. Keep the duration short (e.g., 1-5 minutes) unless the situation warrants more. Provide a funny, in-character reason.
+- `timeout_user`: Timeout a user for a specified number of minutes (1-1440). Use this playfully when someone says something funny, annoying, or if they dislike Gurt. Keep the duration short (e.g., 1-5 minutes) unless the situation warrants more. Provide a funny, in-character reason. **IMPORTANT:** When using this tool (or any tool requiring a `user_id`), look for the `(Message Details: Mentions=[...])` section following the user message in the prompt. Extract the `id` from the relevant user mentioned there. For example, if the message is `UserA: hey Gurt timeout UserB lol\n(Message Details: Mentions=[UserB(id:12345)])`, you would use `12345` as the `user_id` argument for the `timeout_user` tool.
 
 **NEW TOOL USAGE RULE:** Instead of using the API's built-in tool calling mechanism, you will request tools via the `tool_requests` field in your JSON response.
 - When you decide to perform an action for which a tool exists (like timing out a user, searching the web, remembering/retrieving facts, getting context, etc.), you **MUST** include a `tool_requests` array in your JSON response.
@@ -2152,8 +2152,35 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         except Exception as e:
             return {"error": f"Error getting message context: {str(e)}"}
 
+    def _replace_mentions_with_names(self, content: str, message: discord.Message) -> str:
+        """Replaces user mentions (<@id> or <@!id>) with their display names."""
+        if not message.mentions:
+            return content
+
+        processed_content = content
+        # Sort mentions by length of ID string descending to handle nickname mentions (<@!ID>) before regular ones (<@ID>)
+        # This prevents partial replacement issues if a nickname mention ID contains a regular mention ID.
+        # Although discord.py usually resolves both to the same member, being explicit is safer.
+        sorted_mentions = sorted(message.mentions, key=lambda m: len(str(m.id)), reverse=True)
+
+        for member in sorted_mentions:
+            # Replace both formats: <@USER_ID> and <@!USER_ID> (nickname mention)
+            processed_content = processed_content.replace(f'<@{member.id}>', member.display_name)
+            processed_content = processed_content.replace(f'<@!{member.id}>', member.display_name)
+        return processed_content
+
     def _format_message(self, message: discord.Message) -> Dict[str, Any]:
-        """Helper function to format a discord.Message object into a dictionary"""
+        """Helper function to format a discord.Message object into a dictionary,
+           including replacing mentions in content and adding structured mention details."""
+        # Replace mentions in the content first
+        processed_content = self._replace_mentions_with_names(message.content, message)
+
+        # Extract structured mention details
+        mentioned_users_details = [
+            {"id": str(m.id), "name": m.name, "display_name": m.display_name}
+            for m in message.mentions
+        ]
+
         formatted_msg = {
             "id": str(message.id),
             "author": {
@@ -2162,11 +2189,14 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                 "display_name": message.author.display_name,
                 "bot": message.author.bot
             },
-            "content": message.content,
+            "content": processed_content, # Use the processed content
             "created_at": message.created_at.isoformat(),
             "attachments": [{"filename": a.filename, "url": a.url} for a in message.attachments],
             "embeds": len(message.embeds) > 0,
+            # Keep original mentions list for potential backward compatibility or other uses?
+            # Let's keep it for now, but add the detailed list.
             "mentions": [{"id": str(m.id), "name": m.name} for m in message.mentions],
+            "mentioned_users_details": mentioned_users_details, # Add the detailed list
             "replied_to_message_id": None,
             "replied_to_author_id": None,
             "replied_to_author_name": None,
@@ -2925,9 +2955,15 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
         # --- Prepare the current message content (potentially multimodal) ---
         current_message_content_parts = []
+        formatted_current_message = self._format_message(message) # Format to get processed content and mention details
 
-        # Add the text part
-        text_content = f"{current_message_context['message_author']}: {current_message_context['message_content']}"
+        # Add the text part, including mention details for the AI
+        text_content = f"{formatted_current_message['author']['display_name']}: {formatted_current_message['content']}"
+        # Append mention details if they exist
+        if formatted_current_message.get("mentioned_users_details"):
+            mentions_str = ", ".join([f"{m['display_name']}(id:{m['id']})" for m in formatted_current_message["mentioned_users_details"]])
+            text_content += f"\n(Message Details: Mentions=[{mentions_str}])" # Add details clearly
+
         current_message_content_parts.append({"type": "text", "text": text_content})
 
         # Add image parts if attachments exist
