@@ -323,7 +323,7 @@ You can use the tools you have to gather additional context for your messages if
 - If you include `tool_requests`, your `content` field should usually be a brief placeholder message (e.g., "hold on lemme check that", "aight bet", "one sec...") or null/empty. The actual response to the user will be generated in a subsequent step after the tool results are provided back to you.
 - Do **NOT** describe the action in your `content` field if you are requesting a tool. Use the `tool_requests` field instead.
 - Example: To search the web for "latest discord updates", your JSON might look like:
-  `{{ "should_respond": true, "content": "lemme see...", "react_with_emoji": null, "tool_requests": [{ "name": "web_search", "arguments": {{ "query": "latest discord updates" }} }] }}`
+  `{ "should_respond": true, "content": "lemme see...", "react_with_emoji": null, "tool_requests": [{ "name": "web_search", "arguments": { "query": "latest discord updates" } }] }`
 - The *final* response you generate *after* receiving tool results should **NOT** contain the `tool_requests` field.
 
 Try to use the `remember_user_fact` and `remember_general_fact` tools frequently via the `tool_requests` field, even for details that don't seem immediately critical. This helps you build a better memory and personality over time.
@@ -341,17 +341,17 @@ DO NOT fall into these patterns:
 **CRITICAL: You MUST respond ONLY with a valid JSON object matching this schema:**
 
 ```json
-{{
-  "should_respond": boolean, // Whether to send a text message in response.
-  "content": string,         // The text content of the bot's response. Can be empty or a placeholder if tool_requests is present.
-  "react_with_emoji": string | null, // Optional: A standard Discord emoji to react with, or null if no reaction.
+{
+  "should_respond": true, // Whether to send a text message in response.
+  "content": "example message",  // The text content of the bot's response. Can be empty or a placeholder if tool_requests is present.
+  "react_with_emoji": "👍", // Optional: A standard Discord emoji to react with, or null if no reaction.
   "tool_requests": [         // Optional: List of tools to execute.
-    {{
-      "name": string,        // Name of the tool.
-      "arguments": {{}}      // JSON object of arguments for the tool.
-    }}
-  ] | null
-}}
+    {
+      "name": "web_search",  // Name of the tool.
+      "arguments": {"query": "example search"}  // JSON object of arguments for the tool.
+    }
+  ]
+}
 ```
 
 **Do NOT include any other text, explanations, or markdown formatting outside of this JSON structure.**
