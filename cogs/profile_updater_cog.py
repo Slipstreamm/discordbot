@@ -21,7 +21,7 @@ class ProfileUpdaterCog(commands.Cog):
         self.bot = bot
         self.session: Optional[aiohttp.ClientSession] = None
         self.gurt_cog: Optional[commands.Cog] = None # To store GurtCog instance
-        self.bot_token = os.getenv("BOT_TOKEN") # Need the bot token for bio updates
+        self.bot_token = os.getenv("DISCORD_TOKEN_GURT") # Need the bot token for bio updates
         self.update_interval_hours = 3 # Default to every 3 hours, can be adjusted
         self.profile_update_task.change_interval(hours=self.update_interval_hours)
         self.last_update_time = 0 # Track last update time
@@ -31,7 +31,7 @@ class ProfileUpdaterCog(commands.Cog):
         self.session = aiohttp.ClientSession()
         # Removed wait_until_ready and gurt_cog retrieval from here
         if not self.bot_token:
-             print("WARNING: BOT_TOKEN environment variable not set. Bio updates will fail.")
+             print("WARNING: DISCORD_TOKEN_GURT environment variable not set. Bio updates will fail.")
         print(f"ProfileUpdaterCog loaded. Update interval: {self.update_interval_hours} hours.")
         self.profile_update_task.start()
 
@@ -198,11 +198,16 @@ class ProfileUpdaterCog(commands.Cog):
         # This might require adding a method to GurtCog or MemoryManager
         interests_str = "Kasane Teto, gooning" # Placeholder
 
-        # Prepare current state string for the prompt
+        # Prepare current state string for the prompt, safely handling None bio
+        bio_value = current_state.get('bio')
+        bio_summary = 'Not set'
+        if bio_value: # Check if bio_value is not None and not an empty string
+            bio_summary = f"{bio_value[:100]}{'...' if len(bio_value) > 100 else ''}"
+
         state_summary = f"""
 Current State:
 - Avatar URL: {current_state.get('avatar_url', 'None')}
-- Bio: {current_state.get('bio', 'Not set')[:100]}{'...' if current_state.get('bio') and len(current_state['bio']) > 100 else ''}
+- Bio: {bio_summary}
 - Roles (Sample): {list(current_state.get('roles', {}).values())[0][:5] if current_state.get('roles') else 'None'}
 - Activity: {current_state.get('activity', 'None')}
 """
