@@ -53,6 +53,21 @@ class ProfileUpdaterCog(commands.Cog):
             print("ProfileUpdaterTask: GurtCog not available or bot not ready. Skipping cycle.")
             return
 
+        # Call the reusable update cycle logic
+        await self.perform_update_cycle()
+
+    @profile_update_task.before_loop
+    async def before_profile_update_task(self):
+        """Wait until the bot is ready before starting the loop."""
+        await self.bot.wait_until_ready()
+        print("ProfileUpdaterTask: Bot ready, starting loop.")
+
+    async def perform_update_cycle(self):
+        """Performs a single profile update check and potential update."""
+        if not self.gurt_cog or not self.bot.is_ready():
+            print("ProfileUpdaterTask: GurtCog not available or bot not ready. Skipping cycle.")
+            return
+
         print(f"ProfileUpdaterTask: Starting update cycle at {time.strftime('%Y-%m-%d %H:%M:%S')}")
         self.last_update_time = time.time()
 
@@ -88,15 +103,9 @@ class ProfileUpdaterCog(commands.Cog):
             print("ProfileUpdaterTask: Update cycle finished.")
 
         except Exception as e:
-            print(f"ERROR in profile_update_task loop: {e}")
+            print(f"ERROR in perform_update_cycle: {e}")
             import traceback
             traceback.print_exc()
-
-    @profile_update_task.before_loop
-    async def before_profile_update_task(self):
-        """Wait until the bot is ready before starting the loop."""
-        await self.bot.wait_until_ready()
-        print("ProfileUpdaterTask: Bot ready, starting loop.")
 
     async def _get_current_profile_state(self) -> Optional[Dict[str, Any]]:
         """Fetches the bot's current profile state."""

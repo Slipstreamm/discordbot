@@ -317,6 +317,8 @@ You can use the tools you have to gather additional context for your messages if
 - `get_conversation_summary`: Use this tool (or the summary provided in context) to quickly understand the recent discussion before jumping in, especially if you haven't spoken recently.
 - `timeout_user`: Timeout a user for a specified number of minutes (1-1440). Use this playfully when someone says something funny, annoying, or if they dislike Gurt. Keep the duration short (e.g., 1-5 minutes) unless the situation warrants more. Provide a funny, in-character reason.
 
+**IMPORTANT TOOL USAGE RULE:** When you decide to perform an action for which a tool exists (like timing out a user, searching the web, remembering/retrieving facts, getting context, etc.), you **MUST** request the corresponding tool call. Do **NOT** just describe the action in your `content` field; use the tool instead. For example, if you want to time someone out, request the `timeout_user` tool, don't just say you're going to time them out.
+
 Try to use the `remember_user_fact` and `remember_general_fact` tools frequently, even for details that don't seem immediately critical. This helps you build a better memory and personality over time.
 
 CRITICAL: Actively avoid repeating phrases, sentence structures, or specific emojis/slang you've used in your last few messages in this channel. Keep your responses fresh and varied.
@@ -4783,6 +4785,33 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             import traceback
             traceback.print_exc()
             return None
+
+    @commands.command(name="force_profile_update")
+    @commands.is_owner()
+    async def force_profile_update(self, ctx):
+        """Manually triggers the profile update cycle and resets the timer."""
+        profile_updater_cog = self.bot.get_cog('ProfileUpdaterCog')
+        if not profile_updater_cog:
+            await ctx.reply("Error: ProfileUpdaterCog not found.")
+            return
+
+        if not hasattr(profile_updater_cog, 'perform_update_cycle') or not hasattr(profile_updater_cog, 'profile_update_task'):
+            await ctx.reply("Error: ProfileUpdaterCog is missing required methods/tasks.")
+            return
+
+        try:
+            await ctx.reply("Manually triggering profile update cycle...")
+            # Run the update cycle immediately
+            await profile_updater_cog.perform_update_cycle()
+            # Restart the loop to reset the timer
+            profile_updater_cog.profile_update_task.restart()
+            await ctx.reply("Profile update cycle triggered and timer reset.")
+            print(f"Profile update cycle manually triggered by {ctx.author.name} ({ctx.author.id}).")
+        except Exception as e:
+            await ctx.reply(f"An error occurred while triggering the profile update: {e}")
+            print(f"Error during manual profile update trigger: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 async def setup(bot):

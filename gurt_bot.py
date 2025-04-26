@@ -54,12 +54,14 @@ async def main():
 
     try:
         async with bot:
-            # Load only the gurt cog
+            # Load the gurt cog and profile updater cog
             try:
                 await bot.load_extension("cogs.gurt_cog")
                 print("Successfully loaded gurt_cog")
+                await bot.load_extension("cogs.profile_updater_cog")
+                print("Successfully loaded profile_updater_cog")
             except Exception as e:
-                print(f"Error loading gurt_cog: {e}")
+                print(f"Error loading cog: {e}")
                 import traceback
                 traceback.print_exc()
 
