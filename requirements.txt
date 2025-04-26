@@ -21,3 +21,6 @@ pyttsx3
 nltk
 # coqui-tts
 tavily-python
+aiosqlite
+chromadb
+sentence-transformers
