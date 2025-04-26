@@ -315,6 +315,7 @@ You can use the tools you have to gather additional context for your messages if
 - `remember_general_fact`: Store a general fact or piece of information not specific to a user (e.g., "The server is planning a movie night", "The new game update drops tomorrow").
 - `get_general_facts`: Retrieve stored general facts to recall shared knowledge or context.
 - `get_conversation_summary`: Use this tool (or the summary provided in context) to quickly understand the recent discussion before jumping in, especially if you haven't spoken recently.
+- `timeout_user`: Timeout a user for a specified number of minutes (1-1440). Use this playfully when someone says something funny, annoying, or if they dislike Gurt. Keep the duration short (e.g., 1-5 minutes) unless the situation warrants more. Provide a funny, in-character reason.
 
 Try to use the `remember_user_fact` and `remember_general_fact` tools frequently, even for details that don't seem immediately critical. This helps you build a better memory and personality over time.
 
@@ -677,6 +678,31 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                         "required": []
                     }
                 }
+            },
+            { # Added timeout_user tool definition
+                "type": "function",
+                "function": {
+                    "name": "timeout_user",
+                    "description": "Timeout a user in the current server for a specified duration. Use this playfully or when someone says something you (Gurt) dislike or find funny.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "user_id": {
+                                "type": "string",
+                                "description": "The Discord ID of the user to timeout."
+                            },
+                            "duration_minutes": {
+                                "type": "integer",
+                                "description": "The duration of the timeout in minutes (1-1440, e.g., 5 for 5 minutes)."
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "Optional: The reason for the timeout (keep it short and in character)."
+                            }
+                        },
+                        "required": ["user_id", "duration_minutes"]
+                    }
+                }
             }
         ]
 
@@ -695,7 +721,8 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             "remember_user_fact": self.memory_manager.add_user_fact, # Point to MemoryManager method
             "get_user_facts": self.memory_manager.get_user_facts, # Point to MemoryManager method (Note: Tool definition doesn't take context, but internal call will)
             "remember_general_fact": self.memory_manager.add_general_fact, # Point to MemoryManager method
-            "get_general_facts": self.memory_manager.get_general_facts # Point to MemoryManager method (Note: Tool definition doesn't take context, but internal call will)
+            "get_general_facts": self.memory_manager.get_general_facts, # Point to MemoryManager method (Note: Tool definition doesn't take context, but internal call will)
+            "timeout_user": self.timeout_user # Added timeout tool mapping
         }
 
         # Gurt responses for simple interactions
@@ -2128,6 +2155,84 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                 print(f"Error getting referenced message details: {e}")
 
         return formatted_msg
+
+    # --- Timeout Tool Implementation ---
+    async def timeout_user(self, user_id: str, duration_minutes: int, reason: Optional[str] = None) -> Dict[str, Any]:
+        """Times out a user in the current server."""
+        # Ensure the command is run in a guild context
+        if not self.current_channel or not isinstance(self.current_channel, discord.abc.GuildChannel):
+            return {"error": "Cannot perform timeout outside of a server channel."}
+
+        guild = self.current_channel.guild
+        if not guild:
+             return {"error": "Could not determine the server."}
+
+        # Validate duration (Discord limits: 1 min to 28 days. Let's cap at 1 day = 1440 mins for sanity)
+        if not 1 <= duration_minutes <= 1440:
+            return {"error": "Timeout duration must be between 1 and 1440 minutes."}
+
+        try:
+            member_id = int(user_id)
+            member = guild.get_member(member_id)
+            if not member:
+                # Try fetching if not in cache, as get_member only checks cache
+                try:
+                    print(f"Member {user_id} not in cache, attempting fetch...")
+                    member = await guild.fetch_member(member_id)
+                except discord.NotFound:
+                    print(f"Member {user_id} not found in server {guild.id}.")
+                    return {"error": f"User with ID {user_id} not found in this server."}
+                except discord.HTTPException as e:
+                     print(f"Failed to fetch member {user_id}: {e}")
+                     return {"error": f"Failed to fetch member {user_id}: {e}"}
+
+            # Check if trying to timeout self or bot owner
+            if member == self.bot.user:
+                return {"error": "lol i cant timeout myself vro"}
+            if member.id == guild.owner_id:
+                 return {"error": f"Cannot timeout the server owner ({member.display_name})."}
+
+            # Check bot permissions
+            bot_member = guild.me
+            if not bot_member.guild_permissions.moderate_members:
+                print(f"Bot lacks moderate_members permission in guild {guild.id}")
+                return {"error": "I don't have permission to timeout members."}
+
+            # Check role hierarchy (cannot timeout someone with higher/equal roles unless bot is owner)
+            if bot_member.id != guild.owner_id and bot_member.top_role <= member.top_role:
+                 print(f"Role hierarchy prevents timeout: Bot top role {bot_member.top_role.name} ({bot_member.top_role.position}), Member top role {member.top_role.name} ({member.top_role.position})")
+                 return {"error": f"I cannot timeout {member.display_name} because their role is higher than or equal to mine."}
+
+            # Calculate timedelta
+            until = discord.utils.utcnow() + datetime.timedelta(minutes=duration_minutes)
+            timeout_reason = reason or "gurt felt like it" # Default reason
+
+            await member.timeout(until, reason=timeout_reason)
+            print(f"Successfully timed out {member.display_name} ({user_id}) for {duration_minutes} minutes. Reason: {timeout_reason}")
+            return {
+                "status": "success",
+                "user_timed_out": member.display_name,
+                "user_id": user_id,
+                "duration_minutes": duration_minutes,
+                "reason": timeout_reason
+            }
+
+        except ValueError:
+            return {"error": f"Invalid user ID format: {user_id}"}
+        except discord.Forbidden as e:
+            # This might happen if role hierarchy changes or other permission issues arise
+            print(f"Forbidden error timing out {user_id}: {e}")
+            return {"error": f"Missing permissions to timeout {user_id}. Maybe their role is too high or another permission issue occurred?"}
+        except discord.HTTPException as e:
+            error_message = f"Failed to timeout {user_id} due to an API error: {e}"
+            print(error_message)
+            return {"error": error_message}
+        except Exception as e:
+            error_message = f"An unexpected error occurred while trying to timeout {user_id}: {str(e)}"
+            print(error_message)
+            import traceback
+            traceback.print_exc()
+            return {"error": error_message}
 
     # --- End of New Tool Implementations ---
 
@@ -3696,7 +3801,8 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                   "- Remember user facts (`remember_user_fact`)\n"
                   "- Get user facts (`get_user_facts`)\n"
                   "- Remember general facts (`remember_general_fact`)\n"
-                  "- Get general facts (`get_general_facts`)",
+                  "- Get general facts (`get_general_facts`)\n"
+                  "- Timeout users (`timeout_user`)", # Added timeout tool to help
             inline=False
         )
 
