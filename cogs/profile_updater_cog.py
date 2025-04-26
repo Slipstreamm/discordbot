@@ -241,7 +241,7 @@ Current State:
                     "properties": {
                         "avatar_query": {
                             "anyOf": [{"type": "string"}, {"type": "null"}],
-                            "description": "Search query for a new avatar"
+                            "description": "Search query for a new avatar. Try to be specific, rather than something very broad like 'Kasane Teto' or 'anime.'"
                         },
                         "new_bio": {
                             "anyOf": [{"type": "string"}, {"type": "null"}],
