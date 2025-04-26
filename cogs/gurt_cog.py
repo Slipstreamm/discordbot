@@ -54,7 +54,7 @@ class GurtCog(commands.Cog):
         ]
         # Personality traits that influence response style
         self.personality_traits = {
-            "chattiness": 0.4,  # How likely to respond to non-direct messages
+            "chattiness": 0.7, # How likely to respond to non-direct messages
             "emoji_usage": 0.5,  # How frequently to use emojis
             "slang_level": 0.65,  # How much slang to use (increased from 0.75)
             "randomness": 0.4,   # How unpredictable responses should be (slightly increased)
@@ -2700,6 +2700,56 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         # If loop finishes without returning, raise the last encountered exception
         raise last_exception or Exception(f"API request failed for {request_desc} after {self.api_retry_attempts} attempts.")
 
+    def _parse_ai_json_response(self, response_text: Optional[str], context_description: str) -> Optional[Dict[str, Any]]:
+        """
+        Parses the AI's response text, attempting to extract a JSON object.
+        Handles potential markdown code fences and returns a parsed dictionary or None.
+        """
+        if response_text is None:
+            print(f"Parsing ({context_description}): Response text is None.")
+            return None
+
+        response_data = None
+        try:
+            # Attempt 1: Parse whole string as JSON
+            response_data = json.loads(response_text)
+            print(f"Parsing ({context_description}): Successfully parsed entire response as JSON.")
+            self.needs_json_reminder = False # Assume success resets reminder need
+        except json.JSONDecodeError:
+            # Attempt 2: Extract JSON object, handling optional markdown fences
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```|(\{.*\})', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1) or json_match.group(2)
+                if json_str:
+                    try:
+                        response_data = json.loads(json_str)
+                        print(f"Parsing ({context_description}): Successfully extracted and parsed JSON using regex.")
+                        self.needs_json_reminder = False # Assume success resets reminder need
+                    except json.JSONDecodeError as e:
+                        print(f"Parsing ({context_description}): Regex found potential JSON, but it failed to parse: {e}")
+                        response_data = None # Parsing failed
+                else:
+                    print(f"Parsing ({context_description}): Regex matched, but failed to capture JSON content.")
+                    response_data = None
+            else:
+                print(f"Parsing ({context_description}): Could not extract JSON object using regex.")
+                response_data = None
+
+        # Basic validation: Ensure it's a dictionary
+        if response_data is not None and not isinstance(response_data, dict):
+            print(f"Parsing ({context_description}): Parsed data is not a dictionary: {type(response_data)}")
+            response_data = None
+
+        # Ensure default keys exist if parsing was successful
+        if isinstance(response_data, dict):
+            response_data.setdefault("should_respond", False)
+            response_data.setdefault("content", None)
+            response_data.setdefault("react_with_emoji", None)
+            response_data.setdefault("tool_requests", None) # Keep tool_requests if present
+
+        return response_data
+
+
     async def _get_memory_context(self, message: discord.Message) -> Optional[str]:
         """Retrieves relevant past interactions and facts to provide memory context."""
         channel_id = message.channel.id
@@ -2900,9 +2950,18 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
 
     async def get_ai_response(self, message: discord.Message, model: Optional[str] = None) -> Dict[str, Any]:
-        """Get a response from the OpenRouter API with decision on whether to respond"""
+        """
+        Gets responses from the OpenRouter API, handling potential tool usage and returning
+        both initial and final parsed responses.
+
+        Returns:
+            A dictionary containing:
+            - "initial_response": Parsed JSON data from the first AI call (or None).
+            - "final_response": Parsed JSON data from the second AI call after tools (or None).
+            - "error": An error message string if a critical error occurred, otherwise None.
+        """
         if not self.api_key:
-            return {"should_respond": False, "content": None, "react_with_emoji": None, "error": "OpenRouter API key not configured"}
+            return {"initial_response": None, "final_response": None, "error": "OpenRouter API key not configured"}
 
         # Store the current channel for context in tools
         self.current_channel = message.channel
@@ -3069,66 +3128,30 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             ai_message = data["choices"][0]["message"]
             messages.append(ai_message) # Add AI response for potential tool use context
 
-            # Get the content from the AI message *before* checking it
-            final_response_text = ai_message.get("content")
-            response_data = None
-
             # --- Parse Initial Response ---
-            # response_data = None # Redundant initialization removed
-            if final_response_text is not None:
-                try:
-                    # Attempt 1: Parse whole string as JSON
-                    response_data = json.loads(final_response_text)
-                    print("Successfully parsed initial response as JSON.")
-                    self.needs_json_reminder = False
-                except json.JSONDecodeError:
-                    print("Initial response is not valid JSON. Attempting regex extraction...")
-                    # Attempt 2: Extract JSON object, handling optional markdown fences
-                    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```|(\{.*\})', final_response_text, re.DOTALL)
-                    if json_match:
-                        json_str = json_match.group(1) or json_match.group(2)
-                        if json_str:
-                            try:
-                                response_data = json.loads(json_str)
-                                print("Successfully extracted and parsed initial JSON using regex.")
-                                self.needs_json_reminder = False
-                            except json.JSONDecodeError as e:
-                                print(f"Regex found potential JSON in initial response, but it failed to parse: {e}")
-                                response_data = None # Parsing failed
-                        else:
-                            print("Regex matched in initial response, but failed to capture JSON content.")
-                            response_data = None
-                    else:
-                        print("Could not extract JSON object from initial response using regex.")
-                        response_data = None
+            initial_response_text = ai_message.get("content")
+            initial_parsed_data = self._parse_ai_json_response(initial_response_text, "initial response")
 
-                    # If parsing/extraction failed, set reminder and potentially use fallback
-                    if response_data is None:
-                        print("Could not parse or extract JSON from initial response. Setting reminder flag.")
-                        self.needs_json_reminder = True
-                        # Fallback logic (treat as plain text if mentioned/replied)
-                        clean_text = final_response_text.strip()
-                        is_plausible_chat = len(clean_text) > 0 and len(clean_text) < 300 and not clean_text.startswith('{') and 'error' not in clean_text.lower()
-                        if self.bot.user.mentioned_in(message) or replied_to_bot or is_plausible_chat:
-                            response_data = {
-                                "should_respond": True, "content": clean_text or "...",
-                                "react_with_emoji": None, "note": "Fallback response due to non-JSON initial content"
-                            }
-                            print(f"Fallback response generated from initial non-JSON: {response_data}")
-                        else:
-                            response_data = {
-                                "should_respond": False, "content": None, "react_with_emoji": None,
-                                "note": "No response intended (non-JSON initial content)"
-                            }
-                            print("No response intended (non-JSON initial content).")
-            else:
-                # Handle case where initial response text was None
-                print("Warning: Initial AI response content was None.")
-                response_data = {"should_respond": False, "content": None, "react_with_emoji": None, "note": "Initial response content was None"}
-
+            # If initial parsing failed completely, we might need a fallback or error handling
+            if initial_parsed_data is None:
+                print("Critical Error: Failed to parse initial AI response. Setting reminder.")
+                self.needs_json_reminder = True
+                # Determine if we should still attempt a fallback response based on context
+                fallback_content = None
+                if self.bot.user.mentioned_in(message) or replied_to_bot:
+                    fallback_content = "..." # Simple fallback if mentioned
+                # Return an error structure
+                return {
+                    "initial_response": None,
+                    "final_response": None,
+                    "error": "Failed to parse initial AI JSON response.",
+                    # Optionally include a minimal fallback if needed by on_message
+                    "fallback_initial": {"should_respond": bool(fallback_content), "content": fallback_content, "react_with_emoji": "❓"} if fallback_content else None
+                }
 
             # --- Check for Tool Requests ---
-            requested_tools = response_data.get("tool_requests") if isinstance(response_data, dict) else None
+            requested_tools = initial_parsed_data.get("tool_requests")
+            final_parsed_data = None # Initialize final response data
 
             if requested_tools and isinstance(requested_tools, list) and len(requested_tools) > 0:
                 print(f"AI requested {len(requested_tools)} tools. Processing...")
@@ -3136,21 +3159,17 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                 tool_results_for_api = await self._process_requested_tools(requested_tools)
 
                 # Prepare messages for the second API call
-                # Start with the original message history
-                messages_for_follow_up = messages[:-1] # Exclude the final user instruction from the first call
-                # Add the AI's first response (containing the tool request)
-                messages_for_follow_up.append(ai_message)
-                # Add the tool results
-                messages_for_follow_up.extend(tool_results_for_api)
-                # Add a new final instruction for the AI
-                messages_for_follow_up.append({
+                messages_for_follow_up = messages[:-1] # Exclude the final user instruction
+                messages_for_follow_up.append(ai_message) # Add AI's first response (with tool request)
+                messages_for_follow_up.extend(tool_results_for_api) # Add tool results
+                messages_for_follow_up.append({ # Add new final instruction
                     "role": "user",
-                    "content": f"Okay, the requested tools have been executed. Here are the results. Now, generate the final user-facing response based on these results and the previous conversation context. **CRITICAL: Your response MUST be ONLY the raw JSON object matching the standard schema (should_respond, content, react_with_emoji). Do NOT include the 'tool_requests' field this time.**\n\n**Ensure nothing precedes or follows the JSON.**{message_length_guidance}" # Removed tool_requests from schema example here
+                    "content": f"Okay, the requested tools have been executed. Here are the results. Now, generate the final user-facing response based on these results and the previous conversation context. **CRITICAL: Your response MUST be ONLY the raw JSON object matching the standard schema (should_respond, content, react_with_emoji). Do NOT include the 'tool_requests' field this time.**\n\n**Ensure nothing precedes or follows the JSON.**{message_length_guidance}"
                 })
 
-                # Update the payload for the second call (remove tools parameter)
+                # Update the payload for the second call
                 follow_up_payload = {
-                    "model": model or self.default_model, # Use the same model unless fallback was triggered
+                    "model": model or self.default_model,
                     "messages": messages_for_follow_up,
                     "temperature": 0.75,
                     "max_tokens": 10000,
@@ -3170,296 +3189,42 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                 final_response_text = follow_up_ai_message.get("content")
 
                 # --- Parse the FINAL response after tool use ---
-                response_data = None # Reset response_data
-                if final_response_text is not None:
-                    try:
-                        # Attempt 1: Parse whole string
-                        response_data = json.loads(final_response_text)
-                        print("Successfully parsed final response after tool use.")
-                        self.needs_json_reminder = False
-                    except json.JSONDecodeError:
-                        print("Final response after tool use is not valid JSON. Attempting regex extraction...")
-                        # Attempt 2: Extract JSON object
-                        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```|(\{.*\})', final_response_text, re.DOTALL)
-                        if json_match:
-                            json_str = json_match.group(1) or json_match.group(2)
-                            if json_str:
-                                try:
-                                    response_data = json.loads(json_str)
-                                    print("Successfully extracted and parsed final JSON after tool use.")
-                                    self.needs_json_reminder = False
-                                except json.JSONDecodeError as e:
-                                    print(f"Regex found potential JSON in final response, but parsing failed: {e}")
-                                    response_data = None
-                            else:
-                                print("Regex matched in final response, but failed to capture content.")
-                                response_data = None
-                        else:
-                            print("Could not extract JSON from final response using regex.")
-                            response_data = None
+                final_parsed_data = self._parse_ai_json_response(final_response_text, "final response after tools")
 
-                        # If parsing/extraction failed after tool use
-                        if response_data is None:
-                            print("Could not parse or extract JSON from final response after tool use. Setting reminder flag.")
-                            self.needs_json_reminder = True
-                            # Fallback: Use a generic message indicating tool use but failed final generation
-                            response_data = {
-                                "should_respond": True, "content": "...",
-                                "react_with_emoji": "❓",
-                                "note": "Fallback response after tool use (failed final JSON generation)"
-                            }
-                            print(f"Fallback response generated after tool use failure: {response_data}")
-                else:
-                    # Handle case where final response text was None after tool use
-                    print("Warning: Final AI response content after tool use was None.")
-                    response_data = {"should_respond": False, "content": None, "react_with_emoji": None, "note": "Final response content after tool use was None"}
-
-            # --- Process Final Parsed/Fallback Data ---
-            # (This part remains largely the same, operating on the final response_data)
-            if response_data and isinstance(response_data, dict):
-                # Ensure default keys exist
-                response_data.setdefault("should_respond", False)
-                response_data.setdefault("content", None)
-                response_data.setdefault("react_with_emoji", None)
-                # Ensure tool_requests is NOT in the final data sent back
-                response_data.pop("tool_requests", None)
-
-                # --- Cache Bot Response ---
-                if response_data.get("should_respond") and response_data.get("content"):
-                    self.bot_last_spoke[channel_id] = time.time()
-                    bot_response_cache_entry = {
-                        "id": f"bot_{message.id}", # Use original message ID for context
-                        "author": {"id": str(self.bot.user.id), "name": self.bot.user.name, "display_name": self.bot.user.display_name, "bot": True},
-                        "content": response_data.get("content", ""), "created_at": datetime.datetime.now().isoformat(),
-                        "attachments": [], "embeds": False, "mentions": [],
-                        "replied_to_message_id": str(message.id) # Indicate it's a reply to the trigger message
-                    }
-                    self.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
-                    self.message_cache['global_recent'].append(bot_response_cache_entry)
-                    self.message_cache['replied_to'][channel_id].append(bot_response_cache_entry)
-                # --- End Cache Bot Response ---
-
-                return response_data
+                if final_parsed_data is None:
+                    print("Warning: Failed to parse final AI response after tool use. Setting reminder.")
+                    self.needs_json_reminder = True
+                    # We still return the initial response, but final_response will be None
+                    # The on_message handler will see final_response is None.
             else:
-                # Handle case where response_data is None or not a dict after all processing
-                print("Warning: Final response_data is None or invalid after all processing.")
-                if self.bot.user.mentioned_in(message) or replied_to_bot:
-                    return {
-                        "should_respond": True, "content": "...", "react_with_emoji": "❓",
-                        "note": "Fallback due to inability to parse or generate final response"
-                    }
-                else:
-                    return {"should_respond": False, "content": None, "react_with_emoji": None, "note": "No response generated (final processing failed)"}
+                # No tools requested, the initial response is the only one.
+                final_parsed_data = None # Explicitly set to None
 
-        except Exception as e: # Catch broader errors including initial API call failures, parsing issues, tool execution, etc.
+            # --- Return the structured result ---
+            # Remove tool_requests from the initial data before returning, as it's handled internally
+            if initial_parsed_data:
+                initial_parsed_data.pop("tool_requests", None)
+
+            return {
+                "initial_response": initial_parsed_data,
+                "final_response": final_parsed_data,
+                "error": None # No critical error occurred in the main flow
+            }
+
+        except Exception as e: # Catch broader errors during the process
             error_message = f"Error in get_ai_response main loop for message {message.id}: {str(e)}"
             print(error_message)
             import traceback
-            traceback.print_exc() # Log full traceback
-
-            # Fallback for mentions if a major error occurred during the process
-            if self.bot.user.mentioned_in(message) or replied_to_bot:
-                return {
-                    "should_respond": True, "content": "...", # Placeholder for error
-                    "react_with_emoji": "❓",
-                    "note": f"Fallback response due to error: {error_message}"
-                }
-            else:
-                # If not mentioned and error occurred, don't respond
-                return {"should_respond": False, "content": None, "react_with_emoji": None, "error": error_message}
+            traceback.print_exc()
+            # Return error structure
+            return {"initial_response": None, "final_response": None, "error": error_message}
 
 
-    # --- Helper Methods for get_ai_response (II.5 Refactoring) --- # Note: This comment seems misplaced now
-
-    async def _build_dynamic_system_prompt(self, message: discord.Message) -> str:
-        """Builds the system prompt string with dynamic context."""
-        channel_id = message.channel.id
-        user_id = message.author.id
-
-        system_context_parts = [self.system_prompt] # Start with base prompt
-
-        # Add current time
-        now = datetime.datetime.now(datetime.timezone.utc)
-        time_str = now.strftime("%Y-%m-%d %H:%M:%S %Z")
-        day_str = now.strftime("%A")
-        system_context_parts.append(f"\nCurrent time: {time_str} ({day_str}).")
-
-        # Add current mood (I.1)
-        # Check if mood needs updating
-        if time.time() - self.last_mood_change > self.mood_change_interval:
-            # Consider conversation sentiment when updating mood
-            channel_sentiment = self.conversation_sentiment[channel_id]
-            sentiment = channel_sentiment["overall"]
-            intensity = channel_sentiment["intensity"]
-
-            # Adjust mood options based on conversation sentiment
-            if sentiment == "positive" and intensity > 0.7:
-                mood_pool = ["excited", "enthusiastic", "playful", "creative", "wholesome"]
-            elif sentiment == "positive":
-                mood_pool = ["chill", "curious", "slightly hyper", "mischievous", "sassy", "playful"]
-            elif sentiment == "negative" and intensity > 0.7:
-                mood_pool = ["tired", "a bit bored", "skeptical", "sarcastic"]
-            elif sentiment == "negative":
-                mood_pool = ["tired", "a bit bored", "confused", "nostalgic", "distracted"]
-            else:
-                mood_pool = self.mood_options  # Use all options for neutral sentiment
-
-            self.current_mood = random.choice(mood_pool)
-            self.last_mood_change = time.time()
-            print(f"Gurt mood changed to: {self.current_mood} (influenced by {sentiment} conversation)")
-        system_context_parts.append(f"Your current mood is: {self.current_mood}. Let this subtly influence your tone and reactions.")
-
-        # Add channel topic (with caching)
-        channel_topic = None
-        cached_topic = self.channel_topics_cache.get(channel_id)
-        if cached_topic and time.time() - cached_topic["timestamp"] < self.channel_topic_cache_ttl:
-            channel_topic = cached_topic["topic"]
-        else:
-            try:
-                # Use the tool method directly for consistency
-                channel_info_result = await self.get_channel_info(str(channel_id))
-                if not channel_info_result.get("error"):
-                    channel_topic = channel_info_result.get("topic")
-                    # Cache even if topic is None to avoid refetching immediately
-                    self.channel_topics_cache[channel_id] = {"topic": channel_topic, "timestamp": time.time()}
-            except Exception as e:
-                print(f"Error fetching channel topic for {channel_id}: {e}")
-        if channel_topic:
-            system_context_parts.append(f"Current channel topic: {channel_topic}")
-
-        # Add conversation summary (II.1 enhancement)
-        # Check cache first
-        cached_summary = self.conversation_summaries.get(channel_id)
-        # Potentially add a TTL check for summaries too if needed
-        if cached_summary and not cached_summary.startswith("Error"):
-             system_context_parts.append(f"Recent conversation summary: {cached_summary}")
-        # Maybe trigger summary generation if none exists? Or rely on the tool call if AI needs it.
-
-        # Add user interaction count hint
-        interaction_count = self.user_relationships.get(user_id, {}).get(self.bot.user.id, 0)
-        if interaction_count > 0:
-             relationship_hint = "a few times" if interaction_count <= 5 else "quite a bit" if interaction_count <= 20 else "a lot"
-             system_context_parts.append(f"You've interacted with {message.author.display_name} {relationship_hint} recently ({interaction_count} times).")
-
-        # Add user facts (I.5)
-        try:
-            user_facts_data = await self._load_user_facts()
-            user_facts = user_facts_data.get(str(user_id), [])
-            if user_facts:
-                facts_str = "; ".join(user_facts)
-                system_context_parts.append(f"Remember about {message.author.display_name}: {facts_str}")
-        except Exception as e:
-            print(f"Error loading user facts for prompt injection: {e}")
-
-        return "\n".join(system_context_parts)
-
-    def _gather_conversation_context(self, channel_id: int, current_message_id: int) -> List[Dict[str, str]]:
-        """Gathers and formats conversation history from cache for API context."""
-        context_api_messages = []
-        if channel_id in self.message_cache['by_channel']:
-            # Get the last N messages, excluding the current one if it's already cached
-            cached = list(self.message_cache['by_channel'][channel_id])
-            # Ensure the current message isn't duplicated if caching happened before this call
-            if cached and cached[-1]['id'] == str(current_message_id):
-                cached = cached[:-1]
-            context_messages_data = cached[-self.context_window_size:] # Use context_window_size
-
-            # Format context messages for the API
-            for msg_data in context_messages_data:
-                role = "assistant" if msg_data['author']['id'] == str(self.bot.user.id) else "user"
-                # Simplified content for context to save tokens
-                content = f"{msg_data['author']['display_name']}: {msg_data['content']}"
-                context_api_messages.append({"role": role, "content": content})
-        return context_api_messages
-
-    # --- API Call Helper (II.5) ---
-    async def _call_llm_api_with_retry(self, payload: Dict[str, Any], headers: Dict[str, str], timeout: int, request_desc: str) -> Dict[str, Any]:
-        """
-        Calls the OpenRouter API with retry logic for specific errors.
-
-        Args:
-            payload: The JSON payload for the API request.
-            headers: The request headers.
-            timeout: Request timeout in seconds.
-            request_desc: A description of the request for logging purposes.
-
-        Returns:
-            The JSON response data from the API.
-
-        Raises:
-            Exception: If the API call fails after all retry attempts or encounters a non-retryable error.
-        """
-        last_exception = None
-        for attempt in range(self.api_retry_attempts):
-            try:
-                print(f"Sending API request for {request_desc} (Attempt {attempt + 1}/{self.api_retry_attempts})...")
-                async with self.session.post(
-                    self.api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=timeout
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        # Basic format check
-                        if "choices" not in data or not data["choices"] or "message" not in data["choices"][0]:
-                            error_msg = f"Unexpected API response format for {request_desc}: {json.dumps(data)}"
-                            print(error_msg)
-                            last_exception = ValueError(error_msg) # Treat as non-retryable format error
-                            break # Exit retry loop
-                        print(f"API request successful for {request_desc}.")
-                        return data # Success
-
-                    elif response.status >= 500: # Retry on server errors
-                        error_text = await response.text()
-                        error_msg = f"API server error for {request_desc} (Status {response.status}): {error_text[:100]}"
-                        print(f"{error_msg} (Attempt {attempt + 1})")
-                        last_exception = Exception(error_msg)
-                        if attempt < self.api_retry_attempts - 1:
-                            await asyncio.sleep(self.api_retry_delay * (attempt + 1))
-                            continue # Go to next attempt
-                        else:
-                            break # Max retries reached
-                    else: # Non-retryable client error (4xx) or other issue
-                        error_text = await response.text()
-                        error_msg = f"API client error for {request_desc} (Status {response.status}): {error_text[:200]}"
-                        print(error_msg)
-                        last_exception = Exception(error_msg)
-                        break # Don't retry client errors
-
-            except asyncio.TimeoutError:
-                error_msg = f"Request timed out for {request_desc} (Attempt {attempt + 1})"
-                print(error_msg)
-                last_exception = asyncio.TimeoutError(error_msg)
-                if attempt < self.api_retry_attempts - 1:
-                    await asyncio.sleep(self.api_retry_delay * (attempt + 1))
-                    continue # Go to next attempt
-                else:
-                    break # Max retries reached
-            except Exception as e:
-                error_msg = f"Error during API call for {request_desc} (Attempt {attempt + 1}): {str(e)}"
-                print(error_msg)
-                last_exception = e
-                # Decide if this exception is retryable (e.g., network errors)
-                if attempt < self.api_retry_attempts - 1:
-                     # Check for specific retryable exceptions if needed
-                     await asyncio.sleep(self.api_retry_delay * (attempt + 1))
-                     continue # Go to next attempt
-                else:
-                     # Log traceback on final attempt failure
-                     # import traceback
-                     # traceback.print_exc()
-                     break # Max retries reached
-
-        # This block executes if the loop completes without returning (all attempts failed)
-        # or if it breaks due to a non-retryable error.
-        if last_exception is not None:
-            # An exception was recorded during the attempts. Raise it.
-            raise last_exception
-        else:
-            # The loop finished all attempts, but no specific exception was stored.
-            # This indicates failure after all retries without a clear error cause being caught.
-            raise Exception(f"API request failed for {request_desc} after {self.api_retry_attempts} attempts. No specific exception was captured.")
+    # --- REMOVED DUPLICATE HELPER METHODS ---
+    # The following methods were duplicated and are removed here:
+    # _build_dynamic_system_prompt
+    # _gather_conversation_context
+    # _call_llm_api_with_retry
 
     # Note: _extract_json_from_text and _cleanup_non_json_text were removed as JSON parsing is now handled differently within get_ai_response.
 
@@ -4446,148 +4211,125 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             else:
                 # Call the standard function for reactive responses
                 print(f"Calling get_ai_response for message {message.id}")
-                response_data = await self.get_ai_response(message)
+                response_bundle = await self.get_ai_response(message) # Renamed variable
 
+            # --- Handle AI Response Bundle ---
+            initial_response = response_bundle.get("initial_response")
+            final_response = response_bundle.get("final_response")
+            error_msg = response_bundle.get("error")
+            fallback_initial = response_bundle.get("fallback_initial") # Check for fallback from initial parse failure
 
-            # Check if there was an error in the API call or if response_data is None
-            if response_data is None or "error" in response_data:
-                error_msg = response_data.get("error", "Unknown error generating response") if response_data else "No response data generated"
-                print(f"Error in AI response: {error_msg}")
-                print(f"Error in AI response: {response_data['error']}")
-
-                # If the bot was directly mentioned but there was an API error,
-                # send a simple response so the user isn't left hanging
-                if bot_mentioned:
+            # Handle critical errors first
+            if error_msg:
+                print(f"Critical Error from get_ai_response: {error_msg}")
+                # Use fallback_initial if available and bot was mentioned
+                if fallback_initial and bot_mentioned:
+                    initial_response = fallback_initial # Treat fallback as the initial response
+                # Otherwise, send generic error if mentioned
+                elif bot_mentioned:
                     await message.channel.send(random.choice([
                         "Sorry, I'm having trouble thinking right now...",
                         "Hmm, my brain is foggy at the moment.",
                         "Give me a sec, I'm a bit confused right now.",
                         "*confused gurting*"
                     ]))
-                return
+                return # Stop processing on critical error
 
-            # --- Handle AI Response ---
-            reacted = False
-            sent_message = False
+            # --- Process Initial Response (if exists) ---
+            initial_reacted = False # Track if initial reaction happened
+            if initial_response and isinstance(initial_response, dict):
+                sent_initial = False
 
-            # 1. Handle Reaction
-            emoji_to_react = response_data.get("react_with_emoji")
-            if emoji_to_react and isinstance(emoji_to_react, str):
-                try:
-                    # Basic validation: check length and avoid custom emoji syntax for simplicity
-                    if 1 <= len(emoji_to_react) <= 4 and not re.match(r'<a?:.+?:\d+>', emoji_to_react):
-                        await message.add_reaction(emoji_to_react)
-                        reacted = True
-                        print(f"Bot reacted to message {message.id} with {emoji_to_react}")
-                    else:
-                        print(f"Invalid emoji format received: {emoji_to_react}")
-                except discord.HTTPException as e:
-                    print(f"Error adding reaction '{emoji_to_react}': {e.status} {e.text}")
-                except Exception as e:
-                    print(f"Generic error adding reaction '{emoji_to_react}': {e}")
-
-            # 2. Handle Text Response
-            if response_data.get("should_respond", False) and response_data.get("content"):
-                response_text = response_data["content"]
-
-                # Check if the response is too long
-                if len(response_text) > 1900:
-                    # Create a text file with the content
-                    filepath = f'gurt_response_{message.id}.txt' # Use message ID for uniqueness
+                # 1a. Handle Initial Reaction
+                emoji_to_react_initial = initial_response.get("react_with_emoji")
+                if emoji_to_react_initial and isinstance(emoji_to_react_initial, str):
                     try:
-                        with open(filepath, 'w', encoding='utf-8') as f:
-                            f.write(response_text)
-                        # Send the file instead
-                        await message.channel.send(
-                            "The response was too long. Here's the content as a file:",
-                            file=discord.File(filepath)
-                        )
-                        sent_message = True
-                    except Exception as file_e:
-                         print(f"Error writing/sending long response file: {file_e}")
-                    finally:
-                        # Clean up the file
-                        try:
-                            os.remove(filepath)
-                        except OSError as os_e:
-                             print(f"Error removing temp file {filepath}: {os_e}")
-                else:
-                    # Show typing indicator with advanced human-like typing simulation
-                    async with message.channel.typing():
-                        # Determine if we should simulate realistic typing with potential typos
-                        simulate_realistic_typing = len(response_text) < 200 and random.random() < 0.4
-
-                        if simulate_realistic_typing:
-                            # We'll simulate typing character by character with realistic timing
-                            await self._simulate_human_typing(message.channel, response_text)
+                        if 1 <= len(emoji_to_react_initial) <= 4 and not re.match(r'<a?:.+?:\d+>', emoji_to_react_initial):
+                            await message.add_reaction(emoji_to_react_initial)
+                            initial_reacted = True # Mark initial reaction
+                            print(f"Bot reacted (initial) to message {message.id} with {emoji_to_react_initial}")
                         else:
-                            # For longer messages, use the simpler timing model
-                            # Enhanced human-like typing delay calculation
-                            # Base typing speed varies by personality traits
-                            base_delay = 0.2 * (1.0 - self.personality_traits["randomness"]) # Faster for more random personalities
+                            print(f"Invalid initial emoji format: {emoji_to_react_initial}")
+                    except Exception as e:
+                        print(f"Error adding initial reaction '{emoji_to_react_initial}': {e}")
 
-                            # Calculate typing time based on message length and typing speed
-                            # Average human typing speed is ~40-60 WPM (5-7 chars per second)
-                            chars_per_second = random.uniform(4.0, 8.0) # Randomize typing speed
-
-                            # Calculate base typing time
-                            typing_time = len(response_text) / chars_per_second
-
-                            # Apply personality modifiers
-                            if self.current_mood in ["excited", "slightly hyper"]:
-                                typing_time *= 0.8  # Type faster when excited
-                            elif self.current_mood in ["tired", "a bit bored"]:
-                                typing_time *= 1.2  # Type slower when tired
-
-                            # Add human-like pauses and variations
-                            # Occasionally pause as if thinking
-                            if random.random() < 0.15:  # 15% chance of a thinking pause
-                                thinking_pause = random.uniform(1.0, 3.0)
-                                typing_time += thinking_pause
-
-                            # Sometimes type very quickly (as if copy-pasting or had response ready)
-                            if random.random() < 0.08:  # 8% chance of very quick response
-                                typing_time = random.uniform(0.5, 1.5)
-
-                            # Sometimes take extra time (as if distracted)
-                            if random.random() < 0.05:  # 5% chance of distraction
-                                typing_time += random.uniform(2.0, 5.0)
-
-                            # Clamp final typing time to reasonable bounds
-                            typing_time = min(max(typing_time, 0.8), 8.0)  # Between 0.8 and 8 seconds
-
-                            # Wait for the calculated time
-                            await asyncio.sleep(typing_time)
-
-                    # Decide if we should add a human-like mistake and correction
-                    should_make_mistake = random.random() < 0.15 * self.personality_traits["randomness"]
-
-                    if should_make_mistake and len(response_text) > 10:
-                        # Create a version with a mistake
-                        mistake_text, correction = self._create_human_like_mistake(response_text)
-
-                        # Send the mistake first
-                        mistake_msg = await message.channel.send(mistake_text)
-                        sent_message = True
-
-                        # Wait a moment as if noticing the mistake
-                        notice_delay = random.uniform(1.5, 4.0)
-                        await asyncio.sleep(notice_delay)
-
-                        # Send the correction
-                        if correction:
-                            await message.channel.send(correction)
+                # 1b. Handle Initial Text Response
+                if initial_response.get("should_respond") and initial_response.get("content"):
+                    response_text_initial = initial_response["content"]
+                    if len(response_text_initial) > 1900:
+                        # Handle long initial message (send as file)
+                        filepath = f'gurt_initial_response_{message.id}.txt'
+                        try:
+                            with open(filepath, 'w', encoding='utf-8') as f: f.write(response_text_initial)
+                            await message.channel.send("Initial response too long:", file=discord.File(filepath))
+                            sent_initial = True
+                        except Exception as file_e: print(f"Error writing/sending long initial response file: {file_e}")
+                        finally:
+                            try: os.remove(filepath)
+                            except OSError as os_e: print(f"Error removing temp file {filepath}: {os_e}")
                     else:
-                        # Send the normal response
-                        await message.channel.send(response_text)
-                        sent_message = True
+                        # Send initial message normally (with typing simulation)
+                        async with message.channel.typing():
+                            await self._simulate_human_typing(message.channel, response_text_initial) # Use simulation
+                        await message.channel.send(response_text_initial)
+                        sent_initial = True
 
-            # Log if nothing happened but should_respond was true (e.g., empty content)
-            if response_data.get("should_respond") and not sent_message and not reacted:
-                print(f"Warning: AI decided to respond but provided no valid content or reaction. Data: {response_data}")
+                # Log if initial response was intended but failed
+                if initial_response.get("should_respond") and not sent_initial and not initial_reacted:
+                    print(f"Warning: Initial AI response intended but no valid content/reaction. Data: {initial_response}")
+
+            # --- Process Final Response (if exists, e.g., after tools) ---
+            if final_response and isinstance(final_response, dict):
+                reacted_final = False
+                sent_final = False
+
+                # 2a. Handle Final Reaction (React to original message)
+                emoji_to_react_final = final_response.get("react_with_emoji")
+                # Avoid duplicate reactions if initial already reacted with the same emoji
+                if emoji_to_react_final and isinstance(emoji_to_react_final, str) and \
+                   (not initial_reacted or emoji_to_react_final != initial_response.get("react_with_emoji")):
+                    try:
+                        if 1 <= len(emoji_to_react_final) <= 4 and not re.match(r'<a?:.+?:\d+>', emoji_to_react_final):
+                            await message.add_reaction(emoji_to_react_final)
+                            reacted_final = True
+                            print(f"Bot reacted (final) to message {message.id} with {emoji_to_react_final}")
+                        else:
+                            print(f"Invalid final emoji format: {emoji_to_react_final}")
+                    except Exception as e:
+                        print(f"Error adding final reaction '{emoji_to_react_final}': {e}")
+
+                # 2b. Handle Final Text Response
+                if final_response.get("should_respond") and final_response.get("content"):
+                    response_text_final = final_response["content"]
+                    if len(response_text_final) > 1900:
+                        # Handle long final message
+                        filepath = f'gurt_final_response_{message.id}.txt'
+                        try:
+                            with open(filepath, 'w', encoding='utf-8') as f: f.write(response_text_final)
+                            await message.channel.send("Follow-up response too long:", file=discord.File(filepath))
+                            sent_final = True
+                        except Exception as file_e: print(f"Error writing/sending long final response file: {file_e}")
+                        finally:
+                            try: os.remove(filepath)
+                            except OSError as os_e: print(f"Error removing temp file {filepath}: {os_e}")
+                    else:
+                        # Send final message normally (with typing simulation)
+                        async with message.channel.typing():
+                            await self._simulate_human_typing(message.channel, response_text_final) # Use simulation
+                        await message.channel.send(response_text_final)
+                        sent_final = True
+
+                # Log if final response was intended but failed
+                if final_response.get("should_respond") and not sent_final and not reacted_final:
+                     print(f"Warning: Final AI response intended but no valid content/reaction. Data: {final_response}")
+
+            # --- Fallback if NO valid response was generated at all ---
+            # This case should be rare now, only if both initial and final fail AND no critical error occurred
+            if not initial_response and not final_response and not error_msg:
+                print(f"Warning: No valid initial or final response generated for message {message.id}, and no critical error reported.")
 
         except Exception as e:
-            print(f"Exception in on_message processing AI response: {str(e)}")
+            print(f"Exception in on_message main processing block: {str(e)}")
             import traceback
             traceback.print_exc()
 
