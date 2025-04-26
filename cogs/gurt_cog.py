@@ -4133,9 +4133,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         # --- Decide if we should even CONSIDER responding (call the AI) ---
         should_consider_responding = False
         consideration_reason = "Default"
-
-        # Initialize proactive_trigger_met variable
-        proactive_trigger_met = False
+        proactive_trigger_met = False  # Initialize proactive_trigger_met variable before it's used
 
         # Always consider if mentioned, replied to, or name used directly
         if bot_mentioned or replied_to_bot or gurt_in_message:

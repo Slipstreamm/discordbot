@@ -29,11 +29,7 @@ class ProfileUpdaterCog(commands.Cog):
     async def cog_load(self):
         """Initialize resources when the cog is loaded."""
         self.session = aiohttp.ClientSession()
-        # Wait until the bot is ready to get other cogs
-        await self.bot.wait_until_ready()
-        self.gurt_cog = self.bot.get_cog('GurtCog')
-        if not self.gurt_cog:
-            print("ERROR: ProfileUpdaterCog could not find GurtCog. AI features will not work.")
+        # Removed wait_until_ready and gurt_cog retrieval from here
         if not self.bot_token:
              print("WARNING: BOT_TOKEN environment variable not set. Bio updates will fail.")
         print(f"ProfileUpdaterCog loaded. Update interval: {self.update_interval_hours} hours.")
@@ -58,9 +54,14 @@ class ProfileUpdaterCog(commands.Cog):
 
     @profile_update_task.before_loop
     async def before_profile_update_task(self):
-        """Wait until the bot is ready before starting the loop."""
+        """Wait until the bot is ready and get GurtCog before starting the loop."""
         await self.bot.wait_until_ready()
-        print("ProfileUpdaterTask: Bot ready, starting loop.")
+        print("ProfileUpdaterTask: Bot ready, attempting to get GurtCog...")
+        self.gurt_cog = self.bot.get_cog('GurtCog')
+        if not self.gurt_cog:
+            print("ERROR: ProfileUpdaterTask could not find GurtCog after bot is ready. AI features will not work.")
+        else:
+            print("ProfileUpdaterTask: GurtCog found. Starting loop.")
 
     async def perform_update_cycle(self):
         """Performs a single profile update check and potential update."""
