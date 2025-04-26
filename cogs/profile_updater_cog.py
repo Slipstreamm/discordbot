@@ -258,7 +258,7 @@ Current State:
                                     "description": "The activity text, or null."
                                 }
                             },
-                            # No 'required' here, allows sending {"type": null, "text": null} to clear activity
+                            "required": ["type", "text"], # Add required fields as per error message
                             "additionalProperties": False # Keep this for the nested activity object
                         }
                     },
