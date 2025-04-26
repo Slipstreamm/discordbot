@@ -244,32 +244,31 @@ Current State:
                             "description": "A theme for role selection, e.g., 'cool color roles', 'anime fan roles', or null"
                         },
                         "new_activity": {
+                            "description": "The new activity object, or null if no change.",
                             "anyOf": [
                                 {
                                     "type": "object",
                                     "properties": {
                                         "type": {
-                                            "anyOf": [{"type": "string", "enum": ["playing", "watching", "listening", "competing"]}, {"type": "null"}],
-                                            "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null"
+                                            "type": "string",
+                                            "enum": ["playing", "watching", "listening", "competing"],
+                                            "description": "Activity type: 'playing', 'watching', 'listening', or 'competing'."
                                         },
                                         "text": {
-                                            "anyOf": [{"type": "string"}, {"type": "null"}],
-                                            "description": "The activity text, or null"
+                                            "type": "string",
+                                            "description": "The activity text."
                                         }
                                     },
-                                    # If the object is provided, both type and text should ideally be present,
-                                    # but allow nulls within for flexibility. The handling logic checks this.
-                                    # "required": ["type", "text"] # Making these required might be too strict if AI wants to clear activity
+                                    "required": ["type", "text"], # If object is provided, type and text are required
+                                    "additionalProperties": False
                                 },
-                                {"type": "null"}
-                            ],
-                            "description": "The new activity object, or null to clear activity."
-                            # If new_activity is not null, both type and text should ideally be present,
-                            # but allow nulls within the object for flexibility if AI omits one.
-                            # The handling logic in _update_activity already checks for nulls.
+                                {
+                                    "type": "null"
+                                }
+                            ]
                         }
                     },
-                    # No required fields within 'updates' itself, as any part can be null
+                    # No required fields within 'updates' itself, as any part can be null/omitted by AI
                 }
             },
             "required": ["should_update", "reasoning", "updates"],
