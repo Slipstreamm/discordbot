@@ -276,7 +276,19 @@ def setup_commands(cog: 'GurtCog'):
 
     command_functions.append(gurtsync)
 
-    print(f"Gurt commands setup in cog: {[func.__name__ for func in command_functions]}")
+    # Get command names safely - Command objects don't have __name__ attribute
+    command_names = []
+    for func in command_functions:
+        # For app commands, use the name attribute directly
+        if hasattr(func, "name"):
+            command_names.append(func.name)
+        # For regular functions, use __name__
+        elif hasattr(func, "__name__"):
+            command_names.append(func.__name__)
+        else:
+            command_names.append(str(func))
+
+    print(f"Gurt commands setup in cog: {command_names}")
 
     # Return the command functions for proper registration
     return command_functions

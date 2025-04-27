@@ -132,8 +132,19 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
         # --- Setup Commands and Listeners ---
         # Add commands defined in commands.py
         self.command_functions = setup_commands(self)
-        # Store command functions for reference
-        self.registered_commands = [func.__name__ for func in self.command_functions]
+
+        # Store command names for reference - safely handle Command objects
+        self.registered_commands = []
+        for func in self.command_functions:
+            # For app commands, use the name attribute directly
+            if hasattr(func, "name"):
+                self.registered_commands.append(func.name)
+            # For regular functions, use __name__
+            elif hasattr(func, "__name__"):
+                self.registered_commands.append(func.__name__)
+            else:
+                self.registered_commands.append(str(func))
+
         # Add listeners defined in listeners.py
         # Note: Listeners need to be added to the bot instance, not the cog directly in this pattern.
         # We'll add them in cog_load or the main setup function.
