@@ -190,19 +190,9 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
 
         print("GurtCog: Listeners added.")
 
-        # Sync commands with Discord
-        try:
-            print("GurtCog: Syncing commands with Discord...")
-            synced = await self.bot.tree.sync()
-            print(f"GurtCog: Synced {len(synced)} command(s)")
-
-            # List the synced commands
-            gurt_commands = [cmd.name for cmd in self.bot.tree.get_commands() if cmd.name.startswith("gurt")]
-            print(f"GurtCog: Available Gurt commands: {', '.join(gurt_commands)}")
-        except Exception as e:
-            print(f"GurtCog: Failed to sync commands: {e}")
-            import traceback
-            traceback.print_exc()
+        # We'll sync commands in the on_ready event instead of here
+        # This ensures the bot's application_id is properly set before syncing
+        print("GurtCog: Commands will be synced when the bot is ready.")
 
         # Start background task
         if self.background_task is None or self.background_task.done():

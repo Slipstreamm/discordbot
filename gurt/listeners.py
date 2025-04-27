@@ -5,7 +5,7 @@ import asyncio
 import time
 import re
 import os # Added for file handling in error case
-from typing import TYPE_CHECKING, Union, Dict, Any
+from typing import TYPE_CHECKING, Union, Dict, Any, Optional
 
 # Relative imports
 # Assuming api, utils, analysis functions are defined and imported correctly later
@@ -25,6 +25,20 @@ async def on_ready_listener(cog: 'GurtCog'):
     """Listener function for on_ready."""
     print(f'Gurt Bot is ready! Logged in as {cog.bot.user.name} ({cog.bot.user.id})')
     print('------')
+
+    # Now that the bot is ready, we can sync commands with Discord
+    try:
+        print("GurtCog: Syncing commands with Discord...")
+        synced = await cog.bot.tree.sync()
+        print(f"GurtCog: Synced {len(synced)} command(s)")
+
+        # List the synced commands
+        gurt_commands = [cmd.name for cmd in cog.bot.tree.get_commands() if cmd.name.startswith("gurt")]
+        print(f"GurtCog: Available Gurt commands: {', '.join(gurt_commands)}")
+    except Exception as e:
+        print(f"GurtCog: Failed to sync commands: {e}")
+        import traceback
+        traceback.print_exc()
 
 async def on_message_listener(cog: 'GurtCog', message: discord.Message):
     """Listener function for on_message."""
