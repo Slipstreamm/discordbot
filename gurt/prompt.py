@@ -332,23 +332,47 @@ These traits should subtly influence your communication style without being expl
     except Exception as e:
         print(f"Error retrieving relationship score for prompt injection: {e}")
 
-    # Add user facts
+    # Add user facts (Combine semantic and recent)
     try:
-        user_facts = await cog.memory_manager.get_user_facts(str(user_id), context=message.content)
-        if user_facts:
-            facts_str = "; ".join(user_facts)
+        # Fetch semantically relevant facts based on message content
+        semantic_user_facts = await cog.memory_manager.get_user_facts(str(user_id), context=message.content)
+        # Fetch most recent facts directly from SQLite (respecting the limit set in MemoryManager)
+        recent_user_facts = await cog.memory_manager.get_user_facts(str(user_id)) # No context = SQLite fetch
+
+        # Combine and deduplicate, keeping order roughly (recent first, then semantic)
+        combined_user_facts_set = set(recent_user_facts)
+        combined_user_facts = recent_user_facts + [f for f in semantic_user_facts if f not in combined_user_facts_set]
+
+        # Limit the total number of facts included in the prompt
+        # Use the max_user_facts limit defined in the MemoryManager instance
+        max_facts_to_include = cog.memory_manager.max_user_facts
+        final_user_facts = combined_user_facts[:max_facts_to_include]
+
+        if final_user_facts:
+            facts_str = "; ".join(final_user_facts)
             system_context_parts.append(f"Relevant remembered facts about {message.author.display_name}: {facts_str}")
     except Exception as e:
-        print(f"Error retrieving relevant user facts for prompt injection: {e}")
+        print(f"Error retrieving combined user facts for prompt injection: {e}")
 
-    # Add relevant general facts
+    # Add relevant general facts (Combine semantic and recent)
     try:
-        general_facts = await cog.memory_manager.get_general_facts(context=message.content, limit=5)
-        if general_facts:
-            facts_str = "; ".join(general_facts)
+        # Fetch semantically relevant facts based on message content
+        semantic_general_facts = await cog.memory_manager.get_general_facts(context=message.content, limit=5)
+        # Fetch most recent facts directly from SQLite
+        recent_general_facts = await cog.memory_manager.get_general_facts(limit=5) # No context = SQLite fetch
+
+        # Combine and deduplicate
+        combined_general_facts_set = set(recent_general_facts)
+        combined_general_facts = recent_general_facts + [f for f in semantic_general_facts if f not in combined_general_facts_set]
+
+        # Limit the total number of facts included (e.g., to 10)
+        final_general_facts = combined_general_facts[:10]
+
+        if final_general_facts:
+            facts_str = "; ".join(final_general_facts)
             system_context_parts.append(f"Relevant general knowledge: {facts_str}")
     except Exception as e:
-         print(f"Error retrieving relevant general facts for prompt injection: {e}")
+         print(f"Error retrieving combined general facts for prompt injection: {e}")
 
     # Add Gurt's current interests
     try:
