@@ -48,6 +48,13 @@ MOOD_OPTIONS = [
     "nostalgic", "confused", "impressed", "skeptical", "enthusiastic",
     "distracted", "focused", "creative", "sarcastic", "wholesome"
 ]
+# Categorize moods for weighted selection
+MOOD_CATEGORIES = {
+    "positive": ["excited", "enthusiastic", "playful", "wholesome", "creative", "impressed"],
+    "negative": ["tired", "a bit bored", "sassy", "sarcastic", "skeptical", "dramatic", "distracted"],
+    "neutral": ["chill", "neutral", "curious", "philosophical", "focused", "confused", "nostalgic"],
+    "mischievous": ["mischievous"] # Special category for trait link
+}
 BASELINE_PERSONALITY = {
     "chattiness": 0.7, "emoji_usage": 0.5, "slang_level": 0.5, "randomness": 0.5,
     "verbosity": 0.4, "optimism": 0.5, "curiosity": 0.6, "sarcasm_level": 0.3,
