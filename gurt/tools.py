@@ -633,11 +633,12 @@ async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any
         exit_code = wait_result.get('StatusCode', -1)
 
         # Get logs after container finishes
-        stdout_bytes = await container.log(stdout=True, stderr=False)
-        stderr_bytes = await container.log(stdout=False, stderr=True)
+        # container.log() returns a list of strings when stream=False (default)
+        stdout_lines = await container.log(stdout=True, stderr=False)
+        stderr_lines = await container.log(stdout=False, stderr=True)
 
-        stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
-        stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
+        stdout = "".join(stdout_lines) if stdout_lines else ""
+        stderr = "".join(stderr_lines) if stderr_lines else ""
 
         max_len = 1000
         stdout_trunc = stdout[:max_len] + ('...' if len(stdout) > max_len else '')
