@@ -55,7 +55,8 @@ async def main():
     try:
         async with bot:
             # List of cogs to load
-            cogs = ["cogs.gurt_cog", "cogs.profile_updater_cog"]
+            # Updated path for the refactored GurtCog
+            cogs = ["discordbot.gurt.cog", "cogs.profile_updater_cog"]
             for cog in cogs:
                 try:
                     await bot.load_extension(cog)

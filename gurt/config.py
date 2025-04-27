@@ -1,0 +1,580 @@
+import os
+import random
+import json
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# --- API and Keys ---
+API_KEY = os.getenv("AI_API_KEY", "")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+OPENROUTER_API_URL = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions")
+PISTON_API_URL = os.getenv("PISTON_API_URL") # For run_python_code tool
+PISTON_API_KEY = os.getenv("PISTON_API_KEY") # Optional key for Piston
+
+# --- Model Configuration ---
+DEFAULT_MODEL = os.getenv("GURT_DEFAULT_MODEL", "google/gemini-2.5-pro-preview-03-25")
+FALLBACK_MODEL = os.getenv("GURT_FALLBACK_MODEL", "openai/gpt-4.1-nano")
+SAFETY_CHECK_MODEL = os.getenv("GURT_SAFETY_CHECK_MODEL", "openai/gpt-4.1-nano") # For terminal command safety
+
+# --- Database Paths ---
+DB_PATH = os.getenv("GURT_DB_PATH", "data/gurt_memory.db")
+CHROMA_PATH = os.getenv("GURT_CHROMA_PATH", "data/chroma_db")
+SEMANTIC_MODEL_NAME = os.getenv("GURT_SEMANTIC_MODEL", 'all-MiniLM-L6-v2')
+
+# --- Memory Manager Config ---
+MAX_USER_FACTS = 20 # TODO: Load from env?
+MAX_GENERAL_FACTS = 100 # TODO: Load from env?
+
+# --- Personality & Mood ---
+MOOD_OPTIONS = [
+    "chill", "neutral", "curious", "slightly hyper", "a bit bored", "mischievous",
+    "excited", "tired", "sassy", "philosophical", "playful", "dramatic",
+    "nostalgic", "confused", "impressed", "skeptical", "enthusiastic",
+    "distracted", "focused", "creative", "sarcastic", "wholesome"
+]
+BASELINE_PERSONALITY = {
+    "chattiness": 0.7, "emoji_usage": 0.5, "slang_level": 0.5, "randomness": 0.5,
+    "verbosity": 0.4, "optimism": 0.5, "curiosity": 0.6, "sarcasm_level": 0.3,
+    "patience": 0.4, "mischief": 0.5
+}
+BASELINE_INTERESTS = {
+    "kasane teto": 0.8, "vocaloids": 0.6, "gaming": 0.6, "anime": 0.5,
+    "tech": 0.6, "memes": 0.6, "gooning": 0.6
+}
+MOOD_CHANGE_INTERVAL_MIN = 1200 # 20 minutes
+MOOD_CHANGE_INTERVAL_MAX = 2400 # 40 minutes
+EVOLUTION_UPDATE_INTERVAL = 1800 # Evolve personality every 30 minutes
+
+# --- Context & Caching ---
+CHANNEL_TOPIC_CACHE_TTL = 600 # seconds (10 minutes)
+CONTEXT_WINDOW_SIZE = 200  # Number of messages to include in context
+CONTEXT_EXPIRY_TIME = 3600  # Time in seconds before context is considered stale (1 hour)
+MAX_CONTEXT_TOKENS = 8000  # Maximum number of tokens to include in context (Note: Not actively enforced yet)
+SUMMARY_CACHE_TTL = 900 # seconds (15 minutes) for conversation summary cache
+
+# --- API Call Settings ---
+API_TIMEOUT = 60 # seconds
+SUMMARY_API_TIMEOUT = 45 # seconds
+API_RETRY_ATTEMPTS = 1
+API_RETRY_DELAY = 1 # seconds
+
+# --- Proactive Engagement Config ---
+PROACTIVE_LULL_THRESHOLD = int(os.getenv("PROACTIVE_LULL_THRESHOLD", 180)) # 3 mins
+PROACTIVE_BOT_SILENCE_THRESHOLD = int(os.getenv("PROACTIVE_BOT_SILENCE_THRESHOLD", 600)) # 10 mins
+PROACTIVE_LULL_CHANCE = float(os.getenv("PROACTIVE_LULL_CHANCE", 0.3))
+PROACTIVE_TOPIC_RELEVANCE_THRESHOLD = float(os.getenv("PROACTIVE_TOPIC_RELEVANCE_THRESHOLD", 0.6))
+PROACTIVE_TOPIC_CHANCE = float(os.getenv("PROACTIVE_TOPIC_CHANCE", 0.4))
+PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD = int(os.getenv("PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD", 70))
+PROACTIVE_RELATIONSHIP_CHANCE = float(os.getenv("PROACTIVE_RELATIONSHIP_CHANCE", 0.2))
+
+# --- Interest Tracking Config ---
+INTEREST_UPDATE_INTERVAL = int(os.getenv("INTEREST_UPDATE_INTERVAL", 1800)) # 30 mins
+INTEREST_DECAY_INTERVAL_HOURS = int(os.getenv("INTEREST_DECAY_INTERVAL_HOURS", 24)) # Daily
+INTEREST_PARTICIPATION_BOOST = float(os.getenv("INTEREST_PARTICIPATION_BOOST", 0.05))
+INTEREST_POSITIVE_REACTION_BOOST = float(os.getenv("INTEREST_POSITIVE_REACTION_BOOST", 0.02))
+INTEREST_NEGATIVE_REACTION_PENALTY = float(os.getenv("INTEREST_NEGATIVE_REACTION_PENALTY", -0.01))
+INTEREST_FACT_BOOST = float(os.getenv("INTEREST_FACT_BOOST", 0.01))
+INTEREST_MIN_LEVEL_FOR_PROMPT = float(os.getenv("INTEREST_MIN_LEVEL_FOR_PROMPT", 0.3))
+INTEREST_MAX_FOR_PROMPT = int(os.getenv("INTEREST_MAX_FOR_PROMPT", 4))
+
+# --- Learning Config ---
+LEARNING_RATE = 0.05
+MAX_PATTERNS_PER_CHANNEL = 50
+LEARNING_UPDATE_INTERVAL = 3600 # Update learned patterns every hour
+
+# --- Topic Tracking Config ---
+TOPIC_UPDATE_INTERVAL = 300 # Update topics every 5 minutes
+TOPIC_RELEVANCE_DECAY = 0.2
+MAX_ACTIVE_TOPICS = 5
+
+# --- Sentiment Tracking Config ---
+SENTIMENT_UPDATE_INTERVAL = 300 # Update sentiment every 5 minutes
+SENTIMENT_DECAY_RATE = 0.1
+
+# --- Emotion Detection ---
+EMOTION_KEYWORDS = {
+    "joy": ["happy", "glad", "excited", "yay", "awesome", "love", "great", "amazing", "lol", "lmao", "haha"],
+    "sadness": ["sad", "upset", "depressed", "unhappy", "disappointed", "crying", "miss", "lonely", "sorry"],
+    "anger": ["angry", "mad", "hate", "furious", "annoyed", "frustrated", "pissed", "wtf", "fuck"],
+    "fear": ["afraid", "scared", "worried", "nervous", "anxious", "terrified", "yikes"],
+    "surprise": ["wow", "omg", "whoa", "what", "really", "seriously", "no way", "wtf"],
+    "disgust": ["gross", "ew", "eww", "disgusting", "nasty", "yuck"],
+    "confusion": ["confused", "idk", "what?", "huh", "hmm", "weird", "strange"]
+}
+EMOJI_SENTIMENT = {
+    "positive": ["😊", "😄", "😁", "😆", "😍", "🥰", "❤️", "💕", "👍", "🙌", "✨", "🔥", "💯", "🎉", "🌹"],
+    "negative": ["😢", "😭", "😞", "😔", "😟", "😠", "😡", "👎", "💔", "😤", "😒", "😩", "😫", "😰", "🥀"],
+    "neutral": ["😐", "🤔", "🙂", "🙄", "👀", "💭", "🤷", "😶", "🫠"]
+}
+
+# --- Docker Command Execution Config ---
+DOCKER_EXEC_IMAGE = os.getenv("DOCKER_EXEC_IMAGE", "alpine:latest")
+DOCKER_COMMAND_TIMEOUT = int(os.getenv("DOCKER_COMMAND_TIMEOUT", 10))
+DOCKER_CPU_LIMIT = os.getenv("DOCKER_CPU_LIMIT", "0.5")
+DOCKER_MEM_LIMIT = os.getenv("DOCKER_MEM_LIMIT", "64m")
+
+# --- Response Schema ---
+RESPONSE_SCHEMA = {
+    "name": "gurt_response",
+    "description": "The structured response from Gurt.",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "should_respond": {
+                "type": "boolean",
+                "description": "Whether the bot should send a text message in response."
+            },
+            "content": {
+                "type": "string",
+                "description": "The text content of the bot's response. Can be empty if only reacting."
+            },
+            "react_with_emoji": {
+                "type": ["string", "null"],
+                "description": "Optional: A standard Discord emoji to react with, or null if no reaction."
+            },
+            "tool_requests": {
+                "type": "array",
+                "description": "Optional: A list of tools the bot wants to execute. If present, 'content' should be a placeholder message.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The name of the tool to execute."
+                        },
+                        "arguments": {
+                            "type": "object",
+                            "description": "The arguments for the tool, as a JSON object."
+                        }
+                    },
+                    "required": ["name", "arguments"]
+                }
+            }
+        },
+        "required": ["should_respond", "content"]
+    }
+}
+
+# --- Tools Definition ---
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_recent_messages",
+            "description": "Get recent messages from a Discord channel",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_id": {
+                        "type": "string",
+                        "description": "The ID of the channel to get messages from. If not provided, uses the current channel."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "The maximum number of messages to retrieve (1-100)"
+                    }
+                },
+                "required": ["limit"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_user_messages",
+            "description": "Search for messages from a specific user",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The ID of the user to get messages from"
+                    },
+                    "channel_id": {
+                        "type": "string",
+                        "description": "The ID of the channel to search in. If not provided, searches in the current channel."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "The maximum number of messages to retrieve (1-100)"
+                    }
+                },
+                "required": ["user_id", "limit"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_messages_by_content",
+            "description": "Search for messages containing specific content",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search_term": {
+                        "type": "string",
+                        "description": "The text to search for in messages"
+                    },
+                    "channel_id": {
+                        "type": "string",
+                        "description": "The ID of the channel to search in. If not provided, searches in the current channel."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "The maximum number of messages to retrieve (1-100)"
+                    }
+                },
+                "required": ["search_term", "limit"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_channel_info",
+            "description": "Get information about a Discord channel",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_id": {
+                        "type": "string",
+                        "description": "The ID of the channel to get information about. If not provided, uses the current channel."
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_conversation_context",
+            "description": "Get the context of the current conversation",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_id": {
+                        "type": "string",
+                        "description": "The ID of the channel to get conversation context from. If not provided, uses the current channel."
+                    },
+                    "message_count": {
+                        "type": "integer",
+                        "description": "The number of messages to include in the context (5-50)"
+                    }
+                },
+                "required": ["message_count"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_thread_context",
+            "description": "Get the context of a thread conversation",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thread_id": {
+                        "type": "string",
+                        "description": "The ID of the thread to get context from"
+                    },
+                    "message_count": {
+                        "type": "integer",
+                        "description": "The number of messages to include in the context (5-50)"
+                    }
+                },
+                "required": ["thread_id", "message_count"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_user_interaction_history",
+            "description": "Get the history of interactions between users",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_id_1": {
+                        "type": "string",
+                        "description": "The ID of the first user"
+                    },
+                    "user_id_2": {
+                        "type": "string",
+                        "description": "The ID of the second user. If not provided, gets interactions between user_id_1 and the bot."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "The maximum number of interactions to retrieve (1-50)"
+                    }
+                },
+                "required": ["user_id_1", "limit"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_conversation_summary",
+            "description": "Get a summary of the recent conversation in a channel",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_id": {
+                        "type": "string",
+                        "description": "The ID of the channel to get the conversation summary from. If not provided, uses the current channel."
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_message_context",
+            "description": "Get the context around a specific message",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "description": "The ID of the message to get context for"
+                    },
+                    "before_count": {
+                        "type": "integer",
+                        "description": "The number of messages to include before the specified message (1-25)"
+                    },
+                    "after_count": {
+                        "type": "integer",
+                        "description": "The number of messages to include after the specified message (1-25)"
+                    }
+                },
+                "required": ["message_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web for information on a given topic or query. Use this to find current information, facts, or context about things mentioned in the chat.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query or topic to look up online."
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember_user_fact",
+            "description": "Store a specific fact or piece of information about a user for later recall. Use this when you learn something potentially relevant about a user (e.g., their preferences, current activity, mentioned interests).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The Discord ID of the user the fact is about."
+                    },
+                    "fact": {
+                        "type": "string",
+                        "description": "The specific fact to remember about the user (keep it concise)."
+                    }
+                },
+                "required": ["user_id", "fact"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_user_facts",
+            "description": "Retrieve previously stored facts or information about a specific user. Use this before responding to a user to potentially recall relevant details about them.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The Discord ID of the user whose facts you want to retrieve."
+                    }
+                },
+                "required": ["user_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember_general_fact",
+            "description": "Store a general fact or piece of information not specific to a user (e.g., server events, shared knowledge, recent game updates). Use this to remember context relevant to the community or ongoing discussions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {
+                        "type": "string",
+                        "description": "The general fact to remember (keep it concise)."
+                    }
+                },
+                "required": ["fact"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_general_facts",
+            "description": "Retrieve previously stored general facts or shared knowledge. Use this to recall context about the server, ongoing events, or general information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Optional: A keyword or phrase to search within the general facts. If omitted, returns recent general facts."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Optional: Maximum number of facts to return (default 10)."
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "timeout_user",
+            "description": "Timeout a user in the current server for a specified duration. Use this playfully or when someone says something you (Gurt) dislike or find funny.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The Discord ID of the user to timeout."
+                    },
+                    "duration_minutes": {
+                        "type": "integer",
+                        "description": "The duration of the timeout in minutes (1-1440, e.g., 5 for 5 minutes)."
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Optional: The reason for the timeout (keep it short and in character)."
+                    }
+                },
+                "required": ["user_id", "duration_minutes"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calculate",
+            "description": "Evaluate a mathematical expression using a safe interpreter. Handles standard arithmetic, functions (sin, cos, sqrt, etc.), and variables.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "The mathematical expression to evaluate (e.g., '2 * (3 + 4)', 'sqrt(16) + sin(pi/2)')."
+                    }
+                },
+                "required": ["expression"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_python_code",
+            "description": "Execute a snippet of Python 3 code in a sandboxed environment using an external API. Returns the standard output and standard error.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "The Python 3 code snippet to execute."
+                    }
+                },
+                "required": ["code"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_poll",
+            "description": "Create a simple poll message in the current channel with numbered reactions for voting.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question for the poll."
+                    },
+                    "options": {
+                        "type": "array",
+                        "description": "A list of strings representing the poll options (minimum 2, maximum 10).",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "required": ["question", "options"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_terminal_command",
+            "description": "DANGEROUS: Execute a shell command in an isolated, temporary Docker container after an AI safety check. Returns stdout and stderr. Use with extreme caution only for simple, harmless commands like 'echo', 'ls', 'pwd'. Avoid file modification, network access, or long-running processes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute."
+                    }
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remove_timeout",
+            "description": "Remove an active timeout from a user in the current server.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The Discord ID of the user whose timeout should be removed."
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Optional: The reason for removing the timeout (keep it short and in character)."
+                    }
+                },
+                "required": ["user_id"]
+            }
+        }
+    }
+]
+
+# --- Simple Gurt Responses ---
+GURT_RESPONSES = [
+    "Gurt!", "Gurt gurt!", "Gurt... gurt gurt.", "*gurts happily*",
+    "*gurts sadly*", "*confused gurting*", "Gurt? Gurt gurt!", "GURT!",
+    "gurt...", "Gurt gurt gurt!", "*aggressive gurting*"
+]

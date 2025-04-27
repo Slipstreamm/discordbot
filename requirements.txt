@@ -24,3 +24,5 @@ tavily-python
 aiosqlite
 chromadb
 sentence-transformers
+asteval
+docker
