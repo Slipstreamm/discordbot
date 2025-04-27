@@ -229,10 +229,6 @@ def setup_commands(cog: 'GurtCog'):
     @cog.bot.tree.command(name="gurtstats", description="Display Gurt's internal statistics. (Owner only)")
     async def gurtstats(interaction: discord.Interaction):
         """Handles the /gurtstats command."""
-        # Check if user is the bot owner
-        if interaction.user.id != cog.bot.owner_id:
-            await interaction.response.send_message("⛔ Only the bot owner can view detailed stats.", ephemeral=True)
-            return
 
         await interaction.response.defer(ephemeral=True) # Defer as stats collection might take time
         try:
