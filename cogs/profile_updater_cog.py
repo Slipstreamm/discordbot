@@ -57,11 +57,20 @@ class ProfileUpdaterCog(commands.Cog):
         """Wait until the bot is ready and get GurtCog before starting the loop."""
         await self.bot.wait_until_ready()
         print("ProfileUpdaterTask: Bot ready, attempting to get GurtCog...")
-        self.gurt_cog = self.bot.get_cog('GurtCog')
-        if not self.gurt_cog:
-            print("ERROR: ProfileUpdaterTask could not find GurtCog after bot is ready. AI features will not work.")
-        else:
-            print("ProfileUpdaterTask: GurtCog found. Starting loop.")
+        # Retry mechanism to handle potential cog loading race conditions
+        for attempt in range(5): # Try up to 5 times
+            self.gurt_cog = self.bot.get_cog('GurtCog')
+            if self.gurt_cog:
+                print(f"ProfileUpdaterTask: GurtCog found on attempt {attempt + 1}. Starting loop.")
+                return # Success
+
+            # If not found, wait a bit before retrying
+            wait_time = 2 * (attempt + 1) # Increase wait time slightly each attempt
+            print(f"ProfileUpdaterTask: GurtCog not found on attempt {attempt + 1}, waiting {wait_time} seconds...")
+            await asyncio.sleep(wait_time)
+
+        # If loop finishes without finding the cog
+        print("ERROR: ProfileUpdaterTask could not find GurtCog after multiple attempts. AI features will not work.")
 
     async def perform_update_cycle(self):
         """Performs a single profile update check and potential update."""

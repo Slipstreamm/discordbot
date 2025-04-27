@@ -111,7 +111,7 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
             "overall": "neutral", "intensity": 0.5, "recent_trend": "stable",
             "user_sentiments": {}, "last_update": time.time()
         })
-        # self.sentiment_update_interval = SENTIMENT_UPDATE_INTERVAL # Used in analysis
+        self.sentiment_update_interval = SENTIMENT_UPDATE_INTERVAL # Used in analysis
 
         # Interest Tracking State
         self.gurt_participation_topics = defaultdict(int)
