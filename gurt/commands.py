@@ -190,10 +190,19 @@ def setup_commands(cog: 'GurtCog'):
             facts = await cog.memory_manager.get_general_facts(query=query, limit=10) # Get newest/filtered
             if facts:
                 facts_str = "\n- ".join(facts)
-                title = f"**General Facts{f' matching "{query}"' if query else ''}:**"
+                # Conditionally construct the title to avoid nested f-string issues
+                if query:
+                    title = f"**General Facts matching \"{query}\":**"
+                else:
+                    title = "**General Facts:**"
                 await interaction.followup.send(f"{title}\n- {facts_str}", ephemeral=True)
             else:
-                await interaction.followup.send(f"No general facts found{f' matching "{query}"' if query else ''}.", ephemeral=True)
+                # Conditionally construct the message for the same reason
+                if query:
+                    message = f"No general facts found matching \"{query}\"."
+                else:
+                    message = "No general facts found."
+                await interaction.followup.send(message, ephemeral=True)
 
         else:
             await interaction.followup.send("Invalid action specified.", ephemeral=True)
