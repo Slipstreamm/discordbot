@@ -26,3 +26,4 @@ chromadb
 sentence-transformers
 asteval
 docker
+aiodocker

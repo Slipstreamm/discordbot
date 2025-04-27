@@ -16,7 +16,7 @@ from typing import Dict, List, Any, Optional, Tuple, Union # Added Union
 from tavily import TavilyClient
 from asteval import Interpreter
 import docker
-import docker.aio
+import aiodocker # Use aiodocker for async operations
 
 # Relative imports from within the gurt package and parent
 from .memory import MemoryManager # Import from local memory.py
@@ -583,7 +583,7 @@ async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any
 
     client = None
     try:
-        client = docker.aio.from_env()
+        client = aiodocker.Docker() # Use aiodocker client
         print(f"Running command in Docker ({DOCKER_EXEC_IMAGE})...")
         output_bytes = await asyncio.wait_for(
             client.containers.run(
