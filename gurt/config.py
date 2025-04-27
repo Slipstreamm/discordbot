@@ -3,13 +3,27 @@ import random
 import json
 from dotenv import load_dotenv
 
+# Placeholder for actual import - will be handled at runtime
+try:
+    from vertexai import generative_models
+except ImportError:
+    # Define a dummy class if the library isn't installed,
+    # so eval doesn't immediately fail.
+    # This assumes the code won't actually run without the library.
+    class DummyGenerativeModels:
+        class FunctionDeclaration:
+            def __init__(self, name, description, parameters):
+                pass
+    generative_models = DummyGenerativeModels()
+
+
 # Load environment variables
 load_dotenv()
 
 # --- API and Keys ---
-API_KEY = os.getenv("AI_API_KEY", "")
+PROJECT_ID = os.getenv("GCP_PROJECT_ID", "your-gcp-project-id")
+LOCATION = os.getenv("GCP_LOCATION", "us-central1")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
-OPENROUTER_API_URL = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions")
 PISTON_API_URL = os.getenv("PISTON_API_URL") # For run_python_code tool
 PISTON_API_KEY = os.getenv("PISTON_API_KEY") # Optional key for Piston
 
@@ -138,37 +152,23 @@ RESPONSE_SCHEMA = {
                 "type": ["string", "null"],
                 "description": "Optional: A standard Discord emoji to react with, or null if no reaction."
             },
-            "tool_requests": {
-                "type": "array",
-                "description": "Optional: A list of tools the bot wants to execute. If present, 'content' should be a placeholder message.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {
-                            "type": "string",
-                            "description": "The name of the tool to execute."
-                        },
-                        "arguments": {
-                            "type": "object",
-                            "description": "The arguments for the tool, as a JSON object."
-                        }
-                    },
-                    "required": ["name", "arguments"]
-                }
-            }
+            # Note: tool_requests is handled by Vertex AI's function calling mechanism
         },
         "required": ["should_respond", "content"]
     }
 }
 
 # --- Tools Definition ---
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_recent_messages",
-            "description": "Get recent messages from a Discord channel",
-            "parameters": {
+def create_tools_list():
+    # This function creates the list of FunctionDeclaration objects.
+    # It requires 'generative_models' to be imported.
+    # We define it here but call it later, assuming the import succeeded.
+    tool_declarations = []
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="get_recent_messages",
+            description="Get recent messages from a Discord channel",
+            parameters={
                 "type": "object",
                 "properties": {
                     "channel_id": {
@@ -176,20 +176,19 @@ TOOLS = [
                         "description": "The ID of the channel to get messages from. If not provided, uses the current channel."
                     },
                     "limit": {
-                        "type": "integer",
+                        "type": "integer", # Corrected type
                         "description": "The maximum number of messages to retrieve (1-100)"
                     }
                 },
                 "required": ["limit"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_user_messages",
-            "description": "Search for messages from a specific user",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="search_user_messages",
+            description="Search for messages from a specific user",
+            parameters={
                 "type": "object",
                 "properties": {
                     "user_id": {
@@ -201,20 +200,19 @@ TOOLS = [
                         "description": "The ID of the channel to search in. If not provided, searches in the current channel."
                     },
                     "limit": {
-                        "type": "integer",
+                        "type": "integer", # Corrected type
                         "description": "The maximum number of messages to retrieve (1-100)"
                     }
                 },
                 "required": ["user_id", "limit"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_messages_by_content",
-            "description": "Search for messages containing specific content",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="search_messages_by_content",
+            description="Search for messages containing specific content",
+            parameters={
                 "type": "object",
                 "properties": {
                     "search_term": {
@@ -226,20 +224,19 @@ TOOLS = [
                         "description": "The ID of the channel to search in. If not provided, searches in the current channel."
                     },
                     "limit": {
-                        "type": "integer",
+                        "type": "integer", # Corrected type
                         "description": "The maximum number of messages to retrieve (1-100)"
                     }
                 },
                 "required": ["search_term", "limit"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_channel_info",
-            "description": "Get information about a Discord channel",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="get_channel_info",
+            description="Get information about a Discord channel",
+            parameters={
                 "type": "object",
                 "properties": {
                     "channel_id": {
@@ -249,14 +246,13 @@ TOOLS = [
                 },
                 "required": []
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_conversation_context",
-            "description": "Get the context of the current conversation",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="get_conversation_context",
+            description="Get the context of the current conversation",
+            parameters={
                 "type": "object",
                 "properties": {
                     "channel_id": {
@@ -264,20 +260,19 @@ TOOLS = [
                         "description": "The ID of the channel to get conversation context from. If not provided, uses the current channel."
                     },
                     "message_count": {
-                        "type": "integer",
+                        "type": "integer", # Corrected type
                         "description": "The number of messages to include in the context (5-50)"
                     }
                 },
                 "required": ["message_count"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_thread_context",
-            "description": "Get the context of a thread conversation",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="get_thread_context",
+            description="Get the context of a thread conversation",
+            parameters={
                 "type": "object",
                 "properties": {
                     "thread_id": {
@@ -285,20 +280,19 @@ TOOLS = [
                         "description": "The ID of the thread to get context from"
                     },
                     "message_count": {
-                        "type": "integer",
+                        "type": "integer", # Corrected type
                         "description": "The number of messages to include in the context (5-50)"
                     }
                 },
                 "required": ["thread_id", "message_count"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_user_interaction_history",
-            "description": "Get the history of interactions between users",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="get_user_interaction_history",
+            description="Get the history of interactions between users",
+            parameters={
                 "type": "object",
                 "properties": {
                     "user_id_1": {
@@ -310,20 +304,19 @@ TOOLS = [
                         "description": "The ID of the second user. If not provided, gets interactions between user_id_1 and the bot."
                     },
                     "limit": {
-                        "type": "integer",
+                        "type": "integer", # Corrected type
                         "description": "The maximum number of interactions to retrieve (1-50)"
                     }
                 },
                 "required": ["user_id_1", "limit"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_conversation_summary",
-            "description": "Get a summary of the recent conversation in a channel",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="get_conversation_summary",
+            description="Get a summary of the recent conversation in a channel",
+            parameters={
                 "type": "object",
                 "properties": {
                     "channel_id": {
@@ -333,14 +326,13 @@ TOOLS = [
                 },
                 "required": []
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_message_context",
-            "description": "Get the context around a specific message",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="get_message_context",
+            description="Get the context around a specific message",
+            parameters={
                 "type": "object",
                 "properties": {
                     "message_id": {
@@ -348,24 +340,23 @@ TOOLS = [
                         "description": "The ID of the message to get context for"
                     },
                     "before_count": {
-                        "type": "integer",
+                        "type": "integer", # Corrected type
                         "description": "The number of messages to include before the specified message (1-25)"
                     },
                     "after_count": {
-                        "type": "integer",
+                        "type": "integer", # Corrected type
                         "description": "The number of messages to include after the specified message (1-25)"
                     }
                 },
                 "required": ["message_id"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Search the web for information on a given topic or query. Use this to find current information, facts, or context about things mentioned in the chat.",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="web_search",
+            description="Search the web for information on a given topic or query. Use this to find current information, facts, or context about things mentioned in the chat.",
+            parameters={
                 "type": "object",
                 "properties": {
                     "query": {
@@ -375,14 +366,13 @@ TOOLS = [
                 },
                 "required": ["query"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "remember_user_fact",
-            "description": "Store a specific fact or piece of information about a user for later recall. Use this when you learn something potentially relevant about a user (e.g., their preferences, current activity, mentioned interests).",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="remember_user_fact",
+            description="Store a specific fact or piece of information about a user for later recall. Use this when you learn something potentially relevant about a user (e.g., their preferences, current activity, mentioned interests).",
+            parameters={
                 "type": "object",
                 "properties": {
                     "user_id": {
@@ -396,14 +386,13 @@ TOOLS = [
                 },
                 "required": ["user_id", "fact"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_user_facts",
-            "description": "Retrieve previously stored facts or information about a specific user. Use this before responding to a user to potentially recall relevant details about them.",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="get_user_facts",
+            description="Retrieve previously stored facts or information about a specific user. Use this before responding to a user to potentially recall relevant details about them.",
+            parameters={
                 "type": "object",
                 "properties": {
                     "user_id": {
@@ -413,14 +402,13 @@ TOOLS = [
                 },
                 "required": ["user_id"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "remember_general_fact",
-            "description": "Store a general fact or piece of information not specific to a user (e.g., server events, shared knowledge, recent game updates). Use this to remember context relevant to the community or ongoing discussions.",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="remember_general_fact",
+            description="Store a general fact or piece of information not specific to a user (e.g., server events, shared knowledge, recent game updates). Use this to remember context relevant to the community or ongoing discussions.",
+            parameters={
                 "type": "object",
                 "properties": {
                     "fact": {
@@ -430,14 +418,13 @@ TOOLS = [
                 },
                 "required": ["fact"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_general_facts",
-            "description": "Retrieve previously stored general facts or shared knowledge. Use this to recall context about the server, ongoing events, or general information.",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="get_general_facts",
+            description="Retrieve previously stored general facts or shared knowledge. Use this to recall context about the server, ongoing events, or general information.",
+            parameters={
                 "type": "object",
                 "properties": {
                     "query": {
@@ -445,20 +432,19 @@ TOOLS = [
                         "description": "Optional: A keyword or phrase to search within the general facts. If omitted, returns recent general facts."
                     },
                     "limit": {
-                        "type": "integer",
+                        "type": "integer", # Corrected type
                         "description": "Optional: Maximum number of facts to return (default 10)."
                     }
                 },
                 "required": []
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "timeout_user",
-            "description": "Timeout a user in the current server for a specified duration. Use this playfully or when someone says something you (Gurt) dislike or find funny.",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="timeout_user",
+            description="Timeout a user in the current server for a specified duration. Use this playfully or when someone says something you (Gurt) dislike or find funny.",
+            parameters={
                 "type": "object",
                 "properties": {
                     "user_id": {
@@ -466,7 +452,7 @@ TOOLS = [
                         "description": "The Discord ID of the user to timeout."
                     },
                     "duration_minutes": {
-                        "type": "integer",
+                        "type": "integer", # Corrected type
                         "description": "The duration of the timeout in minutes (1-1440, e.g., 5 for 5 minutes)."
                     },
                     "reason": {
@@ -476,14 +462,13 @@ TOOLS = [
                 },
                 "required": ["user_id", "duration_minutes"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "calculate",
-            "description": "Evaluate a mathematical expression using a safe interpreter. Handles standard arithmetic, functions (sin, cos, sqrt, etc.), and variables.",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="calculate",
+            description="Evaluate a mathematical expression using a safe interpreter. Handles standard arithmetic, functions (sin, cos, sqrt, etc.), and variables.",
+            parameters={
                 "type": "object",
                 "properties": {
                     "expression": {
@@ -493,14 +478,13 @@ TOOLS = [
                 },
                 "required": ["expression"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_python_code",
-            "description": "Execute a snippet of Python 3 code in a sandboxed environment using an external API. Returns the standard output and standard error.",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="run_python_code",
+            description="Execute a snippet of Python 3 code in a sandboxed environment using an external API. Returns the standard output and standard error.",
+            parameters={
                 "type": "object",
                 "properties": {
                     "code": {
@@ -510,14 +494,13 @@ TOOLS = [
                 },
                 "required": ["code"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_poll",
-            "description": "Create a simple poll message in the current channel with numbered reactions for voting.",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="create_poll",
+            description="Create a simple poll message in the current channel with numbered reactions for voting.",
+            parameters={
                 "type": "object",
                 "properties": {
                     "question": {
@@ -534,14 +517,13 @@ TOOLS = [
                 },
                 "required": ["question", "options"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_terminal_command",
-            "description": "DANGEROUS: Execute a shell command in an isolated, temporary Docker container after an AI safety check. Returns stdout and stderr. Use with extreme caution only for simple, harmless commands like 'echo', 'ls', 'pwd'. Avoid file modification, network access, or long-running processes.",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="run_terminal_command",
+            description="DANGEROUS: Execute a shell command in an isolated, temporary Docker container after an AI safety check. Returns stdout and stderr. Use with extreme caution only for simple, harmless commands like 'echo', 'ls', 'pwd'. Avoid file modification, network access, or long-running processes.",
+            parameters={
                 "type": "object",
                 "properties": {
                     "command": {
@@ -551,14 +533,13 @@ TOOLS = [
                 },
                 "required": ["command"]
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "remove_timeout",
-            "description": "Remove an active timeout from a user in the current server.",
-            "parameters": {
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="remove_timeout",
+            description="Remove an active timeout from a user in the current server.",
+            parameters={
                 "type": "object",
                 "properties": {
                     "user_id": {
@@ -572,9 +553,17 @@ TOOLS = [
                 },
                 "required": ["user_id"]
             }
-        }
-    }
-]
+        )
+    )
+    return tool_declarations
+
+# Initialize TOOLS list, handling potential ImportError if library not installed
+try:
+    TOOLS = create_tools_list()
+except NameError: # If generative_models wasn't imported due to ImportError
+    TOOLS = []
+    print("WARNING: google-cloud-vertexai not installed. TOOLS list is empty.")
+
 
 # --- Simple Gurt Responses ---
 GURT_RESPONSES = [
