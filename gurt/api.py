@@ -46,13 +46,16 @@ async def call_llm_api_with_retry(
     """
     last_exception = None
     original_model = payload.get("model")
+    current_model_key = original_model # Track the model used in the current attempt
     using_fallback = False
+    start_time = time.monotonic() # Start timer before the loop
 
     if not cog.session:
         raise Exception(f"aiohttp session not initialized in GurtCog for {request_desc}")
 
     for attempt in range(API_RETRY_ATTEMPTS + 1): # Corrected range
         try:
+            current_model_key = payload["model"] # Get model for this attempt
             model_desc = f"fallback model {FALLBACK_MODEL}" if using_fallback else f"primary model {original_model}"
             print(f"Sending API request for {request_desc} using {model_desc} (Attempt {attempt + 1}/{API_RETRY_ATTEMPTS + 1})...")
 
@@ -70,7 +73,13 @@ async def call_llm_api_with_retry(
                         print(error_msg)
                         last_exception = ValueError(error_msg) # Treat as non-retryable format error
                         break # Exit retry loop
-                    print(f"API request successful for {request_desc}.")
+
+                    # --- Success Logging ---
+                    elapsed_time = time.monotonic() - start_time
+                    cog.api_stats[current_model_key]['success'] += 1
+                    cog.api_stats[current_model_key]['total_time'] += elapsed_time
+                    cog.api_stats[current_model_key]['count'] += 1
+                    print(f"API request successful for {request_desc} ({current_model_key}) in {elapsed_time:.2f}s.")
                     return data # Success
 
                 elif response.status == 429:  # Rate limit error
@@ -80,6 +89,7 @@ async def call_llm_api_with_retry(
 
                     if using_fallback or original_model != DEFAULT_MODEL:
                         if attempt < API_RETRY_ATTEMPTS:
+                            cog.api_stats[current_model_key]['retries'] += 1 # Log retry
                             wait_time = API_RETRY_DELAY * (attempt + 2)
                             print(f"Waiting {wait_time} seconds before retrying...")
                             await asyncio.sleep(wait_time)
@@ -92,7 +102,7 @@ async def call_llm_api_with_retry(
                         payload["model"] = FALLBACK_MODEL
                         using_fallback = True
                         await asyncio.sleep(1)
-                        continue
+                        continue # Retry immediately with fallback
 
                 elif response.status >= 500: # Retry on server errors
                     error_text = await response.text()
@@ -100,6 +110,7 @@ async def call_llm_api_with_retry(
                     print(f"{error_msg} (Attempt {attempt + 1})")
                     last_exception = Exception(error_msg)
                     if attempt < API_RETRY_ATTEMPTS:
+                        cog.api_stats[current_model_key]['retries'] += 1 # Log retry
                         await asyncio.sleep(API_RETRY_DELAY * (attempt + 1))
                         continue
                     else:
@@ -114,7 +125,7 @@ async def call_llm_api_with_retry(
                         payload["model"] = FALLBACK_MODEL
                         using_fallback = True
                         await asyncio.sleep(1)
-                        continue
+                        continue # Retry immediately with fallback
 
                     last_exception = Exception(error_msg)
                     break
@@ -124,6 +135,7 @@ async def call_llm_api_with_retry(
             print(error_msg)
             last_exception = asyncio.TimeoutError(error_msg)
             if attempt < API_RETRY_ATTEMPTS:
+                cog.api_stats[current_model_key]['retries'] += 1 # Log retry
                 await asyncio.sleep(API_RETRY_DELAY * (attempt + 1))
                 continue
             else:
@@ -133,10 +145,19 @@ async def call_llm_api_with_retry(
             print(error_msg)
             last_exception = e
             if attempt < API_RETRY_ATTEMPTS:
+                 cog.api_stats[current_model_key]['retries'] += 1 # Log retry
                  await asyncio.sleep(API_RETRY_DELAY * (attempt + 1))
                  continue
             else:
                  break
+
+    # --- Failure Logging ---
+    elapsed_time = time.monotonic() - start_time
+    final_model_key = payload["model"] # Model used in the last failed attempt
+    cog.api_stats[final_model_key]['failure'] += 1
+    cog.api_stats[final_model_key]['total_time'] += elapsed_time
+    cog.api_stats[final_model_key]['count'] += 1
+    print(f"API request failed for {request_desc} ({final_model_key}) after {attempt + 1} attempts in {elapsed_time:.2f}s.")
 
     raise last_exception or Exception(f"API request failed for {request_desc} after {API_RETRY_ATTEMPTS + 1} attempts.")
 
@@ -251,6 +272,7 @@ async def process_requested_tools(cog: 'GurtCog', tool_requests: List[Dict[str, 
              continue
 
         print(f"Executing tool: {function_name} with args: {function_args}")
+        tool_start_time = time.monotonic() # Start timer for this tool
         if function_name in TOOL_MAPPING:
             try:
                 # Get the actual function implementation from the mapping
@@ -263,16 +285,28 @@ async def process_requested_tools(cog: 'GurtCog', tool_requests: List[Dict[str, 
                 # and don't directly need the `cog` instance passed here.
                 # If they *are* methods of GurtCog, they'll have `self` automatically.
                 result = await tool_func(cog, **function_args) # Pass cog if needed by tool impl
+
+                # --- Tool Success Logging ---
+                tool_elapsed_time = time.monotonic() - tool_start_time
+                cog.tool_stats[function_name]['success'] += 1
+                cog.tool_stats[function_name]['total_time'] += tool_elapsed_time
+                cog.tool_stats[function_name]['count'] += 1
+                print(f"Tool '{function_name}' executed successfully in {tool_elapsed_time:.2f}s.")
+
                 tool_results_for_api.append({
                     "role": "tool",
                     "content": json.dumps(result),
                     "name": function_name
                 })
-                print(f"Tool '{function_name}' executed successfully.")
             except Exception as e:
+                # --- Tool Failure Logging ---
+                tool_elapsed_time = time.monotonic() - tool_start_time
+                cog.tool_stats[function_name]['failure'] += 1
+                cog.tool_stats[function_name]['total_time'] += tool_elapsed_time
+                cog.tool_stats[function_name]['count'] += 1
                 error_message = f"Error executing tool {function_name}: {str(e)}"
-                print(error_message)
-                import traceback
+                print(f"{error_message} (Took {tool_elapsed_time:.2f}s)")
+                import traceback # Keep traceback for debugging
                 traceback.print_exc()
                 tool_results_for_api.append({
                     "role": "tool",
@@ -280,8 +314,13 @@ async def process_requested_tools(cog: 'GurtCog', tool_requests: List[Dict[str, 
                     "name": function_name
                 })
         else:
+            # --- Tool Not Found Logging ---
+            tool_elapsed_time = time.monotonic() - tool_start_time # Still record time even if not found
+            cog.tool_stats[function_name]['failure'] += 1 # Count as failure
+            cog.tool_stats[function_name]['total_time'] += tool_elapsed_time
+            cog.tool_stats[function_name]['count'] += 1
             error_message = f"Tool '{function_name}' not found or implemented."
-            print(error_message)
+            print(f"{error_message} (Took {tool_elapsed_time:.2f}s)")
             tool_results_for_api.append({
                 "role": "tool",
                 "content": json.dumps({"error": error_message}),

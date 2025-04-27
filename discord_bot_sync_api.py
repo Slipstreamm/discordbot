@@ -5,14 +5,22 @@ import datetime
 from typing import Dict, List, Optional, Any, Union
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles # Added for static files
+from fastapi.responses import FileResponse # Added for serving HTML
 from pydantic import BaseModel, Field
 import discord
 from discord.ext import commands
 import aiohttp
 import threading
+from typing import Optional # Added for GurtCog type hint
 
 # This file contains the API endpoints for syncing conversations between
-# the Flutter app and the Discord bot.
+# the Flutter app and the Discord bot, AND the Gurt stats endpoint.
+
+# --- Placeholder for GurtCog instance ---
+# This needs to be set by the script that starts the bot and API server
+from discordbot.gurt.cog import GurtCog # Import GurtCog for type hint and access
+gurt_cog_instance: Optional[GurtCog] = None
 
 # ============= Models =============
 
@@ -389,6 +397,44 @@ async def delete_conversation(
     save_conversations()
 
     return {"success": True, "message": "Conversation deleted"}
+
+
+# --- Gurt Stats Endpoint ---
+@api_app.get("/gurt/stats")
+async def get_gurt_stats_api():
+    """Get internal statistics for the Gurt bot."""
+    if not gurt_cog_instance:
+        raise HTTPException(status_code=503, detail="Gurt cog not available")
+    try:
+        stats_data = await gurt_cog_instance.get_gurt_stats()
+        # Convert potential datetime objects if any (though get_gurt_stats should return serializable types)
+        # For safety, let's ensure basic types or handle conversion if needed later.
+        return stats_data
+    except Exception as e:
+        print(f"Error retrieving Gurt stats via API: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving Gurt stats: {e}")
+
+# --- Gurt Dashboard Static Files ---
+# Mount static files directory (adjust path if needed, assuming dashboard files are in discordbot/gurt_dashboard)
+# Check if the directory exists before mounting
+dashboard_dir = "discordbot/gurt_dashboard"
+if os.path.exists(dashboard_dir) and os.path.isdir(dashboard_dir):
+    api_app.mount("/gurt/static", StaticFiles(directory=dashboard_dir), name="gurt_static")
+    print(f"Mounted Gurt dashboard static files from: {dashboard_dir}")
+
+    # Route for the main dashboard HTML
+    @api_app.get("/gurt/dashboard", response_class=FileResponse)
+    async def get_gurt_dashboard():
+        dashboard_html_path = os.path.join(dashboard_dir, "index.html")
+        if os.path.exists(dashboard_html_path):
+            return dashboard_html_path
+        else:
+            raise HTTPException(status_code=404, detail="Dashboard index.html not found")
+else:
+    print(f"Warning: Gurt dashboard directory '{dashboard_dir}' not found. Dashboard endpoints will not be available.")
+
 
 @api_app.get("/settings")
 async def get_user_settings(user_id: str = Depends(verify_discord_token)):

@@ -1,8 +1,12 @@
 import discord
+from discord import app_commands # Import app_commands
 from discord.ext import commands
 import random
 import os
-from typing import TYPE_CHECKING
+import time # Import time for timestamps
+import json # Import json for formatting
+import datetime # Import datetime for formatting
+from typing import TYPE_CHECKING, Optional, Dict, Any, List, Tuple # Add more types
 
 # Relative imports (assuming API functions are in api.py)
 # We need access to the cog instance for state and methods like get_ai_response
@@ -10,176 +14,204 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .cog import GurtCog # For type hinting
+    from .config import MOOD_OPTIONS # Import for choices
 
-# --- Command Implementations ---
-# Note: These functions assume they will be registered as commands associated with a GurtCog instance.
-#       The 'cog' parameter will be implicitly passed by discord.py when registered correctly.
+# --- Helper Function for Embeds ---
+def create_gurt_embed(title: str, description: str = "", color=discord.Color.blue()) -> discord.Embed:
+    """Creates a standard Gurt-themed embed."""
+    embed = discord.Embed(title=title, description=description, color=color)
+    # Placeholder icon URL, replace if Gurt has one
+    # embed.set_footer(text="Gurt", icon_url="https://example.com/gurt_icon.png")
+    embed.set_footer(text="Gurt")
+    return embed
 
-@commands.command(name="gurt")
-async def gurt_command(cog: 'GurtCog', ctx: commands.Context):
-    """The main gurt command"""
-    from .config import GURT_RESPONSES # Import here
-    response = random.choice(GURT_RESPONSES)
-    await ctx.send(response)
+# --- Helper Function for Stats Embeds ---
+def format_stats_embeds(stats: Dict[str, Any]) -> List[discord.Embed]:
+    """Formats the collected stats into multiple embeds."""
+    embeds = []
+    main_embed = create_gurt_embed("Gurt Internal Stats", color=discord.Color.green())
+    ts_format = "<t:{ts}:R>" # Relative timestamp
 
-@commands.command(name="gurtai")
-async def gurt_ai_command(cog: 'GurtCog', ctx: commands.Context, *, prompt: str):
-    """Get a response from the AI"""
-    from .api import get_ai_response # Import API function
+    # Runtime Stats
+    runtime = stats.get("runtime", {})
+    main_embed.add_field(name="Current Mood", value=f"{runtime.get('current_mood', 'N/A')} (Changed {ts_format.format(ts=int(runtime.get('last_mood_change_timestamp', 0)))})", inline=False)
+    main_embed.add_field(name="Background Task", value="Running" if runtime.get('background_task_running') else "Stopped", inline=True)
+    main_embed.add_field(name="Needs JSON Reminder", value=str(runtime.get('needs_json_reminder', 'N/A')), inline=True)
+    main_embed.add_field(name="Last Evolution", value=ts_format.format(ts=int(runtime.get('last_evolution_update_timestamp', 0))), inline=True)
+    main_embed.add_field(name="Active Topics Channels", value=str(runtime.get('active_topics_channels', 'N/A')), inline=True)
+    main_embed.add_field(name="Conv History Channels", value=str(runtime.get('conversation_history_channels', 'N/A')), inline=True)
+    main_embed.add_field(name="Thread History Threads", value=str(runtime.get('thread_history_threads', 'N/A')), inline=True)
+    main_embed.add_field(name="User Relationships Pairs", value=str(runtime.get('user_relationships_pairs', 'N/A')), inline=True)
+    main_embed.add_field(name="Cached Summaries", value=str(runtime.get('conversation_summaries_cached', 'N/A')), inline=True)
+    main_embed.add_field(name="Cached Channel Topics", value=str(runtime.get('channel_topics_cached', 'N/A')), inline=True)
+    main_embed.add_field(name="Global Msg Cache", value=str(runtime.get('message_cache_global_count', 'N/A')), inline=True)
+    main_embed.add_field(name="Mention Msg Cache", value=str(runtime.get('message_cache_mentioned_count', 'N/A')), inline=True)
+    main_embed.add_field(name="Active Convos", value=str(runtime.get('active_conversations_count', 'N/A')), inline=True)
+    main_embed.add_field(name="Sentiment Channels", value=str(runtime.get('conversation_sentiment_channels', 'N/A')), inline=True)
+    main_embed.add_field(name="Gurt Participation Topics", value=str(runtime.get('gurt_participation_topics_count', 'N/A')), inline=True)
+    main_embed.add_field(name="Tracked Reactions", value=str(runtime.get('gurt_message_reactions_tracked', 'N/A')), inline=True)
+    embeds.append(main_embed)
 
-    # Create a pseudo-message object or pass necessary info
-    # For simplicity, we'll pass the context's message object,
-    # but modify its content for the AI call.
-    ai_message = ctx.message
-    ai_message.content = prompt # Override content with the prompt argument
+    # Memory Stats
+    memory_embed = create_gurt_embed("Gurt Memory Stats", color=discord.Color.orange())
+    memory = stats.get("memory", {})
+    if memory.get("error"):
+        memory_embed.description = f"⚠️ Error retrieving memory stats: {memory['error']}"
+    else:
+        memory_embed.add_field(name="User Facts", value=str(memory.get('user_facts_count', 'N/A')), inline=True)
+        memory_embed.add_field(name="General Facts", value=str(memory.get('general_facts_count', 'N/A')), inline=True)
+        memory_embed.add_field(name="Chroma Messages", value=str(memory.get('chromadb_message_collection_count', 'N/A')), inline=True)
+        memory_embed.add_field(name="Chroma Facts", value=str(memory.get('chromadb_fact_collection_count', 'N/A')), inline=True)
 
-    try:
-        # Show typing indicator
-        async with ctx.typing():
-            # Get AI response bundle
-            response_bundle = await get_ai_response(cog, ai_message) # Pass cog and message
+        personality = memory.get("personality_traits", {})
+        if personality:
+            p_items = [f"`{k}`: {v}" for k, v in personality.items()]
+            memory_embed.add_field(name="Personality Traits", value="\n".join(p_items) if p_items else "None", inline=False)
 
-        # Check for errors or no response
-        error_msg = response_bundle.get("error")
-        initial_response = response_bundle.get("initial_response")
-        final_response = response_bundle.get("final_response")
-        response_to_use = final_response if final_response else initial_response
+        interests = memory.get("top_interests", [])
+        if interests:
+            i_items = [f"`{t}`: {l:.2f}" for t, l in interests]
+            memory_embed.add_field(name="Top Interests", value="\n".join(i_items) if i_items else "None", inline=False)
+    embeds.append(memory_embed)
 
-        if error_msg:
-            print(f"Error in gurtai command: {error_msg}")
-            await ctx.reply(f"Sorry, I'm having trouble thinking right now. Details: {error_msg}")
-            return
+    # API Stats
+    api_stats = stats.get("api_stats", {})
+    if api_stats:
+        api_embed = create_gurt_embed("Gurt API Stats", color=discord.Color.red())
+        for model, data in api_stats.items():
+            avg_time = data.get('average_time_ms', 0)
+            value = (f"✅ Success: {data.get('success', 0)}\n"
+                     f"❌ Failure: {data.get('failure', 0)}\n"
+                     f"🔁 Retries: {data.get('retries', 0)}\n"
+                     f"⏱️ Avg Time: {avg_time} ms\n"
+                     f"📊 Count: {data.get('count', 0)}")
+            api_embed.add_field(name=f"Model: `{model}`", value=value, inline=True)
+        embeds.append(api_embed)
 
-        if not response_to_use or not response_to_use.get("should_respond", False):
-            await ctx.reply("I don't have anything to say about that right now.")
-            return
+    # Tool Stats
+    tool_stats = stats.get("tool_stats", {})
+    if tool_stats:
+        tool_embed = create_gurt_embed("Gurt Tool Stats", color=discord.Color.purple())
+        for tool, data in tool_stats.items():
+            avg_time = data.get('average_time_ms', 0)
+            value = (f"✅ Success: {data.get('success', 0)}\n"
+                     f"❌ Failure: {data.get('failure', 0)}\n"
+                     f"⏱️ Avg Time: {avg_time} ms\n"
+                     f"📊 Count: {data.get('count', 0)}")
+            tool_embed.add_field(name=f"Tool: `{tool}`", value=value, inline=True)
+        embeds.append(tool_embed)
 
-        response_text = response_to_use.get("content", "")
-        if not response_text:
-             await ctx.reply("I decided not to respond with text.")
-             return
+    # Config Stats (Less critical, maybe separate embed if needed)
+    config_embed = create_gurt_embed("Gurt Config Overview", color=discord.Color.greyple())
+    config = stats.get("config", {})
+    config_embed.add_field(name="Default Model", value=f"`{config.get('default_model', 'N/A')}`", inline=True)
+    config_embed.add_field(name="Fallback Model", value=f"`{config.get('fallback_model', 'N/A')}`", inline=True)
+    config_embed.add_field(name="Semantic Model", value=f"`{config.get('semantic_model_name', 'N/A')}`", inline=True)
+    config_embed.add_field(name="Max User Facts", value=str(config.get('max_user_facts', 'N/A')), inline=True)
+    config_embed.add_field(name="Max General Facts", value=str(config.get('max_general_facts', 'N/A')), inline=True)
+    config_embed.add_field(name="Context Window", value=str(config.get('context_window_size', 'N/A')), inline=True)
+    config_embed.add_field(name="API Key Set", value=str(config.get('api_key_set', 'N/A')), inline=True)
+    config_embed.add_field(name="Tavily Key Set", value=str(config.get('tavily_api_key_set', 'N/A')), inline=True)
+    config_embed.add_field(name="Piston URL Set", value=str(config.get('piston_api_url_set', 'N/A')), inline=True)
+    embeds.append(config_embed)
 
-        # Handle long responses
-        if len(response_text) > 1900:
-            filepath = f'gurt_response_{ctx.author.id}.txt'
-            try:
-                with open(filepath, 'w', encoding='utf-8') as f: f.write(response_text)
-                await ctx.send("Response too long, sending as file:", file=discord.File(filepath))
-            except Exception as file_e: print(f"Error writing/sending long response file: {file_e}")
-            finally:
-                try: os.remove(filepath)
-                except OSError as os_e: print(f"Error removing temp file {filepath}: {os_e}")
-        else:
-            await ctx.reply(response_text)
 
-    except Exception as e:
-        error_message = f"Error processing gurtai request: {str(e)}"
-        print(f"Exception in gurt_ai_command: {error_message}")
-        import traceback
-        traceback.print_exc()
-        await ctx.reply("Sorry, an unexpected error occurred.")
+    # Limit to 10 embeds max for Discord API
+    return embeds[:10]
 
-@commands.command(name="gurtmodel")
-@commands.is_owner() # Keep owner check for sensitive commands
-async def set_model_command(cog: 'GurtCog', ctx: commands.Context, *, model: str):
-    """Set the AI model to use (Owner only)"""
-    # Model setting might need to update config or cog state directly
-    # For now, let's assume it updates a cog attribute.
-    # Validation might be better handled in config loading or a dedicated setter.
-    # if not model.endswith(":free"): # Example validation
-    #     await ctx.reply("Error: Model name must end with `:free`. Setting not updated.")
-    #     return
 
-    cog.default_model = model # Update the cog's default model attribute
-    # TODO: Consider if this needs to persist somewhere or update config dynamically.
-    await ctx.reply(f"AI model temporarily set to: `{model}` for this session.")
-    print(f"Gurt model changed to {model} by {ctx.author.name}")
-
-@commands.command(name="gurtstatus")
-async def gurt_status_command(cog: 'GurtCog', ctx: commands.Context):
-    """Display the current status of Gurt Bot"""
-    embed = discord.Embed(
-        title="Gurt Bot Status",
-        description="Current configuration and status",
-        color=discord.Color.green()
-    )
-    embed.add_field(name="Current Model", value=f"`{cog.default_model}`", inline=False)
-    embed.add_field(name="API Session", value="Active" if cog.session and not cog.session.closed else "Inactive", inline=True)
-    # Add other relevant status info from the cog if needed
-    # embed.add_field(name="Current Mood", value=cog.current_mood, inline=True)
-    await ctx.send(embed=embed)
-
-@commands.command(name="gurthelp")
-async def gurt_help_command(cog: 'GurtCog', ctx: commands.Context):
-    """Display help information for Gurt Bot"""
-    from .config import TOOLS # Import TOOLS definition
-
-    embed = discord.Embed(
-        title="Gurt Bot Help",
-        description="Gurt is an autonomous AI participant.",
-        color=discord.Color.purple()
-    )
-    embed.add_field(
-        name="Commands",
-        value=f"`{cog.bot.command_prefix}gurt` - Gurt!\n"
-              f"`{cog.bot.command_prefix}gurtai <prompt>` - Ask Gurt AI directly\n"
-              f"`{cog.bot.command_prefix}gurtstatus` - Show current status\n"
-              f"`{cog.bot.command_prefix}gurthelp` - This help message\n"
-              f"`{cog.bot.command_prefix}gurtmodel <model>` - Set AI model (Owner)\n"
-              f"`{cog.bot.command_prefix}force_profile_update` - Trigger profile update (Owner)",
-        inline=False
-    )
-    embed.add_field(
-        name="Autonomous Behavior",
-        value="Gurt listens and responds naturally based on conversation, mentions, and interests.",
-        inline=False
-    )
-    # Dynamically list available tools from config
-    tool_list = "\n".join([f"- `{tool['function']['name']}`: {tool['function']['description']}" for tool in TOOLS])
-    embed.add_field(name="Available AI Tools", value=tool_list, inline=False)
-
-    await ctx.send(embed=embed)
-
-@commands.command(name="force_profile_update")
-@commands.is_owner()
-async def force_profile_update_command(cog: 'GurtCog', ctx: commands.Context):
-    """Manually triggers the profile update cycle (Owner only)."""
-    # This command interacts with another cog, which is complex after refactoring.
-    # Option 1: Keep this command in a separate 'owner' cog that knows about other cogs.
-    # Option 2: Use bot events/listeners for inter-cog communication.
-    # Option 3: Access the other cog directly via self.bot.get_cog (simplest for now).
-    profile_updater_cog = cog.bot.get_cog('ProfileUpdaterCog')
-    if not profile_updater_cog:
-        await ctx.reply("Error: ProfileUpdaterCog not found.")
-        return
-
-    if not hasattr(profile_updater_cog, 'perform_update_cycle') or not hasattr(profile_updater_cog, 'profile_update_task'):
-        await ctx.reply("Error: ProfileUpdaterCog is missing required methods/tasks.")
-        return
-
-    try:
-        await ctx.reply("Manually triggering profile update cycle...")
-        await profile_updater_cog.perform_update_cycle()
-        # Restarting the loop might be internal to that cog now
-        if hasattr(profile_updater_cog.profile_update_task, 'restart'):
-             profile_updater_cog.profile_update_task.restart()
-             await ctx.reply("Profile update cycle triggered and timer reset.")
-        else:
-             await ctx.reply("Profile update cycle triggered (task restart mechanism not found).")
-        print(f"Profile update cycle manually triggered by {ctx.author.name}.")
-    except Exception as e:
-        await ctx.reply(f"An error occurred while triggering the profile update: {e}")
-        print(f"Error during manual profile update trigger: {e}")
-        import traceback
-        traceback.print_exc()
-
-# Helper function to add these commands to the cog instance
+# --- Command Setup Function ---
+# This function will be called from GurtCog's setup method
 def setup_commands(cog: 'GurtCog'):
-    """Adds the commands defined in this file to the GurtCog."""
-    # Add commands directly to the bot instance, associated with the cog
-    cog.bot.add_command(gurt_command)
-    cog.bot.add_command(gurt_ai_command)
-    cog.bot.add_command(set_model_command)
-    cog.bot.add_command(gurt_status_command)
-    cog.bot.add_command(gurt_help_command)
-    cog.bot.add_command(force_profile_update_command)
+    """Adds Gurt-specific commands to the cog."""
+
+    # Example using app_commands - adapt existing commands if needed
+    @cog.bot.tree.command(name="gurtmood", description="Check or set Gurt's current mood.")
+    @app_commands.describe(mood="Optional: Set Gurt's mood to one of the available options.")
+    @app_commands.choices(mood=[
+        app_commands.Choice(name=m, value=m) for m in cog.MOOD_OPTIONS # Use cog's MOOD_OPTIONS
+    ])
+    async def gurtmood(interaction: discord.Interaction, mood: Optional[app_commands.Choice[str]] = None):
+        """Handles the /gurtmood command."""
+        if mood:
+            cog.current_mood = mood.value
+            cog.last_mood_change = time.time()
+            await interaction.response.send_message(f"Gurt's mood set to: {mood.value}", ephemeral=True)
+        else:
+            time_since_change = time.time() - cog.last_mood_change
+            await interaction.response.send_message(f"Gurt's current mood is: {cog.current_mood} (Set {int(time_since_change // 60)} minutes ago)", ephemeral=True)
+
+    @cog.bot.tree.command(name="gurtmemory", description="Interact with Gurt's memory.")
+    @app_commands.describe(
+        action="Choose an action: add_user, add_general, get_user, get_general",
+        user="The user for user-specific actions (mention or ID).",
+        fact="The fact to add (for add actions).",
+        query="A keyword to search for (for get_general)."
+    )
+    @app_commands.choices(action=[
+        app_commands.Choice(name="Add User Fact", value="add_user"),
+        app_commands.Choice(name="Add General Fact", value="add_general"),
+        app_commands.Choice(name="Get User Facts", value="get_user"),
+        app_commands.Choice(name="Get General Facts", value="get_general"),
+    ])
+    async def gurtmemory(interaction: discord.Interaction, action: app_commands.Choice[str], user: Optional[discord.User] = None, fact: Optional[str] = None, query: Optional[str] = None):
+        """Handles the /gurtmemory command."""
+        await interaction.response.defer(ephemeral=True) # Defer for potentially slow DB operations
+
+        target_user_id = str(user.id) if user else None
+        action_value = action.value
+
+        if action_value == "add_user":
+            if not target_user_id or not fact:
+                await interaction.followup.send("Please provide both a user and a fact to add.", ephemeral=True)
+                return
+            result = await cog.memory_manager.add_user_fact(target_user_id, fact)
+            await interaction.followup.send(f"Add User Fact Result: `{json.dumps(result)}`", ephemeral=True)
+
+        elif action_value == "add_general":
+            if not fact:
+                await interaction.followup.send("Please provide a fact to add.", ephemeral=True)
+                return
+            result = await cog.memory_manager.add_general_fact(fact)
+            await interaction.followup.send(f"Add General Fact Result: `{json.dumps(result)}`", ephemeral=True)
+
+        elif action_value == "get_user":
+            if not target_user_id:
+                await interaction.followup.send("Please provide a user to get facts for.", ephemeral=True)
+                return
+            facts = await cog.memory_manager.get_user_facts(target_user_id) # Get newest by default
+            if facts:
+                facts_str = "\n- ".join(facts)
+                await interaction.followup.send(f"**Facts for {user.display_name}:**\n- {facts_str}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"No facts found for {user.display_name}.", ephemeral=True)
+
+        elif action_value == "get_general":
+            facts = await cog.memory_manager.get_general_facts(query=query, limit=10) # Get newest/filtered
+            if facts:
+                facts_str = "\n- ".join(facts)
+                title = f"**General Facts{f' matching "{query}"' if query else ''}:**"
+                await interaction.followup.send(f"{title}\n- {facts_str}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"No general facts found{f' matching "{query}"' if query else ''}.", ephemeral=True)
+
+        else:
+            await interaction.followup.send("Invalid action specified.", ephemeral=True)
+
+    # --- Gurt Stats Command ---
+    @cog.bot.tree.command(name="gurtstats", description="Display Gurt's internal statistics.")
+    async def gurtstats(interaction: discord.Interaction):
+        """Handles the /gurtstats command."""
+        await interaction.response.defer(ephemeral=True) # Defer as stats collection might take time
+        try:
+            stats_data = await cog.get_gurt_stats()
+            embeds = format_stats_embeds(stats_data)
+            await interaction.followup.send(embeds=embeds, ephemeral=True)
+        except Exception as e:
+            print(f"Error in /gurtstats command: {e}")
+            import traceback
+            traceback.print_exc()
+            await interaction.followup.send("An error occurred while fetching Gurt's stats.", ephemeral=True)
+
+
+    print("Gurt commands setup in cog.")

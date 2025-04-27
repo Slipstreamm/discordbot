@@ -11,10 +11,11 @@ from commands import load_all_cogs, reload_all_cogs
 from error_handler import handle_error, patch_discord_methods, store_interaction_content
 from utils import reload_script
 
-# Import the unified API service runner
+# Import the unified API service runner and the sync API module
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from discordbot.run_unified_api import start_api_in_thread
+import discord_bot_sync_api # Import the module to set the cog instance
 
 # Check if API dependencies are available
 try:
@@ -234,6 +235,19 @@ async def main():
         async with bot:
             # Load all cogs from the 'cogs' directory
             await load_all_cogs(bot)
+
+            # --- Share GurtCog instance with the sync API ---
+            try:
+                gurt_cog = bot.get_cog("Gurt") # Get the loaded GurtCog instance
+                if gurt_cog:
+                    discord_bot_sync_api.gurt_cog_instance = gurt_cog
+                    print("Successfully shared GurtCog instance with discord_bot_sync_api.")
+                else:
+                    print("Warning: GurtCog not found after loading cogs. Stats API might not work.")
+            except Exception as e:
+                print(f"Error sharing GurtCog instance: {e}")
+            # ------------------------------------------------
+
             # Start the bot using start() for async context
             await bot.start(TOKEN)
     finally:
