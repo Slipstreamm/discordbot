@@ -29,7 +29,7 @@ from .config import (
     EVOLUTION_UPDATE_INTERVAL, RESPONSE_SCHEMA, TOOLS # Import necessary configs
 )
 # Import functions/classes from other modules
-from ..gurt_memory import MemoryManager # Go up one level
+from .memory import MemoryManager # Import from local memory.py
 from .background import background_processing_task
 from .commands import setup_commands # Import the setup helper
 from .listeners import on_ready_listener, on_message_listener, on_reaction_add_listener, on_reaction_remove_listener # Import listener functions

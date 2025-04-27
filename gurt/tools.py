@@ -19,7 +19,7 @@ import docker
 import docker.aio
 
 # Relative imports from within the gurt package and parent
-from ..gurt_memory import MemoryManager # Go up one level
+from .memory import MemoryManager # Import from local memory.py
 from .config import (
     TAVILY_API_KEY, PISTON_API_URL, PISTON_API_KEY, SAFETY_CHECK_MODEL,
     DOCKER_EXEC_IMAGE, DOCKER_COMMAND_TIMEOUT, DOCKER_CPU_LIMIT, DOCKER_MEM_LIMIT,

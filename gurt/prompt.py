@@ -10,7 +10,7 @@ from .config import (
     BASELINE_PERSONALITY, MOOD_OPTIONS, CHANNEL_TOPIC_CACHE_TTL,
     INTEREST_MAX_FOR_PROMPT, INTEREST_MIN_LEVEL_FOR_PROMPT
 )
-from ..gurt_memory import MemoryManager # Go up one level to import MemoryManager
+from .memory import MemoryManager # Import from local memory.py
 
 if TYPE_CHECKING:
     from .cog import GurtCog # Import GurtCog for type hinting only
