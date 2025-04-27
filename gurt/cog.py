@@ -149,10 +149,25 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
              print("WARNING: Tavily API key not configured (TAVILY_API_KEY). Web search disabled.")
 
         # Add listeners to the bot instance
-        self.bot.add_listener(on_ready_listener(self), 'on_ready')
-        self.bot.add_listener(on_message_listener(self), 'on_message')
-        self.bot.add_listener(on_reaction_add_listener(self), 'on_reaction_add')
-        self.bot.add_listener(on_reaction_remove_listener(self), 'on_reaction_remove')
+        # We need to define the listener functions here to properly register them
+
+        @self.bot.event
+        async def on_ready():
+            await on_ready_listener(self)
+
+        @self.bot.event
+        async def on_message(message):
+            await self.bot.process_commands(message)  # Process commands first
+            await on_message_listener(self, message)
+
+        @self.bot.event
+        async def on_reaction_add(reaction, user):
+            await on_reaction_add_listener(self, reaction, user)
+
+        @self.bot.event
+        async def on_reaction_remove(reaction, user):
+            await on_reaction_remove_listener(self, reaction, user)
+
         print("GurtCog: Listeners added.")
 
         # Start background task
@@ -170,19 +185,9 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
         if self.background_task and not self.background_task.done():
             self.background_task.cancel()
             print("GurtCog: Cancelled background processing task.")
-        # Remove listeners
-        # Note: Removing listeners dynamically added like this can be tricky.
-        # It might be simpler to rely on cog unload handling by discord.py if listeners
-        # were added via @commands.Cog.listener decorator within the class.
-        # Since we added them manually, we should ideally remove them.
-        try:
-            self.bot.remove_listener(on_ready_listener(self), 'on_ready')
-            self.bot.remove_listener(on_message_listener(self), 'on_message')
-            self.bot.remove_listener(on_reaction_add_listener(self), 'on_reaction_add')
-            self.bot.remove_listener(on_reaction_remove_listener(self), 'on_reaction_remove')
-            print("GurtCog: Listeners removed.")
-        except Exception as e:
-            print(f"GurtCog: Error removing listeners: {e}")
+        # Note: When using @bot.event, we can't easily remove the listeners
+        # The bot will handle this automatically when it's closed
+        print("GurtCog: Listeners will be removed when bot is closed.")
 
         print("GurtCog unloaded.")
 
