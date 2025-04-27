@@ -52,6 +52,7 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
         self.tavily_client = TavilyClient(api_key=self.tavily_api_key) if self.tavily_api_key else None
         self.default_model = DEFAULT_MODEL # Use imported config
         self.fallback_model = FALLBACK_MODEL # Use imported config
+        self.MOOD_OPTIONS = MOOD_OPTIONS # Make MOOD_OPTIONS available as an instance attribute
         self.current_channel: Optional[Union[discord.TextChannel, discord.Thread, discord.DMChannel]] = None # Type hint current channel
 
         # Instantiate MemoryManager
