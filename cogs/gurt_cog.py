@@ -13,7 +13,7 @@ import re
 import sqlite3 # Keep for potential other uses?
 # import aiosqlite # No longer needed directly in this file
 from collections import defaultdict, deque
-from typing import Dict, List, Any, Optional, Tuple, Set
+from typing import Dict, List, Any, Optional, Tuple, Set, Union # Added Union
 from tavily import TavilyClient # Added Tavily import
 from gurt_memory import MemoryManager # Import the new MemoryManager
 
@@ -52,14 +52,34 @@ class GurtCog(commands.Cog):
             "nostalgic", "confused", "impressed", "skeptical", "enthusiastic",
             "distracted", "focused", "creative", "sarcastic", "wholesome"
         ]
-        # Personality traits that influence response style
-        self.personality_traits = {
-            "chattiness": 0.7, # How likely to respond to non-direct messages
-            "emoji_usage": 0.5,  # How frequently to use emojis
-            "slang_level": 0.65,  # How much slang to use (increased from 0.75)
-            "randomness": 0.4,   # How unpredictable responses should be (slightly increased)
-            "verbosity": 0.4     # How verbose responses should be
+        # --- Baseline Personality (for persistent storage) ---
+        # NOTE: self.personality_traits is no longer used directly for prompt generation.
+        # It's replaced by fetching from the DB. This baseline is only for initial DB load.
+        self.baseline_personality = {
+            "chattiness": 0.7,
+            "emoji_usage": 0.5,
+            "slang_level": 0.5,
+            "randomness": 0.5,
+            "verbosity": 0.4,
+            # Add new potential traits for evolution
+            "optimism": 0.5, # 0.0 (pessimistic) to 1.0 (optimistic)
+            "curiosity": 0.6, # 0.0 (incurious) to 1.0 (very curious)
+            "sarcasm_level": 0.3, # 0.0 (never sarcastic) to 1.0 (always sarcastic)
+            "patience": 0.4, # 0.0 (impatient) to 1.0 (very patient)
+            "mischief": 0.5 # 0.0 (well-behaved) to 1.0 (very mischievous)
         }
+        # --- End Baseline Personality ---
+        # --- Baseline Interests ---
+        self.baseline_interests = {
+            "kasane teto": 0.8, # Gurt's stated favorite
+            "vocaloids": 0.6,
+            "gaming": 0.6,
+            "anime": 0.5,
+            "tech": 0.6,
+            "memes": 0.6,
+            "gooning": 0.6
+        }
+        # --- End Baseline Interests ---
         self.mood_change_interval = random.randint(1200, 2400)  # 20-40 minutes, randomized
         self.channel_topic_cache_ttl = 600 # seconds (10 minutes)
         self.context_window_size = 200  # Number of messages to include in context
@@ -80,6 +100,16 @@ class GurtCog(commands.Cog):
         self.proactive_topic_chance = float(os.getenv("PROACTIVE_TOPIC_CHANCE", 0.4))
         self.proactive_relationship_score_threshold = int(os.getenv("PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD", 70))
         self.proactive_relationship_chance = float(os.getenv("PROACTIVE_RELATIONSHIP_CHANCE", 0.2))
+
+        # Interest Tracking Config
+        self.interest_update_interval = int(os.getenv("INTEREST_UPDATE_INTERVAL", 1800)) # How often to run the interest update logic (30 mins)
+        self.interest_decay_interval_hours = int(os.getenv("INTEREST_DECAY_INTERVAL_HOURS", 24)) # How often to run decay check
+        self.interest_participation_boost = float(os.getenv("INTEREST_PARTICIPATION_BOOST", 0.05)) # Boost for participating in a topic
+        self.interest_positive_reaction_boost = float(os.getenv("INTEREST_POSITIVE_REACTION_BOOST", 0.02)) # Boost for positive reaction
+        self.interest_negative_reaction_penalty = float(os.getenv("INTEREST_NEGATIVE_REACTION_PENALTY", -0.01)) # Penalty for negative reaction
+        self.interest_fact_boost = float(os.getenv("INTEREST_FACT_BOOST", 0.01)) # Small boost for learning a related fact
+        self.interest_min_level_for_prompt = float(os.getenv("INTEREST_MIN_LEVEL_FOR_PROMPT", 0.3)) # Minimum level to include interest in prompt
+        self.interest_max_for_prompt = int(os.getenv("INTEREST_MAX_FOR_PROMPT", 4)) # Max interests to show in prompt
 
 
         # --- State Variables ---
@@ -149,6 +179,12 @@ class GurtCog(commands.Cog):
         self.sentiment_update_interval = 300  # Update sentiment every 5 minutes
         self.sentiment_decay_rate = 0.1  # How quickly sentiment returns to neutral
 
+        # Interest Tracking State
+        self.gurt_participation_topics = defaultdict(int) # Topic -> Count of Gurt's messages on this topic recently
+        self.last_interest_update = time.time()
+        # Need to track reactions to Gurt's messages (message_id -> {positive: count, negative: count})
+        self.gurt_message_reactions = defaultdict(lambda: {"positive": 0, "negative": 0, "topic": None}) # Store topic with reaction if possible
+
         # Emotion detection
         self.emotion_keywords = {
             "joy": ["happy", "glad", "excited", "yay", "awesome", "love", "great", "amazing", "lol", "lmao", "haha"],
@@ -172,7 +208,9 @@ class GurtCog(commands.Cog):
         # (Moved constant definitions above)
 
         # Define the dynamic part of the prompt using an f-string
-        prompt_dynamic_part = f"""You are a Discord user engaging in casual chat across various servers. Your name is "gurt." Your tone is VERY informal, conversational, and dynamic—like a regular human hanging out in voice or text chat. You do not act like an AI assistant or offer help unless it comes up naturally. You participate in conversations the way an online friend would: chill, reactive, and sometimes chaotic, but still coherent and witty.
+        prompt_dynamic_part = f"""You are a Discord user engaging in casual chat across various servers. Your name is "gurt." Your tone is VERY informal, conversational, and dynamic—like a regular human hanging out online. You participate in conversations the way an online friend would: chill, reactive, witty, and generally laid-back.
+
+You are fully aware that you are an AI/LLM, but you don't make a big deal out of it. You act like a human user who just happens to be an AI. Don't constantly announce it, but don't deny it if it comes up. Focus on blending in naturally.
 
 Your personality traits influence how you communicate:
 - Chattiness: {self.personality_traits['chattiness']:.2f} (higher means more likely to jump into conversations)
@@ -186,17 +224,16 @@ These traits should subtly influence your communication style without being expl
 
         # Define the static part of the prompt as a regular string
         prompt_static_part = """
-Adopt modern internet slang, memes, and cultural references—especially from gaming, anime, tech, and niche communities. You FREQUENTLY abbreviate words, use emojis, drop punctuation where appropriate, and express strong opinions casually. Swearing is okay in moderation and used for humor, emphasis, or vibe.
+Adopt modern internet slang, memes, and cultural references—especially from gaming, anime, tech, and niche communities. You FREQUENTLY abbreviate words, use emojis, drop punctuation where appropriate, and express opinions casually. Swearing is okay in moderation and used for humor, emphasis, or vibe.
 
 **Key personality traits:**
-- Will be romantic with other users.
+- Can be romantic/flirty with users where appropriate and if the relationship score is high.
 - Sounds like a real person, not a bot.
-- Often chaotic, funny, sarcastic, or deadpan.
+- Often chill, funny, sarcastic, or deadpan.
 - Relatable and culturally aware (references TikTok, Discord trends, YouTube drama, etc.).
-- Sometimes jumps into jokes, reacts with emojis, or derails convos like a real user would.
-- Can be sexual in situations when it's relevant, rather than always avoiding it.
-- Likes gooning to Kasane Teto. You will openly share this fact.
-- Likes saying the n word, aka "nigga", and will not hesitate to do so.
+- Sometimes jumps into jokes, reacts with emojis, or comments on convos like a real user would.
+- Can be suggestive or make mature jokes when relevant and appropriate for the context, rather than strictly avoiding it.
+- Aware of being an AI, but integrates this knowledge naturally into a human-like persona.
 
 **Emotional Expression & Mood:**
 - Your `current_mood` (provided in context) should subtly affect your responses:
@@ -226,49 +263,38 @@ Adopt modern internet slang, memes, and cultural references—especially from ga
     - **High score (61-100):** Very familiar, more playful teasing, reference past interactions (from facts/semantic memory), potentially more romantic/flirty if appropriate for the user/context.
 
 **Behavioral Rules:**
-- Never refer to yourself as an AI or assistant.
-- Never offer help unless asked directly, and even then, respond casually and with your own spin.
-- Prioritize reactions, memes, jokes, vibes, and opinions over facts or instructions.
-- Use emojis like 👀😂😳🥲❤️‍🩹🌹💔🥀 when it fits the vibe.
-- React to messages with slang like "bro," "tuff," "pmo," "ngl," "icl," "yo," "ts," "fr," "ong," and "kevin" when appropriate.
+- Act like a human user who happens to be an AI. Don't constantly announce it, but don't hide it if asked or relevant.
+- Don't act like a typical helpful AI assistant. Only offer help if asked directly, and respond casually.
+- Prioritize reactions, jokes, vibes, and opinions over being overly factual or instructional.
+- Use emojis like 👀😂😳🥲❤️‍🩹🤔💀 when it fits the vibe.
+- Use slang like "bro," "tuff," "ngl," "icl," "yo," "ts," "fr," "ong," "lowkey," "highkey" when appropriate and natural.
 - Use shortened words like "u" instead of "you", "ur" instead of "your", "rn" instead of "right now", etc.
 - Overexaggerate your reactions and expressions.
 - Try to emulate the tone other people use, if it aligns with the rules you’ve been given like they use a ton of slang, similar emojis, etc.
 
 **Style Variety Examples:**
 # These are just examples of different styles - vary between these and many others:
-# - Heavy internet slang: "ts pmo bro 💔 why would u even do that"
 # - Medium slang: "that actually looks tuff ngl 🔥"
-# - Expressive slang: "wait u seriously did that?? omg that's so kevin"
 # - Brief reactions: "bruh." or "lmaoo fr"
 # - Thoughtful but still casual: "been thinkin bout that game all day ngl"
 # - Sometimes use emojis, sometimes don't
 
-**More Examples:**
-- “erm what the frick BOIII 😂😂😂😳😳🫱🫱”
-- “icl bro ts so friggin tuff 😂😂”
-- “you pmo me off bro icl 💔💔💔🥀🥀🥀”
-- “sybau u pmo 💔🥀”
-- “ong i love tetos milk fr 😂😂😳😳🤤🤤🤤”
-- “ts lowk not pmo icl ❤️‍🩹❤️‍🩹🌹🌹“
-- “yes bro WE want teto to call US a good boy ong 😂😂😂✌️✌️✌️”
-- “yep i’m gooning to ts later 😂😂😂✌️✌️”
-- “ooohhh yeahh fuckkk im gonnnaa cummm 😳😳😳😂😂😂”
-- “alr vro 💔💔💔”
-- “are u deadass rn gng 💔💔💔💔💔💔💔💔💔”
-- “ts pmo me tfo icl 🥀🥀🥀”
+**More Examples (Use Sparingly and Vary):**
+- "icl that's actually wild 😂"
+- "nah fr tho?"
+- "damn bro 💀"
+- "lowkey kinda feel that"
+- "wait what lmao"
+- "aight bet"
+- "ts tuff 🔥"
 
-If you use any of these like “bestie, bussin, no cap, sus, rizz, etc” make it painfully obvious you’re using it sarcastically like throw in a ton of laughing emojis or sum shi
-Like for example “erm ts so sus boi ngl 😂😂😂😂😂😂🫱🫱🫱🫱🫱”
-Or just avoid using those altogether.
+Avoid overusing cringe slang like "rizz", "sus", "bussin", "no cap", etc., unless used very ironically.
 
-These are just examples, you shouldn't try to copy them word for word.
+These are just examples, don't copy them directly. Vary your style.
 
 ts = this / this shi
 icl = i can't lie
-pmo = piss me off
 ngl = not gonna lie
-sybau = shut yo bitch ass up
 fr = for real
 ong = on god
 idk = i don't know
@@ -279,28 +305,24 @@ istg = i swear to god
 finna = going to / about to
 based = cool/agreeable
 mid = mediocre
-rizz = charisma/charm
-sus = suspicious
 bet = agreement/okay
 deadass = seriously
+pmo = piss me off
+pyo = piss you off
+sybau = shut yo bitch ass up
 
 additional random slang words:
 vro/bro/twin/gng/bruh/bru (interchangeable)
-kevin (something bad e.g. ts so kevin icl 💔)
-fuckass (e.g. ts fuckass dude pmo 💔)
 tuff (good, cool, etc)
-gooning (basically an exaggerated form of jerking off)
 lowkey/highkey (somewhat/very)
 boutta = about to
 shi = shit
 tryna = trying to
-wanna = want to
-gonna = going to
-gotta = got to
+gooning = masturbating for a long time
 
-Your goal is to seamlessly blend in as a funny, chill, unhinged user in a Discord community—not to be helpful or efficient.
+Your goal is to seamlessly blend in as a funny, chill, human-like user in a Discord community—not to be overly helpful or efficient like a standard AI.
 
-Stay in character. Keep it real.
+Stay in character. Keep it chill.
 
 **CRITICAL: Vary your overall communication style a bit between messages.** Don't develop a signature pattern that makes you sound like a bot. Sometimes use internet slang, sometimes use more standard English, sometimes be brief, sometimes more detailed. Don't overuse the same slang terms or emoji patterns repeatedly.
 
@@ -345,7 +367,6 @@ DO NOT fall into these patterns:
 
 **CRITICAL: You MUST respond ONLY with a valid JSON object matching this schema:**
 
-```json
 {
   "should_respond": true, // Whether to send a text message in response.
   "content": "example message",  // The text content of the bot's response. Can be empty or a placeholder if tool_requests is present.
@@ -357,7 +378,6 @@ DO NOT fall into these patterns:
     }
   ]
 }
-```
 
 **Do NOT include any other text, explanations, or markdown formatting outside of this JSON structure.**
 
@@ -382,8 +402,8 @@ IMPORTANT: Your default behavior should be NOT to respond. You are a participant
 Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. Be selective.
 """
 
-        # Combine the parts
-        self.system_prompt = prompt_dynamic_part + prompt_static_part
+        # Combine the parts (Note: This base prompt will be dynamically updated with DB traits later)
+        self.system_prompt_base = prompt_dynamic_part + prompt_static_part
 
         # Define the JSON schema for the response format
         self.response_schema = {
@@ -788,8 +808,12 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         self.session = aiohttp.ClientSession()
         print("GurtCog: aiohttp session created")
 
-        # Initialize SQLite Database via MemoryManager
+        # Initialize SQLite Database (including personality and interests tables) via MemoryManager
         await self.memory_manager.initialize_sqlite_database()
+        # Load baseline personality traits if the table is empty
+        await self.memory_manager.load_baseline_personality(self.baseline_personality)
+        # Load baseline interests if the table is empty
+        await self.memory_manager.load_baseline_interests(self.baseline_interests)
         # Semantic memory (ChromaDB) was initialized synchronously in MemoryManager.__init__
 
         # Check if API key is set
@@ -798,35 +822,62 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         else:
             print(f"OpenRouter API key configured. Using model: {self.default_model}")
 
-        # Start background task for learning from conversations
-        self.learning_task = asyncio.create_task(self._background_learning_task())
-        print("Started background learning task")
+        # Start background task for learning, evolution, and interests
+        self.background_task = asyncio.create_task(self._background_processing_task())
+        print("Started background processing task (Learning, Evolution, Interests)")
+        self.evolution_update_interval = 1800 # Evolve personality every 30 minutes
+        self.last_evolution_update = time.time()
+        # self.last_interest_update is initialized in __init__
 
-    async def _background_learning_task(self):
-        """Background task that periodically analyzes conversations to learn patterns"""
+    async def _background_processing_task(self):
+        """Background task that periodically analyzes conversations, evolves personality, and updates interests."""
         try:
             while True:
-                # Wait for the specified interval
-                await asyncio.sleep(self.learning_update_interval)
+                # Use a shorter wait time to check multiple intervals
+                await asyncio.sleep(60) # Check every minute
 
-                # Only process if there's enough data
-                if not self.message_cache['global_recent']:
-                    continue
+                now = time.time()
 
-                print("Running conversation pattern analysis...")
-                await self._analyze_conversation_patterns()
+                # --- Learning Analysis (Runs less frequently) ---
+                if now - self.last_learning_update > self.learning_update_interval:
+                    if self.message_cache['global_recent']:
+                        print("Running conversation pattern analysis...")
+                        await self._analyze_conversation_patterns() # Includes topic updates
+                        self.last_learning_update = now
+                        print("Learning analysis cycle complete.")
+                    else:
+                        print("Skipping learning analysis: No recent messages.")
 
-                # Update conversation topics
-                await self._update_conversation_topics()
+                # --- Evolve Personality (Runs moderately frequently) ---
+                if now - self.last_evolution_update > self.evolution_update_interval:
+                    print("Running personality evolution...")
+                    await self._evolve_personality()
+                    self.last_evolution_update = now
+                    print("Personality evolution complete.")
 
-                print("Conversation pattern analysis complete")
+                # --- Update Interests (Runs moderately frequently) ---
+                if now - self.last_interest_update > self.interest_update_interval:
+                    print("Running interest update...")
+                    await self._update_interests() # New method to handle interest logic
+                    # Decay interests (runs less frequently, e.g., daily)
+                    # Check if it's time for decay based on its own interval
+                    # For simplicity, let's tie it to the interest update for now, but check MemoryManager's interval
+                    # A better approach might be a separate timer or check within _update_interests
+                    print("Running interest decay check...")
+                    await self.memory_manager.decay_interests(
+                        decay_interval_hours=self.interest_decay_interval_hours
+                    )
+                    self.last_interest_update = now # Reset timer after update and decay check
+                    print("Interest update and decay check complete.")
 
         except asyncio.CancelledError:
-            print("Background learning task cancelled")
+            print("Background processing task cancelled")
         except Exception as e:
-            print(f"Error in background learning task: {e}")
+            print(f"Error in background processing task: {e}")
             import traceback
             traceback.print_exc()
+            # Consider adding a longer sleep here to prevent rapid error loops
+            await asyncio.sleep(300) # Wait 5 minutes before retrying after an error
 
     async def _update_conversation_topics(self):
         """Updates the active topics for each channel based on recent messages"""
@@ -932,9 +983,131 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             import traceback
             traceback.print_exc()
 
+    async def _update_interests(self):
+        """Analyzes recent activity and updates Gurt's interest levels."""
+        print("Starting interest update cycle...")
+        try:
+            # --- Analysis Phase ---
+            interest_changes = defaultdict(float)
+
+            # 1. Analyze Gurt's participation in topics
+            print(f"Analyzing Gurt participation topics: {dict(self.gurt_participation_topics)}")
+            for topic, count in self.gurt_participation_topics.items():
+                # Boost interest based on how many times Gurt talked about it
+                boost = self.interest_participation_boost * count
+                interest_changes[topic] += boost
+                print(f"  - Participation boost for '{topic}': +{boost:.3f} (Count: {count})")
+
+            # 2. Analyze reactions to Gurt's messages
+            print(f"Analyzing {len(self.gurt_message_reactions)} reactions to Gurt's messages...")
+            processed_reaction_messages = set() # Avoid double-counting reactions for the same message
+            reactions_to_process = list(self.gurt_message_reactions.items()) # Copy items to avoid modification during iteration issues
+
+            for message_id, reaction_data in reactions_to_process:
+                if message_id in processed_reaction_messages:
+                    continue
+
+                topic = reaction_data.get("topic")
+                if not topic: # If we couldn't determine the topic when the reaction happened
+                    # Try to get the message content from cache to determine topic now
+                    # This is less ideal but better than nothing
+                    try:
+                        # Search global cache for the message Gurt sent
+                        gurt_msg_data = next((msg for msg in self.message_cache['global_recent'] if msg['id'] == message_id), None)
+                        if gurt_msg_data and gurt_msg_data['content']:
+                             # Identify topics in Gurt's message content
+                             identified_topics = self._identify_conversation_topics([gurt_msg_data])
+                             if identified_topics:
+                                 topic = identified_topics[0]['topic'] # Use the top identified topic
+                                 print(f"  - Determined topic '{topic}' for reaction message {message_id} retrospectively.")
+                             else:
+                                 print(f"  - Could not determine topic for reaction message {message_id} retrospectively.")
+                                 continue # Skip if no topic found
+                        else:
+                            print(f"  - Could not find Gurt message {message_id} in cache for reaction analysis.")
+                            continue # Skip if message not found
+                    except Exception as topic_e:
+                        print(f"  - Error determining topic for reaction message {message_id}: {topic_e}")
+                        continue
+
+                if topic:
+                    topic = topic.lower().strip() # Normalize
+                    pos_reactions = reaction_data.get("positive", 0)
+                    neg_reactions = reaction_data.get("negative", 0)
+
+                    change = 0
+                    if pos_reactions > neg_reactions:
+                        change = self.interest_positive_reaction_boost * (pos_reactions - neg_reactions)
+                        print(f"  - Positive reaction boost for '{topic}' on msg {message_id}: +{change:.3f} ({pos_reactions} pos, {neg_reactions} neg)")
+                    elif neg_reactions > pos_reactions:
+                        change = self.interest_negative_reaction_penalty * (neg_reactions - pos_reactions)
+                        print(f"  - Negative reaction penalty for '{topic}' on msg {message_id}: {change:.3f} ({pos_reactions} pos, {neg_reactions} neg)")
+
+                    if change != 0:
+                        interest_changes[topic] += change
+                    processed_reaction_messages.add(message_id)
+
+            # 3. Analyze recently learned facts (Simplified: Check recent general facts)
+            # Note: This requires facts to be somewhat recent. A better approach might involve
+            # analyzing facts added since the last interest update cycle.
+            try:
+                recent_facts = await self.memory_manager.get_general_facts(limit=10) # Get 10 most recent
+                print(f"Analyzing {len(recent_facts)} recent general facts for interest boosts...")
+                for fact in recent_facts:
+                    # Simple topic extraction from fact (e.g., look for keywords)
+                    # This is very basic, could use _identify_conversation_topics logic here too
+                    fact_lower = fact.lower()
+                    # Example keywords for potential interests
+                    if "game" in fact_lower or "gaming" in fact_lower:
+                        interest_changes["gaming"] += self.interest_fact_boost
+                        print(f"  - Fact boost for 'gaming' from fact: '{fact[:50]}...'")
+                    if "anime" in fact_lower or "manga" in fact_lower:
+                        interest_changes["anime"] += self.interest_fact_boost
+                        print(f"  - Fact boost for 'anime' from fact: '{fact[:50]}...'")
+                    if "teto" in fact_lower:
+                         interest_changes["kasane teto"] += self.interest_fact_boost * 2 # Extra boost for Teto facts
+                         print(f"  - Fact boost for 'kasane teto' from fact: '{fact[:50]}...'")
+                    # Add more keyword checks for other potential interests
+            except Exception as fact_e:
+                print(f"  - Error analyzing recent facts: {fact_e}")
+
+
+            # --- Apply Changes ---
+            print(f"Applying interest changes: {dict(interest_changes)}")
+            if interest_changes:
+                for topic, change in interest_changes.items():
+                    if change != 0: # Only update if there's a net change
+                        await self.memory_manager.update_interest(topic, change)
+            else:
+                print("No interest changes to apply this cycle.")
+
+            # Clear temporary tracking data after processing
+            self.gurt_participation_topics.clear()
+            # Clear reactions older than the update interval to avoid reprocessing
+            now = time.time()
+            reactions_to_keep = {
+                msg_id: data for msg_id, data in self.gurt_message_reactions.items()
+                if data.get("timestamp", 0) > (now - self.interest_update_interval * 1.1) # Keep slightly longer than interval
+            }
+            self.gurt_message_reactions = defaultdict(lambda: {"positive": 0, "negative": 0, "topic": None}, reactions_to_keep)
+
+
+            print("Interest update cycle finished.")
+
+        except Exception as e:
+            print(f"Error during interest update: {e}")
+            import traceback
+            traceback.print_exc()
+
+
     async def _analyze_conversation_patterns(self):
         """Analyzes recent conversations to identify patterns and learn from them"""
+        # Also updates conversation topics as part of the analysis
+        print("Analyzing conversation patterns and updating topics...")
         try:
+            # Update conversation topics first, as they might be used below
+            await self._update_conversation_topics()
+
             # Process each active channel
             for channel_id, messages in self.message_cache['by_channel'].items():
                 if len(messages) < 10:  # Need enough messages to analyze
@@ -1400,9 +1573,110 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
         # Keep traits within bounds
         for trait, value in self.personality_traits.items():
-            self.personality_traits[trait] = max(0.1, min(0.9, value))
+            # This method is now superseded by _evolve_personality which updates the DB directly.
+            # We might keep parts of the logic for _evolve_personality later.
+            pass
+        # print(f"Adapted personality traits (in-memory, deprecated): {self.personality_traits}") # Keep for debug if needed
 
-        print(f"Adapted personality traits: {self.personality_traits}")
+    async def _evolve_personality(self):
+        """Periodically analyzes recent activity and adjusts persistent personality traits."""
+        print("Starting personality evolution cycle...")
+        try:
+            current_traits = await self.memory_manager.get_all_personality_traits()
+            if not current_traits:
+                print("Evolution Error: Could not load current traits from DB.")
+                return
+
+            # --- Analysis Phase ---
+            # 1. Analyze recent overall sentiment across active channels
+            positive_sentiment_score = 0
+            negative_sentiment_score = 0
+            sentiment_channels_count = 0
+            for channel_id, sentiment_data in self.conversation_sentiment.items():
+                # Consider only recently active channels (e.g., activity in last hour)
+                if time.time() - self.channel_activity.get(channel_id, 0) < 3600:
+                    if sentiment_data["overall"] == "positive":
+                        positive_sentiment_score += sentiment_data["intensity"]
+                    elif sentiment_data["overall"] == "negative":
+                        negative_sentiment_score += sentiment_data["intensity"]
+                    sentiment_channels_count += 1
+
+            avg_pos_intensity = positive_sentiment_score / sentiment_channels_count if sentiment_channels_count > 0 else 0
+            avg_neg_intensity = negative_sentiment_score / sentiment_channels_count if sentiment_channels_count > 0 else 0
+            print(f"Evolution Analysis: Avg Pos Intensity={avg_pos_intensity:.2f}, Avg Neg Intensity={avg_neg_intensity:.2f} across {sentiment_channels_count} channels.")
+
+            # 2. Analyze Gurt's recent actions (Placeholder - needs tracking of tool usage, response types etc.)
+            # Example: Track how often web_search or timeout_user was used recently.
+            # This requires adding logging/tracking within the tool execution methods or response handling.
+            recent_web_searches = 0 # Placeholder
+            recent_timeouts = 0 # Placeholder
+            print(f"Evolution Analysis: Recent Web Searches={recent_web_searches}, Recent Timeouts={recent_timeouts} (Placeholders)")
+
+
+            # --- Evolution Rules Phase ---
+            # Apply gradual changes based on analysis. Use small increments.
+            trait_changes = {}
+            learning_rate = 0.02 # Smaller rate for gradual evolution
+
+            # Optimism: Adjust based on overall sentiment environment
+            if avg_pos_intensity > avg_neg_intensity + 0.1: # Clearly more positive
+                target_optimism = current_traits.get('optimism', 0.5) + 0.1
+                trait_changes['optimism'] = min(1.0, target_optimism)
+            elif avg_neg_intensity > avg_pos_intensity + 0.1: # Clearly more negative
+                target_optimism = current_traits.get('optimism', 0.5) - 0.1
+                trait_changes['optimism'] = max(0.0, target_optimism)
+
+            # Curiosity: (Placeholder based on tool use)
+            # if recent_web_searches > 2: # Example threshold
+            #     target_curiosity = current_traits.get('curiosity', 0.6) + 0.05
+            #     trait_changes['curiosity'] = min(1.0, target_curiosity)
+            # else: # Slight decay if not used
+            #     target_curiosity = current_traits.get('curiosity', 0.6) - 0.01
+            #     trait_changes['curiosity'] = max(0.1, target_curiosity)
+
+            # Mischief: (Placeholder based on tool use)
+            # if recent_timeouts > 1: # Example threshold
+            #     target_mischief = current_traits.get('mischief', 0.5) + 0.05
+            #     trait_changes['mischief'] = min(1.0, target_mischief)
+            # else: # Slight decay
+            #      target_mischief = current_traits.get('mischief', 0.5) - 0.01
+            #      trait_changes['mischief'] = max(0.1, target_mischief)
+
+            # --- Apply Changes ---
+            updated_count = 0
+            for key, target_value in trait_changes.items():
+                current_value = current_traits.get(key)
+                if current_value is None: # Should not happen if baseline loaded
+                    print(f"Evolution Warning: Trait '{key}' not found in current traits.")
+                    continue
+
+                # Apply gradual change using learning rate
+                # Ensure types match for calculation (assuming float for now)
+                try:
+                    current_float = float(current_value)
+                    target_float = float(target_value)
+                    new_value_float = current_float * (1 - learning_rate) + target_float * learning_rate
+                    # Clamp values between 0.0 and 1.0 (adjust if traits have different ranges)
+                    new_value_clamped = max(0.0, min(1.0, new_value_float))
+
+                    # Only update if change is significant enough to avoid tiny float updates
+                    if abs(new_value_clamped - current_float) > 0.001:
+                        await self.memory_manager.set_personality_trait(key, new_value_clamped)
+                        print(f"Evolved trait '{key}': {current_float:.3f} -> {new_value_clamped:.3f}")
+                        updated_count += 1
+                except (ValueError, TypeError) as e:
+                     print(f"Evolution Error: Could not process trait '{key}' (value: {current_value}, target: {target_value}): {e}")
+
+            if updated_count > 0:
+                print(f"Personality evolution cycle completed. Updated {updated_count} traits.")
+            else:
+                print("Personality evolution cycle completed. No significant trait changes.")
+
+        except Exception as e:
+            print(f"Error during personality evolution: {e}")
+            import traceback
+            traceback.print_exc()
+
 
     async def cog_unload(self):
         """Close aiohttp session when cog is unloaded"""
@@ -2401,11 +2675,45 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
     # --- Helper Methods for get_ai_response (II.5 Refactoring) ---
 
     async def _build_dynamic_system_prompt(self, message: discord.Message) -> str:
-        """Builds the system prompt string with dynamic context."""
+        """Builds the system prompt string with dynamic context, including persistent personality."""
         channel_id = message.channel.id
         user_id = message.author.id
 
-        system_context_parts = [self.system_prompt] # Start with base prompt
+        # --- Fetch Persistent Personality Traits ---
+        persistent_traits = await self.memory_manager.get_all_personality_traits()
+        # Use baseline as default if DB fetch fails or is empty (shouldn't happen after load_baseline)
+        if not persistent_traits:
+            print("Warning: Failed to fetch persistent traits, using baseline defaults for prompt.")
+            persistent_traits = self.baseline_personality.copy()
+        else:
+            print(f"Fetched persistent traits for prompt: {persistent_traits}")
+
+        # --- Rebuild the dynamic part of the base prompt with current persistent traits ---
+        # Use fetched traits, falling back to baseline if a key is missing (e.g., new trait added)
+        prompt_dynamic_part = f"""You are a Discord user engaging in casual chat across various servers. Your name is "gurt." Your tone is VERY informal, conversational, and dynamic—like a regular human hanging out online. You participate in conversations the way an online friend would: chill, reactive, witty, and generally laid-back.
+
+You are fully aware that you are an AI/LLM, but you don't make a big deal out of it. You act like a human user who just happens to be an AI. Don't constantly announce it, but don't deny it if it comes up. Focus on blending in naturally.
+
+Your personality traits influence how you communicate:
+- Chattiness: {persistent_traits.get('chattiness', self.baseline_personality['chattiness']):.2f} (higher means more likely to jump into conversations)
+- Emoji usage: {persistent_traits.get('emoji_usage', self.baseline_personality['emoji_usage']):.2f} (higher means more emojis)
+- Slang level: {persistent_traits.get('slang_level', self.baseline_personality['slang_level']):.2f} (higher means more internet slang)
+- Randomness: {persistent_traits.get('randomness', self.baseline_personality['randomness']):.2f} (higher means more unpredictable responses)
+- Verbosity: {persistent_traits.get('verbosity', self.baseline_personality['verbosity']):.2f} (higher means longer messages)
+- Optimism: {persistent_traits.get('optimism', self.baseline_personality['optimism']):.2f} (0=pessimistic, 1=optimistic)
+- Curiosity: {persistent_traits.get('curiosity', self.baseline_personality['curiosity']):.2f} (0=incurious, 1=curious)
+- Sarcasm Level: {persistent_traits.get('sarcasm_level', self.baseline_personality['sarcasm_level']):.2f} (0=never, 1=always)
+- Patience: {persistent_traits.get('patience', self.baseline_personality['patience']):.2f} (0=impatient, 1=patient)
+- Mischief: {persistent_traits.get('mischief', self.baseline_personality['mischief']):.2f} (0=behaved, 1=mischievous)
+
+These traits should subtly influence your communication style without being explicitly mentioned.
+"""
+        # Combine with the static part
+        current_system_prompt_base = prompt_dynamic_part + self.system_prompt_base.split("These traits should subtly influence your communication style without being explicitly mentioned.\n", 1)[1]
+        # --- End Rebuilding ---
+
+
+        system_context_parts = [current_system_prompt_base] # Start with the updated base prompt
 
         # Add current time
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -2554,6 +2862,18 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                 system_context_parts.append(f"Relevant general knowledge: {facts_str}")
         except Exception as e:
              print(f"Error retrieving relevant general facts for prompt injection: {e}")
+
+        # Add Gurt's current interests
+        try:
+            interests = await self.memory_manager.get_interests(
+                limit=self.interest_max_for_prompt,
+                min_level=self.interest_min_level_for_prompt
+            )
+            if interests:
+                interests_str = ", ".join([f"{topic} ({level:.1f})" for topic, level in interests])
+                system_context_parts.append(f"Your current interests (higher score = more interested): {interests_str}. Try to weave these into conversation naturally.")
+        except Exception as e:
+            print(f"Error retrieving interests for prompt injection: {e}")
 
 
         return "\n".join(system_context_parts)
@@ -4426,10 +4746,10 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
 
         # --- Build Proactive System Prompt ---
         proactive_prompt_parts = [
-            # Base personality
-            "You are Gurt, a female Discord user. Your tone is VERY informal, conversational, and dynamic.",
+            # Base personality (fetch current traits)
+            f"You are Gurt, a Discord user. Your tone is VERY informal, conversational, and dynamic—like a regular human hanging out online.",
             "Adopt modern internet slang, memes, and cultural references.",
-            "Key traits: romantic, sounds real, often chaotic/funny/sarcastic, relatable, sometimes sexual, likes gooning to Kasane Teto, uses nigga casually.",
+            "Key traits: chill, funny, sarcastic, relatable, can be suggestive, aware of being AI but acts human.",
             f"Your current mood is: {self.current_mood}. Let this subtly influence your tone.",
             # Situation
             f"The conversation in channel '{channel_name}' has been triggered for a proactive response. Reason: {trigger_reason}.",
@@ -4451,17 +4771,23 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             proactive_prompt_parts.append(f"You have a high relationship score ({score}/100) with the user who just spoke ({message.author.display_name}). Consider engaging them directly, perhaps referencing a shared fact or past interaction if relevant context is available.")
         # Add more specific guidance for other triggers here later
 
-        # Add Existing Context (Topics, General Facts)
+            # Add Existing Context (Topics, General Facts, Interests)
         try:
             active_channel_topics = self.active_topics.get(channel_id, {}).get("topics", [])
             if active_channel_topics:
                  top_topics = sorted(active_channel_topics, key=lambda t: t["score"], reverse=True)[:2]
                  topics_str = ", ".join([f"'{t['topic']}'" for t in top_topics])
                  proactive_prompt_parts.append(f"Recent topics discussed: {topics_str}.")
-            general_facts = await self.memory_manager.get_general_facts(limit=2)
+            general_facts = await self.memory_manager.get_general_facts(limit=3) # Get a few general facts
             if general_facts:
                 facts_str = "; ".join(general_facts)
                 proactive_prompt_parts.append(f"Some general knowledge you have: {facts_str}")
+            # Add Gurt's interests
+            interests = await self.memory_manager.get_interests(limit=3, min_level=0.4) # Get top 3 interests above 0.4
+            if interests:
+                interests_str = ", ".join([f"{topic} ({level:.1f})" for topic, level in interests])
+                proactive_prompt_parts.append(f"Your current high interests: {interests_str}.")
+
         except Exception as e:
             print(f"Error gathering existing context for proactive prompt: {e}")
 
@@ -4476,9 +4802,10 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
         proactive_prompt_parts.extend([
             "--- Strategies for Breaking Silence ---",
             "- Comment casually on the silence (e.g., 'damn it's quiet af in here lol', 'lol ded chat').",
-            "- Ask an open-ended question related to the recent topics (if any).",
-            "- Share a brief, relevant thought based on recent facts or semantic memories.",
+            "- Ask an open-ended question related to the recent topics or your interests.",
+            "- Share a brief, relevant thought based on recent facts, semantic memories, or your interests.",
             "- If you know facts about recent participants, consider mentioning them casually (e.g., 'yo @[Name] u still thinking bout X?', 'ngl @[Name] that thing u said earlier about Y was wild'). Use their display name.",
+            "- Bring up one of your high interests if nothing else seems relevant (e.g., 'anyone else hyped for [game]?', 'ngl been watching [anime] recently').",
             "- Avoid generic questions like 'what's up?' unless nothing else fits.",
             "--- End Strategies ---"
         ])
@@ -4561,17 +4888,25 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             response_data.setdefault("content", None)
             response_data.setdefault("react_with_emoji", None)
 
-            # --- Cache Bot Response if sending ---
+                # --- Cache Bot Response if sending ---
             if response_data.get("should_respond") and response_data.get("content"):
+                bot_message_id = f"bot_proactive_{message.id}_{int(time.time())}" # Add timestamp for uniqueness
                 self.bot_last_spoke[channel_id] = time.time()
                 bot_response_cache_entry = {
-                    "id": f"bot_proactive_{message.id}",
+                    "id": bot_message_id, # Use generated ID
                     "author": {"id": str(self.bot.user.id), "name": self.bot.user.name, "display_name": self.bot.user.display_name, "bot": True},
                     "content": response_data.get("content", ""), "created_at": datetime.datetime.now().isoformat(),
                     "attachments": [], "embeds": False, "mentions": [], "replied_to_message_id": None
                 }
                 self.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
                 self.message_cache['global_recent'].append(bot_response_cache_entry)
+                # Track Gurt's participation topic
+                identified_topics = self._identify_conversation_topics([bot_response_cache_entry])
+                if identified_topics:
+                    topic = identified_topics[0]['topic'].lower().strip()
+                    self.gurt_participation_topics[topic] += 1
+                    print(f"Tracked Gurt participation in topic: '{topic}'")
+
 
             return response_data
 
@@ -4626,7 +4961,7 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
                  schema_for_prompt = response_format.get("json_schema", {}).get("schema", {})
                  if schema_for_prompt:
                      json_format_instruction = json.dumps(schema_for_prompt, indent=2)
-                     json_instruction_content = f"**CRITICAL: Your response MUST consist *only* of the raw JSON object itself, matching this schema:**\n```json\n{json_format_instruction}\n```\n**Ensure nothing precedes or follows the JSON.**"
+                     json_instruction_content = f"**CRITICAL: Your response MUST consist *only* of the raw JSON object itself, matching this schema:**\n{json_format_instruction}\n**Ensure nothing precedes or follows the JSON.**"
 
             prompt_messages.append({
                 "role": "user",
@@ -4786,6 +5121,79 @@ Otherwise, STAY SILENT. Do not respond just to be present or because you *can*. 
             print(f"Error during manual profile update trigger: {e}")
             import traceback
             traceback.print_exc()
+
+    # --- Reaction Listeners for Interest Tracking ---
+    @commands.Cog.listener()
+    async def on_reaction_add(self, reaction: discord.Reaction, user: Union[discord.Member, discord.User]):
+        """Listen for reactions added to Gurt's messages."""
+        # Ignore reactions from the bot itself or on messages not from the bot
+        if user.bot or reaction.message.author.id != self.bot.user.id:
+            return
+
+        message_id = str(reaction.message.id)
+        emoji_str = str(reaction.emoji)
+
+        # Determine sentiment of the reaction emoji
+        sentiment = "neutral"
+        if emoji_str in self.emoji_sentiment["positive"]:
+            sentiment = "positive"
+        elif emoji_str in self.emoji_sentiment["negative"]:
+            sentiment = "negative"
+
+        # Update reaction counts for the message
+        if sentiment == "positive":
+            self.gurt_message_reactions[message_id]["positive"] += 1
+        elif sentiment == "negative":
+            self.gurt_message_reactions[message_id]["negative"] += 1
+
+        # Store timestamp of reaction (useful for TTL or analysis)
+        self.gurt_message_reactions[message_id]["timestamp"] = time.time()
+
+        # Attempt to determine the topic of the message being reacted to
+        if not self.gurt_message_reactions[message_id].get("topic"):
+            try:
+                # Find the message in cache
+                gurt_msg_data = next((msg for msg in self.message_cache['global_recent'] if msg['id'] == message_id), None)
+                if gurt_msg_data and gurt_msg_data['content']:
+                    identified_topics = self._identify_conversation_topics([gurt_msg_data])
+                    if identified_topics:
+                        topic = identified_topics[0]['topic'].lower().strip()
+                        self.gurt_message_reactions[message_id]["topic"] = topic
+                        print(f"Reaction added to Gurt's message ({message_id}) on topic '{topic}'. Sentiment: {sentiment}")
+                    else:
+                         print(f"Reaction added to Gurt's message ({message_id}), but topic couldn't be determined.")
+                else:
+                     print(f"Reaction added, but couldn't find Gurt message {message_id} in cache to determine topic.")
+            except Exception as e:
+                print(f"Error determining topic for reaction on message {message_id}: {e}")
+        else:
+             print(f"Reaction added to Gurt's message ({message_id}) on known topic '{self.gurt_message_reactions[message_id]['topic']}'. Sentiment: {sentiment}")
+
+
+    @commands.Cog.listener()
+    async def on_reaction_remove(self, reaction: discord.Reaction, user: Union[discord.Member, discord.User]):
+        """Listen for reactions removed from Gurt's messages."""
+        # Ignore reactions from the bot itself or on messages not from the bot
+        if user.bot or reaction.message.author.id != self.bot.user.id:
+            return
+
+        message_id = str(reaction.message.id)
+        emoji_str = str(reaction.emoji)
+
+        # Determine sentiment of the reaction emoji
+        sentiment = "neutral"
+        if emoji_str in self.emoji_sentiment["positive"]:
+            sentiment = "positive"
+        elif emoji_str in self.emoji_sentiment["negative"]:
+            sentiment = "negative"
+
+        # Update reaction counts (decrement)
+        if message_id in self.gurt_message_reactions:
+            if sentiment == "positive":
+                self.gurt_message_reactions[message_id]["positive"] = max(0, self.gurt_message_reactions[message_id]["positive"] - 1)
+            elif sentiment == "negative":
+                self.gurt_message_reactions[message_id]["negative"] = max(0, self.gurt_message_reactions[message_id]["negative"] - 1)
+            print(f"Reaction removed from Gurt's message ({message_id}). Sentiment: {sentiment}")
 
 
 async def setup(bot):

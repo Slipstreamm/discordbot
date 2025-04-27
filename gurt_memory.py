@@ -4,7 +4,9 @@ import os
 import time
 import datetime
 import re
-from typing import Dict, List, Any, Optional, Tuple
+import hashlib # Added for chroma_id generation
+import json # Added for personality trait serialization/deserialization
+from typing import Dict, List, Any, Optional, Tuple, Union # Added Union
 import chromadb
 from chromadb.utils import embedding_functions
 from sentence_transformers import SentenceTransformer
@@ -13,6 +15,13 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Constants
+INTEREST_INITIAL_LEVEL = 0.1
+INTEREST_MAX_LEVEL = 1.0
+INTEREST_MIN_LEVEL = 0.0
+INTEREST_DECAY_RATE = 0.02 # Default decay rate per cycle
+INTEREST_DECAY_INTERVAL_HOURS = 24 # Default interval for decay check
 
 # --- Helper Function for Keyword Scoring ---
 def calculate_keyword_score(text: str, context: str) -> int:
@@ -52,7 +61,8 @@ class MemoryManager:
         self.semantic_model_name = semantic_model_name
         self.chroma_client = None
         self.embedding_function = None
-        self.semantic_collection = None
+        self.semantic_collection = None # For messages
+        self.fact_collection = None # For facts
         self.transformer_model = None
         self._initialize_semantic_memory_sync() # Initialize semantic components synchronously for simplicity during init
 
@@ -91,16 +101,26 @@ class MemoryManager:
                 name="gurt_semantic_memory",
                 embedding_function=self.embedding_function,
                 metadata={"hnsw:space": "cosine"} # Use cosine distance for similarity
+            ) # Added missing closing parenthesis
+            logger.info("ChromaDB message collection initialized successfully.")
+
+            logger.info("Getting/Creating ChromaDB collection 'gurt_fact_memory'...")
+            # Get or create the collection for facts
+            self.fact_collection = self.chroma_client.get_or_create_collection(
+                name="gurt_fact_memory",
+                embedding_function=self.embedding_function,
+                metadata={"hnsw:space": "cosine"} # Use cosine distance for similarity
             )
-            logger.info("ChromaDB collection initialized successfully.")
+            logger.info("ChromaDB fact collection initialized successfully.")
 
         except Exception as e:
-            logger.error(f"Failed to initialize semantic memory: {e}", exc_info=True)
+            logger.error(f"Failed to initialize semantic memory (ChromaDB): {e}", exc_info=True)
             # Set components to None to indicate failure
             self.chroma_client = None
             self.transformer_model = None
             self.embedding_function = None
             self.semantic_collection = None
+            self.fact_collection = None # Also set fact_collection to None on error
 
     async def initialize_sqlite_database(self):
         """Initializes the SQLite database and creates tables if they don't exist."""
@@ -110,18 +130,45 @@ class MemoryManager:
                 CREATE TABLE IF NOT EXISTS user_facts (
                     user_id TEXT NOT NULL,
                     fact TEXT NOT NULL,
+                    chroma_id TEXT, -- Added for linking to ChromaDB
                     timestamp REAL DEFAULT (unixepoch('now')),
                     PRIMARY KEY (user_id, fact)
                 );
             """)
             await db.execute("CREATE INDEX IF NOT EXISTS idx_user_facts_user ON user_facts (user_id);")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_user_facts_chroma_id ON user_facts (chroma_id);") # Index for chroma_id
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS general_facts (
                     fact TEXT PRIMARY KEY NOT NULL,
+                    chroma_id TEXT, -- Added for linking to ChromaDB
                     timestamp REAL DEFAULT (unixepoch('now'))
                 );
             """)
-            # Removed channel/user state tables for brevity, can be added back if needed
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_general_facts_chroma_id ON general_facts (chroma_id);") # Index for chroma_id
+
+            # --- Add Personality Table ---
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS gurt_personality (
+                    trait_key TEXT PRIMARY KEY NOT NULL,
+                    trait_value TEXT NOT NULL, -- Store value as JSON string
+                    last_updated REAL DEFAULT (unixepoch('now'))
+                );
+            """)
+            logger.info("Personality table created/verified.")
+            # --- End Personality Table ---
+
+            # --- Add Interests Table ---
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS gurt_interests (
+                    interest_topic TEXT PRIMARY KEY NOT NULL,
+                    interest_level REAL DEFAULT 0.1, -- Start with a small default level
+                    last_updated REAL DEFAULT (unixepoch('now'))
+                );
+            """)
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_interest_level ON gurt_interests (interest_level);")
+            logger.info("Interests table created/verified.")
+            # --- End Interests Table ---
+
             await db.commit()
             logger.info(f"SQLite database initialized/verified at {self.db_path}")
 
@@ -150,29 +197,64 @@ class MemoryManager:
             return {"error": "user_id and fact are required."}
         logger.info(f"Attempting to add user fact for {user_id}: '{fact}'")
         try:
-            existing = await self._db_fetchone("SELECT 1 FROM user_facts WHERE user_id = ? AND fact = ?", (user_id, fact))
+            # Check SQLite first
+            existing = await self._db_fetchone("SELECT chroma_id FROM user_facts WHERE user_id = ? AND fact = ?", (user_id, fact))
             if existing:
-                logger.info(f"Fact already known for user {user_id}.")
+                logger.info(f"Fact already known for user {user_id} (SQLite).")
                 return {"status": "duplicate", "user_id": user_id, "fact": fact}
 
             count_result = await self._db_fetchone("SELECT COUNT(*) FROM user_facts WHERE user_id = ?", (user_id,))
             current_count = count_result[0] if count_result else 0
 
             status = "added"
+            deleted_chroma_id = None
             if current_count >= self.max_user_facts:
                 logger.warning(f"User {user_id} fact limit ({self.max_user_facts}) reached. Deleting oldest.")
-                oldest_fact_row = await self._db_fetchone("SELECT fact FROM user_facts WHERE user_id = ? ORDER BY timestamp ASC LIMIT 1", (user_id,))
+                # Fetch oldest fact and its chroma_id for deletion
+                oldest_fact_row = await self._db_fetchone("SELECT fact, chroma_id FROM user_facts WHERE user_id = ? ORDER BY timestamp ASC LIMIT 1", (user_id,))
                 if oldest_fact_row:
-                    await self._db_execute("DELETE FROM user_facts WHERE user_id = ? AND fact = ?", (user_id, oldest_fact_row[0]))
-                    logger.info(f"Deleted oldest fact for user {user_id}: '{oldest_fact_row[0]}'")
+                    oldest_fact, deleted_chroma_id = oldest_fact_row
+                    await self._db_execute("DELETE FROM user_facts WHERE user_id = ? AND fact = ?", (user_id, oldest_fact))
+                    logger.info(f"Deleted oldest fact for user {user_id} from SQLite: '{oldest_fact}'")
                     status = "limit_reached" # Indicate limit was hit but fact was added
 
-            await self._db_execute("INSERT INTO user_facts (user_id, fact) VALUES (?, ?)", (user_id, fact))
-            logger.info(f"Fact added for user {user_id}.")
+            # Generate chroma_id
+            fact_hash = hashlib.sha1(fact.encode()).hexdigest()[:16] # Short hash
+            chroma_id = f"user-{user_id}-{fact_hash}"
+
+            # Insert into SQLite
+            await self._db_execute("INSERT INTO user_facts (user_id, fact, chroma_id) VALUES (?, ?, ?)", (user_id, fact, chroma_id))
+            logger.info(f"Fact added for user {user_id} to SQLite.")
+
+            # Add to ChromaDB fact collection
+            if self.fact_collection and self.embedding_function:
+                try:
+                    metadata = {"user_id": user_id, "type": "user", "timestamp": time.time()}
+                    await asyncio.to_thread(
+                        self.fact_collection.add,
+                        documents=[fact],
+                        metadatas=[metadata],
+                        ids=[chroma_id]
+                    )
+                    logger.info(f"Fact added/updated for user {user_id} in ChromaDB (ID: {chroma_id}).")
+
+                    # Delete the oldest fact from ChromaDB if limit was reached
+                    if deleted_chroma_id:
+                        logger.info(f"Attempting to delete oldest fact from ChromaDB (ID: {deleted_chroma_id}).")
+                        await asyncio.to_thread(self.fact_collection.delete, ids=[deleted_chroma_id])
+                        logger.info(f"Successfully deleted oldest fact from ChromaDB (ID: {deleted_chroma_id}).")
+
+                except Exception as chroma_e:
+                    logger.error(f"ChromaDB error adding/deleting user fact for {user_id} (ID: {chroma_id}): {chroma_e}", exc_info=True)
+                    # Note: Fact is still in SQLite, but ChromaDB might be inconsistent. Consider rollback? For now, just log.
+            else:
+                 logger.warning(f"ChromaDB fact collection not available. Skipping embedding for user fact {user_id}.")
+
+
             return {"status": status, "user_id": user_id, "fact_added": fact}
 
         except Exception as e:
-            logger.error(f"SQLite error adding user fact for {user_id}: {e}", exc_info=True)
+            logger.error(f"Error adding user fact for {user_id}: {e}", exc_info=True)
             return {"error": f"Database error adding user fact: {str(e)}"}
 
     async def get_user_facts(self, user_id: str, context: Optional[str] = None) -> List[str]:
@@ -181,32 +263,49 @@ class MemoryManager:
             logger.warning("get_user_facts called without user_id.")
             return []
         logger.info(f"Retrieving facts for user {user_id} (context provided: {bool(context)})")
+        limit = self.max_user_facts # Use the class attribute for limit
+
         try:
-            rows = await self._db_fetchall("SELECT fact FROM user_facts WHERE user_id = ?", (user_id,))
-            user_facts = [row[0] for row in rows]
+            if context and self.fact_collection and self.embedding_function:
+                # --- Semantic Search ---
+                logger.debug(f"Performing semantic search for user facts (User: {user_id}, Limit: {limit})")
+                try:
+                    # Query ChromaDB for facts relevant to the context
+                    results = await asyncio.to_thread(
+                        self.fact_collection.query,
+                        query_texts=[context],
+                        n_results=limit,
+                        where={"user_id": user_id, "type": "user"}, # Filter by user_id and type
+                        include=['documents'] # Only need the fact text
+                    )
+                    logger.debug(f"ChromaDB user fact query results: {results}")
 
-            if context and user_facts:
-                # Score facts based on context if provided
-                scored_facts = []
-                for fact in user_facts:
-                    score = calculate_keyword_score(fact, context)
-                    scored_facts.append({"fact": fact, "score": score})
+                    if results and results.get('documents') and results['documents'][0]:
+                        relevant_facts = results['documents'][0]
+                        logger.info(f"Found {len(relevant_facts)} semantically relevant user facts for {user_id}.")
+                        return relevant_facts
+                    else:
+                        logger.info(f"No semantic user facts found for {user_id} matching context.")
+                        return [] # Return empty list if no semantic matches
 
-                # Sort by score (descending), then fallback to original order (implicitly newest first if DB returns that way)
-                scored_facts.sort(key=lambda x: x["score"], reverse=True)
-                # Return top N facts based on score
-                return [item["fact"] for item in scored_facts[:self.max_user_facts]]
-            else:
-                # No context or no facts, return newest N facts (assuming DB returns in insertion order or we add ORDER BY timestamp DESC)
-                # Let's add ORDER BY timestamp DESC to be explicit
-                 rows_ordered = await self._db_fetchall(
-                     "SELECT fact FROM user_facts WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
-                     (user_id, self.max_user_facts)
-                 )
-                 return [row[0] for row in rows_ordered]
+                except Exception as chroma_e:
+                    logger.error(f"ChromaDB error searching user facts for {user_id}: {chroma_e}", exc_info=True)
+                    # Fallback to SQLite retrieval on ChromaDB error
+                    logger.warning(f"Falling back to SQLite retrieval for user facts {user_id} due to ChromaDB error.")
+                    # Proceed to the SQLite block below
+            # --- SQLite Fallback / No Context ---
+            # If no context, or if ChromaDB failed/unavailable, get newest N facts from SQLite
+            logger.debug(f"Retrieving user facts from SQLite (User: {user_id}, Limit: {limit})")
+            rows_ordered = await self._db_fetchall(
+                "SELECT fact FROM user_facts WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+                (user_id, limit)
+            )
+            sqlite_facts = [row[0] for row in rows_ordered]
+            logger.info(f"Retrieved {len(sqlite_facts)} user facts from SQLite for {user_id}.")
+            return sqlite_facts
 
         except Exception as e:
-            logger.error(f"SQLite error retrieving user facts for {user_id}: {e}", exc_info=True)
+            logger.error(f"Error retrieving user facts for {user_id}: {e}", exc_info=True)
             return []
 
     # --- General Fact Memory Methods (SQLite + Relevance) ---
@@ -217,68 +316,363 @@ class MemoryManager:
             return {"error": "fact is required."}
         logger.info(f"Attempting to add general fact: '{fact}'")
         try:
-            existing = await self._db_fetchone("SELECT 1 FROM general_facts WHERE fact = ?", (fact,))
+            # Check SQLite first
+            existing = await self._db_fetchone("SELECT chroma_id FROM general_facts WHERE fact = ?", (fact,))
             if existing:
-                logger.info(f"General fact already known: '{fact}'")
+                logger.info(f"General fact already known (SQLite): '{fact}'")
                 return {"status": "duplicate", "fact": fact}
 
             count_result = await self._db_fetchone("SELECT COUNT(*) FROM general_facts", ())
             current_count = count_result[0] if count_result else 0
 
             status = "added"
+            deleted_chroma_id = None
             if current_count >= self.max_general_facts:
                 logger.warning(f"General fact limit ({self.max_general_facts}) reached. Deleting oldest.")
-                oldest_fact_row = await self._db_fetchone("SELECT fact FROM general_facts ORDER BY timestamp ASC LIMIT 1", ())
+                # Fetch oldest fact and its chroma_id for deletion
+                oldest_fact_row = await self._db_fetchone("SELECT fact, chroma_id FROM general_facts ORDER BY timestamp ASC LIMIT 1", ())
                 if oldest_fact_row:
-                    await self._db_execute("DELETE FROM general_facts WHERE fact = ?", (oldest_fact_row[0],))
-                    logger.info(f"Deleted oldest general fact: '{oldest_fact_row[0]}'")
+                    oldest_fact, deleted_chroma_id = oldest_fact_row
+                    await self._db_execute("DELETE FROM general_facts WHERE fact = ?", (oldest_fact,))
+                    logger.info(f"Deleted oldest general fact from SQLite: '{oldest_fact}'")
                     status = "limit_reached"
 
-            await self._db_execute("INSERT INTO general_facts (fact) VALUES (?)", (fact,))
-            logger.info(f"General fact added: '{fact}'")
+            # Generate chroma_id
+            fact_hash = hashlib.sha1(fact.encode()).hexdigest()[:16] # Short hash
+            chroma_id = f"general-{fact_hash}"
+
+            # Insert into SQLite
+            await self._db_execute("INSERT INTO general_facts (fact, chroma_id) VALUES (?, ?)", (fact, chroma_id))
+            logger.info(f"General fact added to SQLite: '{fact}'")
+
+            # Add to ChromaDB fact collection
+            if self.fact_collection and self.embedding_function:
+                try:
+                    metadata = {"type": "general", "timestamp": time.time()}
+                    await asyncio.to_thread(
+                        self.fact_collection.add,
+                        documents=[fact],
+                        metadatas=[metadata],
+                        ids=[chroma_id]
+                    )
+                    logger.info(f"General fact added/updated in ChromaDB (ID: {chroma_id}).")
+
+                    # Delete the oldest fact from ChromaDB if limit was reached
+                    if deleted_chroma_id:
+                        logger.info(f"Attempting to delete oldest general fact from ChromaDB (ID: {deleted_chroma_id}).")
+                        await asyncio.to_thread(self.fact_collection.delete, ids=[deleted_chroma_id])
+                        logger.info(f"Successfully deleted oldest general fact from ChromaDB (ID: {deleted_chroma_id}).")
+
+                except Exception as chroma_e:
+                    logger.error(f"ChromaDB error adding/deleting general fact (ID: {chroma_id}): {chroma_e}", exc_info=True)
+                    # Note: Fact is still in SQLite.
+            else:
+                 logger.warning(f"ChromaDB fact collection not available. Skipping embedding for general fact.")
+
             return {"status": status, "fact_added": fact}
 
         except Exception as e:
-            logger.error(f"SQLite error adding general fact: {e}", exc_info=True)
+            logger.error(f"Error adding general fact: {e}", exc_info=True)
             return {"error": f"Database error adding general fact: {str(e)}"}
 
     async def get_general_facts(self, query: Optional[str] = None, limit: Optional[int] = 10, context: Optional[str] = None) -> List[str]:
-        """Retrieves stored general facts, optionally filtering and scoring by relevance."""
+        """Retrieves stored general facts, optionally filtering by query or scoring by context relevance."""
         logger.info(f"Retrieving general facts (query='{query}', limit={limit}, context provided: {bool(context)})")
-        limit = min(max(1, limit or 10), 50)
+        limit = min(max(1, limit or 10), 50) # Use provided limit or default 10, max 50
 
         try:
+            if context and self.fact_collection and self.embedding_function:
+                # --- Semantic Search (Prioritized if context is provided) ---
+                # Note: The 'query' parameter is ignored when context is provided for semantic search.
+                logger.debug(f"Performing semantic search for general facts (Limit: {limit})")
+                try:
+                    results = await asyncio.to_thread(
+                        self.fact_collection.query,
+                        query_texts=[context],
+                        n_results=limit,
+                        where={"type": "general"}, # Filter by type
+                        include=['documents'] # Only need the fact text
+                    )
+                    logger.debug(f"ChromaDB general fact query results: {results}")
+
+                    if results and results.get('documents') and results['documents'][0]:
+                        relevant_facts = results['documents'][0]
+                        logger.info(f"Found {len(relevant_facts)} semantically relevant general facts.")
+                        return relevant_facts
+                    else:
+                        logger.info("No semantic general facts found matching context.")
+                        return [] # Return empty list if no semantic matches
+
+                except Exception as chroma_e:
+                    logger.error(f"ChromaDB error searching general facts: {chroma_e}", exc_info=True)
+                    # Fallback to SQLite retrieval on ChromaDB error
+                    logger.warning("Falling back to SQLite retrieval for general facts due to ChromaDB error.")
+                    # Proceed to the SQLite block below, respecting the original 'query' if present
+            # --- SQLite Fallback / No Context / ChromaDB Error ---
+            # If no context, or if ChromaDB failed/unavailable, get newest N facts from SQLite, applying query if present.
+            logger.debug(f"Retrieving general facts from SQLite (Query: '{query}', Limit: {limit})")
             sql = "SELECT fact FROM general_facts"
             params = []
             if query:
+                # Apply the LIKE query only in the SQLite fallback scenario
                 sql += " WHERE fact LIKE ?"
                 params.append(f"%{query}%")
 
-            # Fetch all matching facts first for scoring
-            rows = await self._db_fetchall(sql, tuple(params))
-            all_facts = [row[0] for row in rows]
+            sql += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
 
-            if context and all_facts:
-                # Score facts based on context
-                scored_facts = []
-                for fact in all_facts:
-                    score = calculate_keyword_score(fact, context)
-                    scored_facts.append({"fact": fact, "score": score})
-
-                # Sort by score (descending)
-                scored_facts.sort(key=lambda x: x["score"], reverse=True)
-                # Return top N facts based on score
-                return [item["fact"] for item in scored_facts[:limit]]
-            else:
-                # No context or no facts, return newest N facts matching query (if any)
-                sql += " ORDER BY timestamp DESC LIMIT ?"
-                params.append(limit)
-                rows_ordered = await self._db_fetchall(sql, tuple(params))
-                return [row[0] for row in rows_ordered]
+            rows_ordered = await self._db_fetchall(sql, tuple(params))
+            sqlite_facts = [row[0] for row in rows_ordered]
+            logger.info(f"Retrieved {len(sqlite_facts)} general facts from SQLite (Query: '{query}').")
+            return sqlite_facts
 
         except Exception as e:
-            logger.error(f"SQLite error retrieving general facts: {e}", exc_info=True)
+            logger.error(f"Error retrieving general facts: {e}", exc_info=True)
             return []
+
+    # --- Personality Trait Methods (SQLite) ---
+
+    async def set_personality_trait(self, key: str, value: Any):
+        """Stores or updates a personality trait in the database."""
+        if not key:
+            logger.error("set_personality_trait called with empty key.")
+            return
+        try:
+            # Serialize the value to a JSON string to handle different types (str, int, float, bool)
+            value_json = json.dumps(value)
+            await self._db_execute(
+                "INSERT OR REPLACE INTO gurt_personality (trait_key, trait_value, last_updated) VALUES (?, ?, unixepoch('now'))",
+                (key, value_json)
+            )
+            logger.info(f"Personality trait '{key}' set/updated.")
+        except Exception as e:
+            logger.error(f"Error setting personality trait '{key}': {e}", exc_info=True)
+
+    async def get_personality_trait(self, key: str) -> Optional[Any]:
+        """Retrieves a specific personality trait from the database."""
+        if not key:
+            logger.error("get_personality_trait called with empty key.")
+            return None
+        try:
+            row = await self._db_fetchone("SELECT trait_value FROM gurt_personality WHERE trait_key = ?", (key,))
+            if row:
+                # Deserialize the JSON string back to its original type
+                value = json.loads(row[0])
+                logger.debug(f"Retrieved personality trait '{key}': {value}")
+                return value
+            else:
+                logger.debug(f"Personality trait '{key}' not found.")
+                return None
+        except Exception as e:
+            logger.error(f"Error getting personality trait '{key}': {e}", exc_info=True)
+            return None
+
+    async def get_all_personality_traits(self) -> Dict[str, Any]:
+        """Retrieves all personality traits from the database."""
+        traits = {}
+        try:
+            rows = await self._db_fetchall("SELECT trait_key, trait_value FROM gurt_personality", ())
+            for key, value_json in rows:
+                try:
+                    # Deserialize each value
+                    traits[key] = json.loads(value_json)
+                except json.JSONDecodeError as json_e:
+                    logger.error(f"Error decoding JSON for trait '{key}': {json_e}. Value: {value_json}")
+                    traits[key] = None # Or handle error differently
+            logger.info(f"Retrieved {len(traits)} personality traits.")
+            return traits
+        except Exception as e:
+            logger.error(f"Error getting all personality traits: {e}", exc_info=True)
+            return {}
+
+    async def load_baseline_personality(self, baseline_traits: Dict[str, Any]):
+        """Loads baseline traits into the personality table ONLY if it's empty."""
+        if not baseline_traits:
+            logger.warning("load_baseline_personality called with empty baseline traits.")
+            return
+        try:
+            # Check if the table is empty
+            count_result = await self._db_fetchone("SELECT COUNT(*) FROM gurt_personality", ())
+            current_count = count_result[0] if count_result else 0
+
+            if current_count == 0:
+                logger.info("Personality table is empty. Loading baseline traits...")
+                for key, value in baseline_traits.items():
+                    await self.set_personality_trait(key, value)
+                logger.info(f"Loaded {len(baseline_traits)} baseline traits.")
+            else:
+                logger.info(f"Personality table already contains {current_count} traits. Skipping baseline load.")
+        except Exception as e:
+            logger.error(f"Error loading baseline personality: {e}", exc_info=True)
+
+    async def load_baseline_interests(self, baseline_interests: Dict[str, float]):
+        """Loads baseline interests into the interests table ONLY if it's empty."""
+        if not baseline_interests:
+            logger.warning("load_baseline_interests called with empty baseline interests.")
+            return
+        try:
+            # Check if the table is empty
+            count_result = await self._db_fetchone("SELECT COUNT(*) FROM gurt_interests", ())
+            current_count = count_result[0] if count_result else 0
+
+            if current_count == 0:
+                logger.info("Interests table is empty. Loading baseline interests...")
+                async with self.db_lock:
+                    async with aiosqlite.connect(self.db_path) as db:
+                        for topic, level in baseline_interests.items():
+                            topic_normalized = topic.lower().strip()
+                            if not topic_normalized: continue # Skip empty topics
+                            # Clamp initial level just in case
+                            level_clamped = max(INTEREST_MIN_LEVEL, min(INTEREST_MAX_LEVEL, level))
+                            await db.execute(
+                                """
+                                INSERT INTO gurt_interests (interest_topic, interest_level, last_updated)
+                                VALUES (?, ?, unixepoch('now'))
+                                """,
+                                (topic_normalized, level_clamped)
+                            )
+                        await db.commit()
+                logger.info(f"Loaded {len(baseline_interests)} baseline interests.")
+            else:
+                logger.info(f"Interests table already contains {current_count} interests. Skipping baseline load.")
+        except Exception as e:
+            logger.error(f"Error loading baseline interests: {e}", exc_info=True)
+
+
+    # --- Interest Methods (SQLite) ---
+
+    async def update_interest(self, topic: str, change: float):
+        """
+        Updates the interest level for a given topic. Creates the topic if it doesn't exist.
+        Clamps the interest level between INTEREST_MIN_LEVEL and INTEREST_MAX_LEVEL.
+
+        Args:
+            topic: The interest topic (e.g., "gaming", "anime").
+            change: The amount to change the interest level by (can be positive or negative).
+        """
+        if not topic:
+            logger.error("update_interest called with empty topic.")
+            return
+        topic = topic.lower().strip() # Normalize topic
+        if not topic:
+            logger.error("update_interest called with empty topic after normalization.")
+            return
+
+        try:
+            async with self.db_lock:
+                async with aiosqlite.connect(self.db_path) as db:
+                    # Check if topic exists
+                    cursor = await db.execute("SELECT interest_level FROM gurt_interests WHERE interest_topic = ?", (topic,))
+                    row = await cursor.fetchone()
+
+                    if row:
+                        current_level = row[0]
+                        new_level = current_level + change
+                    else:
+                        # Topic doesn't exist, create it with initial level + change
+                        current_level = INTEREST_INITIAL_LEVEL # Use constant for initial level
+                        new_level = current_level + change
+                        logger.info(f"Creating new interest: '{topic}' with initial level {current_level:.3f} + change {change:.3f}")
+
+                    # Clamp the new level
+                    new_level_clamped = max(INTEREST_MIN_LEVEL, min(INTEREST_MAX_LEVEL, new_level))
+
+                    # Insert or update the topic
+                    await db.execute(
+                        """
+                        INSERT INTO gurt_interests (interest_topic, interest_level, last_updated)
+                        VALUES (?, ?, unixepoch('now'))
+                        ON CONFLICT(interest_topic) DO UPDATE SET
+                            interest_level = excluded.interest_level,
+                            last_updated = excluded.last_updated;
+                        """,
+                        (topic, new_level_clamped)
+                    )
+                    await db.commit()
+                    logger.info(f"Interest '{topic}' updated: {current_level:.3f} -> {new_level_clamped:.3f} (Change: {change:.3f})")
+
+        except Exception as e:
+            logger.error(f"Error updating interest '{topic}': {e}", exc_info=True)
+
+    async def get_interests(self, limit: int = 5, min_level: float = 0.2) -> List[Tuple[str, float]]:
+        """
+        Retrieves the top interests above a minimum level, ordered by interest level descending.
+
+        Args:
+            limit: The maximum number of interests to return.
+            min_level: The minimum interest level required to be included.
+
+        Returns:
+            A list of tuples, where each tuple is (interest_topic, interest_level).
+        """
+        interests = []
+        try:
+            rows = await self._db_fetchall(
+                "SELECT interest_topic, interest_level FROM gurt_interests WHERE interest_level >= ? ORDER BY interest_level DESC LIMIT ?",
+                (min_level, limit)
+            )
+            interests = [(row[0], row[1]) for row in rows]
+            logger.info(f"Retrieved {len(interests)} interests (Limit: {limit}, Min Level: {min_level}).")
+            return interests
+        except Exception as e:
+            logger.error(f"Error getting interests: {e}", exc_info=True)
+            return []
+
+    async def decay_interests(self, decay_rate: float = INTEREST_DECAY_RATE, decay_interval_hours: int = INTEREST_DECAY_INTERVAL_HOURS):
+        """
+        Applies decay to interest levels for topics not updated recently.
+
+        Args:
+            decay_rate: The fraction to reduce the interest level by (e.g., 0.01 for 1% decay).
+            decay_interval_hours: Only decay interests not updated within this many hours.
+        """
+        if not (0 < decay_rate < 1):
+            logger.error(f"Invalid decay_rate: {decay_rate}. Must be between 0 and 1.")
+            return
+        if decay_interval_hours <= 0:
+             logger.error(f"Invalid decay_interval_hours: {decay_interval_hours}. Must be positive.")
+             return
+
+        try:
+            cutoff_timestamp = time.time() - (decay_interval_hours * 3600)
+            logger.info(f"Applying interest decay (Rate: {decay_rate}) for interests not updated since {datetime.datetime.fromtimestamp(cutoff_timestamp).isoformat()}...")
+
+            async with self.db_lock:
+                async with aiosqlite.connect(self.db_path) as db:
+                    # Select topics eligible for decay
+                    cursor = await db.execute(
+                        "SELECT interest_topic, interest_level FROM gurt_interests WHERE last_updated < ?",
+                        (cutoff_timestamp,)
+                    )
+                    topics_to_decay = await cursor.fetchall()
+
+                    if not topics_to_decay:
+                        logger.info("No interests found eligible for decay.")
+                        return
+
+                    updated_count = 0
+                    # Apply decay and update
+                    for topic, current_level in topics_to_decay:
+                        # Calculate decay amount (ensure it doesn't go below min level instantly)
+                        decay_amount = current_level * decay_rate
+                        new_level = current_level - decay_amount
+                        # Ensure level doesn't drop below the minimum threshold due to decay
+                        new_level_clamped = max(INTEREST_MIN_LEVEL, new_level)
+
+                        # Only update if the level actually changes significantly
+                        if abs(new_level_clamped - current_level) > 0.001:
+                            await db.execute(
+                                "UPDATE gurt_interests SET interest_level = ? WHERE interest_topic = ?",
+                                (new_level_clamped, topic)
+                            )
+                            logger.debug(f"Decayed interest '{topic}': {current_level:.3f} -> {new_level_clamped:.3f}")
+                            updated_count += 1
+
+                    await db.commit()
+                    logger.info(f"Interest decay cycle complete. Updated {updated_count}/{len(topics_to_decay)} eligible interests.")
+
+        except Exception as e:
+            logger.error(f"Error during interest decay: {e}", exc_info=True)
 
     # --- Semantic Memory Methods (ChromaDB) ---
 

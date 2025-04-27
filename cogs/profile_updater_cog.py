@@ -197,24 +197,29 @@ class ProfileUpdaterCog(commands.Cog):
     async def _ask_ai_for_updates(self, current_state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Asks the GurtCog AI if and how to update the profile."""
         if not self.gurt_cog:
+            print("ProfileUpdaterTask: GurtCog not found in _ask_ai_for_updates.")
             return None
+        if not hasattr(self.gurt_cog, 'memory_manager'):
+             print("ProfileUpdaterTask: GurtCog has no memory_manager attribute.")
+             return None
 
-        # Construct the prompt for the AI
-        # Need to access GurtCog's mood and potentially facts/interests
-        current_mood = getattr(self.gurt_cog, 'current_mood', 'neutral') # Get mood safely
-        # Fetch general facts (interests) from memory
-        interests_list = []
+        # --- Fetch Dynamic Context from GurtCog ---
+        current_mood = getattr(self.gurt_cog, 'current_mood', 'neutral')
+        personality_traits = {}
+        interests = []
         try:
-            # Limit to a reasonable number, e.g., 10, to avoid overly long prompts
-            interests_list = await self.gurt_cog.memory_manager.get_general_facts(limit=10)
-            print(f"ProfileUpdaterTask: Fetched {len(interests_list)} general facts for prompt.")
+            personality_traits = await self.gurt_cog.memory_manager.get_all_personality_traits()
+            interests = await self.gurt_cog.memory_manager.get_interests(
+                limit=getattr(self.gurt_cog, 'interest_max_for_prompt', 4), # Use GurtCog's config safely
+                min_level=getattr(self.gurt_cog, 'interest_min_level_for_prompt', 0.3) # Use GurtCog's config safely
+            )
+            print(f"ProfileUpdaterTask: Fetched {len(personality_traits)} traits and {len(interests)} interests for prompt.")
         except Exception as e:
-            print(f"ProfileUpdaterTask: Error fetching general facts from memory: {e}")
+            print(f"ProfileUpdaterTask: Error fetching traits/interests from memory: {e}")
 
-        if interests_list:
-            interests_str = ", ".join(interests_list)
-        else:
-            interests_str = "No specific interests currently remembered." # Fallback if no facts
+        # Format traits and interests for the prompt
+        traits_str = ", ".join([f"{k}: {v:.2f}" for k, v in personality_traits.items()]) if personality_traits else "Defaults"
+        interests_str = ", ".join([f"{topic} ({level:.1f})" for topic, level in interests]) if interests else "None"
 
         # Prepare current state string for the prompt, safely handling None bio
         bio_value = current_state.get('bio')
@@ -298,11 +303,20 @@ Current State:
         }
 
         # Construct the full prompt message list for the AI
+        # Updated system prompt to include dynamic traits, mood, and interests
+        system_prompt_content = f"""You are Gurt. It's time to consider updating your Discord profile.
+Your current personality traits are: {traits_str}.
+Your current mood is: {current_mood}.
+Your current interests include: {interests_str}.
+
+Review your current profile state (provided below) and decide if you want to make any changes based on your personality, mood, and interests. Be creative and in-character.
+**IMPORTANT: Your *entire* response MUST be a single JSON object, with no other text before or after it.**"""
+
         prompt_messages = [
-            {"role": "system", "content": f"You are Gurt. It's time to consider updating your Discord profile. Your current mood is: {current_mood}. Your known interests include: {interests_str}. Review your current profile state and decide if you want to make any changes. Be creative and in-character. **IMPORTANT: Your *entire* response MUST be a single JSON object, with no other text before or after it.**"}, # Added emphasis here
+            {"role": "system", "content": system_prompt_content}, # Use the updated system prompt
             {"role": "user", "content": [
                  # Added emphasis at start and end of the text prompt
-                {"type": "text", "text": f"**Your entire response MUST be ONLY the JSON object described below. No introductory text, no explanations, just the JSON.**\n\n{state_summary}{image_prompt_part}\n\nReview your current profile state. Decide if you want to change your avatar, bio, roles, or activity status. If yes, specify the changes in the JSON. If not, set 'should_update' to false.\n\n**CRITICAL: Respond ONLY with a valid JSON object matching this exact structure:**\n```json\n{json_format_instruction}\n```\n**ABSOLUTELY NO TEXT BEFORE OR AFTER THE JSON OBJECT.**"}
+                {"type": "text", "text": f"**Your entire response MUST be ONLY the JSON object described below. No introductory text, no explanations, just the JSON.**\n\n{state_summary}{image_prompt_part}\n\nReview your current profile state. Decide if you want to change your avatar, bio, roles, or activity status based on your personality, mood, and interests. If yes, specify the changes in the JSON. If not, set 'should_update' to false.\n\n**CRITICAL: Respond ONLY with a valid JSON object matching this exact structure:**\n```json\n{json_format_instruction}\n```\n**ABSOLUTELY NO TEXT BEFORE OR AFTER THE JSON OBJECT.**"}
             ]}
         ]
 
