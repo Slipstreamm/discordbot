@@ -47,6 +47,10 @@ MOOD_CHANGE_INTERVAL_MIN = 1200 # 20 minutes
 MOOD_CHANGE_INTERVAL_MAX = 2400 # 40 minutes
 EVOLUTION_UPDATE_INTERVAL = 1800 # Evolve personality every 30 minutes
 
+# --- Stats Push ---
+# How often the Gurt bot should push its stats to the API server (seconds)
+STATS_PUSH_INTERVAL = 30 # Push every 30 seconds
+
 # --- Context & Caching ---
 CHANNEL_TOPIC_CACHE_TTL = 600 # seconds (10 minutes)
 CONTEXT_WINDOW_SIZE = 200  # Number of messages to include in context

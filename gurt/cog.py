@@ -123,6 +123,7 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
         # Background task handle
         self.background_task: Optional[asyncio.Task] = None
         self.last_evolution_update = time.time() # Used in background task
+        self.last_stats_push = time.time() # Timestamp for last stats push
 
         # --- Stats Tracking ---
         self.api_stats = defaultdict(lambda: {"success": 0, "failure": 0, "retries": 0, "total_time": 0.0, "count": 0}) # Keyed by model name

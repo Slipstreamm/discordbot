@@ -1,4 +1,4 @@
-const API_ENDPOINT = '/discordapi/gurt/stats'; // Relative path to the API endpoint
+const API_ENDPOINT = '/api/gurt/stats'; // Relative path to the API endpoint
 const REFRESH_INTERVAL = 15000; // Refresh every 15 seconds (in milliseconds)
 
 const lastUpdatedElement = document.getElementById('last-updated');

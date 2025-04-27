@@ -2,6 +2,9 @@ import asyncio
 import time
 import random
 import traceback
+import os
+import json
+import aiohttp
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
@@ -10,7 +13,7 @@ from .config import (
     LEARNING_UPDATE_INTERVAL, EVOLUTION_UPDATE_INTERVAL, INTEREST_UPDATE_INTERVAL,
     INTEREST_DECAY_INTERVAL_HOURS, INTEREST_PARTICIPATION_BOOST,
     INTEREST_POSITIVE_REACTION_BOOST, INTEREST_NEGATIVE_REACTION_PENALTY,
-    INTEREST_FACT_BOOST
+    INTEREST_FACT_BOOST, STATS_PUSH_INTERVAL # Added stats interval
 )
 # Assuming analysis functions are moved
 from .analysis import (
@@ -23,11 +26,57 @@ if TYPE_CHECKING:
 # --- Background Task ---
 
 async def background_processing_task(cog: 'GurtCog'):
-    """Background task that periodically analyzes conversations, evolves personality, and updates interests."""
+    """Background task that periodically analyzes conversations, evolves personality, updates interests, and pushes stats."""
+    # Get API details from environment for stats pushing
+    api_internal_url = os.getenv("API_INTERNAL_URL")
+    gurt_stats_push_secret = os.getenv("GURT_STATS_PUSH_SECRET")
+
+    if not api_internal_url:
+        print("WARNING: API_INTERNAL_URL not set. Gurt stats will not be pushed.")
+    if not gurt_stats_push_secret:
+        print("WARNING: GURT_STATS_PUSH_SECRET not set. Gurt stats push endpoint is insecure and likely won't work.")
+
     try:
         while True:
-            await asyncio.sleep(60) # Check every minute
+            await asyncio.sleep(15) # Check more frequently for stats push
             now = time.time()
+
+            # --- Push Stats (Runs frequently) ---
+            if api_internal_url and gurt_stats_push_secret and (now - cog.last_stats_push > STATS_PUSH_INTERVAL):
+                print("Pushing Gurt stats to API server...")
+                try:
+                    stats_data = await cog.get_gurt_stats()
+                    headers = {
+                        "Authorization": f"Bearer {gurt_stats_push_secret}",
+                        "Content-Type": "application/json"
+                    }
+                    # Use the cog's session, ensure it's created
+                    if cog.session:
+                        # Set a reasonable timeout for the stats push
+                        push_timeout = aiohttp.ClientTimeout(total=10) # 10 seconds total timeout
+                        async with cog.session.post(api_internal_url, json=stats_data, headers=headers, timeout=push_timeout, ssl=True) as response: # Explicitly enable SSL verification
+                            if response.status == 200:
+                                print(f"Successfully pushed Gurt stats (Status: {response.status})")
+                            else:
+                                error_text = await response.text()
+                                print(f"Failed to push Gurt stats (Status: {response.status}): {error_text[:200]}") # Log only first 200 chars
+                    else:
+                        print("Error pushing stats: GurtCog session not initialized.")
+                    cog.last_stats_push = now # Update timestamp even on failure to avoid spamming logs
+                except aiohttp.ClientConnectorSSLError as ssl_err:
+                     print(f"SSL Error pushing Gurt stats: {ssl_err}. Ensure the API server's certificate is valid and trusted, or check network configuration.")
+                     print("If using a self-signed certificate for development, the bot process might need to trust it.")
+                     cog.last_stats_push = now # Update timestamp to avoid spamming logs
+                except aiohttp.ClientError as client_err:
+                    print(f"HTTP Client Error pushing Gurt stats: {client_err}")
+                    cog.last_stats_push = now # Update timestamp to avoid spamming logs
+                except asyncio.TimeoutError:
+                    print("Timeout error pushing Gurt stats.")
+                    cog.last_stats_push = now # Update timestamp to avoid spamming logs
+                except Exception as e:
+                    print(f"Unexpected error pushing Gurt stats: {e}")
+                    traceback.print_exc()
+                    cog.last_stats_push = now # Update timestamp to avoid spamming logs
 
             # --- Learning Analysis (Runs less frequently) ---
             if now - cog.last_learning_update > LEARNING_UPDATE_INTERVAL:
