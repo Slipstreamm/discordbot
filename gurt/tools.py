@@ -23,7 +23,7 @@ from .memory import MemoryManager # Import from local memory.py
 from .config import (
     TAVILY_API_KEY, PISTON_API_URL, PISTON_API_KEY, SAFETY_CHECK_MODEL,
     DOCKER_EXEC_IMAGE, DOCKER_COMMAND_TIMEOUT, DOCKER_CPU_LIMIT, DOCKER_MEM_LIMIT,
-    SUMMARY_CACHE_TTL, SUMMARY_API_TIMEOUT, DEFAULT_MODEL, API_KEY, OPENROUTER_API_URL # Added API_KEY, OPENROUTER_API_URL for safety check
+    SUMMARY_CACHE_TTL, SUMMARY_API_TIMEOUT, DEFAULT_MODEL # Removed API_KEY, OPENROUTER_API_URL
 )
 # Assume these helpers will be moved or are accessible via cog
 # We might need to pass 'cog' to these tool functions if they rely on cog state heavily
