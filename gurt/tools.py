@@ -611,7 +611,7 @@ async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any
             'AttachStderr': True,
             'HostConfig': {
                 'NetworkDisabled': True,
-                'AutoRemove': True,
+                'AutoRemove': False, # Changed to False
                 'CpuPeriod': cpu_period,
                 'CpuQuota': cpu_quota,
             }
@@ -662,7 +662,8 @@ async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any
             except aiodocker.exceptions.DockerError as stop_err:
                 print(f"Error stopping/deleting timed-out container {container.id[:12]}: {stop_err}")
             except Exception as stop_exc:
-                 print(f"Unexpected error stopping/deleting timed-out container {container.id[:12]}: {stop_exc}")
+                print(f"Unexpected error stopping/deleting timed-out container {container.id[:12]}: {stop_exc}")
+        # No need to delete here, finally block will handle it
         return {"error": f"Command execution/log retrieval timed out after {DOCKER_COMMAND_TIMEOUT}s", "command": command, "status": "timeout"}
     except aiodocker.exceptions.DockerError as e: # Catch specific aiodocker errors
         print(f"Docker API error: {e} (Status: {e.status})")
@@ -676,7 +677,17 @@ async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any
         traceback.print_exc()
         return {"error": f"Unexpected error during Docker execution: {str(e)}", "command": command, "status": "error"}
     finally:
-        # Container should be auto-removed by HostConfig.AutoRemove=True
+        # Explicitly remove the container since AutoRemove is False
+        if container:
+            try:
+                print(f"Attempting to delete container {container.id[:12]}...")
+                await container.delete(force=True)
+                print(f"Container {container.id[:12]} deleted.")
+            except aiodocker.exceptions.DockerError as delete_err:
+                # Log error but don't raise, primary error is more important
+                print(f"Error deleting container {container.id[:12]}: {delete_err}")
+            except Exception as delete_exc:
+                print(f"Unexpected error deleting container {container.id[:12]}: {delete_exc}") # <--- Corrected indentation
         # Ensure the client connection is closed
         if client:
             await client.close()
