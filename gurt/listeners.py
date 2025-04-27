@@ -240,62 +240,92 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
                 await message.channel.send(random.choice(["...", "*confused gurting*", "brain broke sorry"]))
             return
 
-        # Determine which response to use (prefer final if available)
-        response_to_use = final_response if final_response else initial_response
+        # --- Process and Send Responses ---
+        sent_any_message = False
+        reacted = False
 
-        if response_to_use and isinstance(response_to_use, dict):
-            sent_message = False
-            reacted = False
-
-            # Handle Reaction
-            emoji_to_react = response_to_use.get("react_with_emoji")
-            if emoji_to_react and isinstance(emoji_to_react, str):
-                try:
-                    # Basic validation for standard emoji
-                    if 1 <= len(emoji_to_react) <= 4 and not re.match(r'<a?:.+?:\d+>', emoji_to_react):
-                        await message.add_reaction(emoji_to_react)
-                        reacted = True
-                        print(f"Bot reacted to message {message.id} with {emoji_to_react}")
-                    else: print(f"Invalid emoji format: {emoji_to_react}")
-                except Exception as e: print(f"Error adding reaction '{emoji_to_react}': {e}")
-
-            # Handle Text Response
-            if response_to_use.get("should_respond") and response_to_use.get("content"):
-                response_text = response_to_use["content"]
+        # Helper function to handle sending a single response text and caching
+        async def send_response_content(response_data: Optional[Dict[str, Any]], response_label: str) -> bool:
+            nonlocal sent_any_message # Allow modification of the outer scope variable
+            if response_data and isinstance(response_data, dict) and \
+               response_data.get("should_respond") and response_data.get("content"):
+                response_text = response_data["content"]
+                print(f"Attempting to send {response_label} content...")
                 if len(response_text) > 1900:
-                    filepath = f'gurt_response_{message.id}.txt'
+                    filepath = f'gurt_{response_label}_{message.id}.txt'
                     try:
                         with open(filepath, 'w', encoding='utf-8') as f: f.write(response_text)
-                        await message.channel.send("Response too long:", file=discord.File(filepath))
-                        sent_message = True
-                    except Exception as file_e: print(f"Error writing/sending long response file: {file_e}")
+                        await message.channel.send(f"{response_label.capitalize()} response too long:", file=discord.File(filepath))
+                        sent_any_message = True
+                        print(f"Sent {response_label} content as file.")
+                        return True
+                    except Exception as file_e: print(f"Error writing/sending long {response_label} response file: {file_e}")
                     finally:
                         try: os.remove(filepath)
                         except OSError as os_e: print(f"Error removing temp file {filepath}: {os_e}")
                 else:
-                    async with message.channel.typing():
-                        await simulate_human_typing(cog, message.channel, response_text) # Use simulation
-                    sent_msg = await message.channel.send(response_text)
-                    sent_message = True
-                    # Cache this bot response
-                    bot_response_cache_entry = format_message(cog, sent_msg)
-                    cog.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
-                    cog.message_cache['global_recent'].append(bot_response_cache_entry)
-                    cog.message_cache['replied_to'][channel_id].append(bot_response_cache_entry) # Track replies
-                    cog.bot_last_spoke[channel_id] = time.time()
-                    # Track participation topic
-                    identified_topics = identify_conversation_topics(cog, [bot_response_cache_entry])
-                    if identified_topics:
-                        topic = identified_topics[0]['topic'].lower().strip()
-                        cog.gurt_participation_topics[topic] += 1
-                        print(f"Tracked Gurt participation in topic: '{topic}'")
+                    try:
+                        async with message.channel.typing():
+                            await simulate_human_typing(cog, message.channel, response_text) # Use simulation
+                        sent_msg = await message.channel.send(response_text)
+                        sent_any_message = True
+                        # Cache this bot response
+                        bot_response_cache_entry = format_message(cog, sent_msg)
+                        cog.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
+                        cog.message_cache['global_recent'].append(bot_response_cache_entry)
+                        # cog.message_cache['replied_to'][channel_id].append(bot_response_cache_entry) # Maybe track replies differently?
+                        cog.bot_last_spoke[channel_id] = time.time()
+                        # Track participation topic
+                        identified_topics = identify_conversation_topics(cog, [bot_response_cache_entry])
+                        if identified_topics:
+                            topic = identified_topics[0]['topic'].lower().strip()
+                            cog.gurt_participation_topics[topic] += 1
+                            print(f"Tracked Gurt participation ({response_label}) in topic: '{topic}'")
+                        print(f"Sent {response_label} content.")
+                        return True
+                    except Exception as send_e:
+                        print(f"Error sending {response_label} content: {send_e}")
+            return False
 
+        # Send initial response content if valid
+        sent_initial_message = await send_response_content(initial_response, "initial")
 
-            if response_to_use.get("should_respond") and not sent_message and not reacted:
-                 print(f"Warning: AI response intended but no valid content/reaction. Data: {response_to_use}")
+        # Send final response content if valid (and different from initial, if initial was sent)
+        sent_final_message = False
+        # Ensure initial_response exists before accessing its content for comparison
+        initial_content = initial_response.get("content") if initial_response else None
+        if final_response and (not sent_initial_message or initial_content != final_response.get("content")):
+             sent_final_message = await send_response_content(final_response, "final")
 
-        elif not error_msg: # No valid response and no critical error
-            print(f"Warning: No valid response generated for message {message.id}, and no critical error reported.")
+        # Handle Reaction (prefer final response for reaction if it exists)
+        reaction_source = final_response if final_response else initial_response
+        if reaction_source and isinstance(reaction_source, dict):
+            emoji_to_react = reaction_source.get("react_with_emoji")
+            if emoji_to_react and isinstance(emoji_to_react, str):
+                try:
+                    # Basic validation for standard emoji
+                    if 1 <= len(emoji_to_react) <= 4 and not re.match(r'<a?:.+?:\d+>', emoji_to_react):
+                        # Only react if we haven't sent any message content (avoid double interaction)
+                        if not sent_any_message:
+                            await message.add_reaction(emoji_to_react)
+                            reacted = True
+                            print(f"Bot reacted to message {message.id} with {emoji_to_react}")
+                        else:
+                            print(f"Skipping reaction {emoji_to_react} because a message was already sent.")
+                    else: print(f"Invalid emoji format: {emoji_to_react}")
+                except Exception as e: print(f"Error adding reaction '{emoji_to_react}': {e}")
+
+        # Log if response was intended but nothing was sent/reacted
+        # Check if initial response intended action but nothing happened
+        initial_intended_action = initial_response and initial_response.get("should_respond")
+        initial_action_taken = sent_initial_message or (reacted and reaction_source == initial_response)
+        # Check if final response intended action but nothing happened
+        final_intended_action = final_response and final_response.get("should_respond")
+        final_action_taken = sent_final_message or (reacted and reaction_source == final_response)
+
+        if (initial_intended_action and not initial_action_taken) or \
+           (final_intended_action and not final_action_taken):
+             print(f"Warning: AI response intended action but nothing sent/reacted. Initial: {initial_response}, Final: {final_response}")
 
     except Exception as e:
         print(f"Exception in on_message listener main block: {str(e)}")

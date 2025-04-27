@@ -498,7 +498,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model: Optio
             messages_for_follow_up.extend(tool_results_for_api)
             messages_for_follow_up.append({
                 "role": "user",
-                "content": f"Okay, the requested tools have been executed. Here are the results. Now, generate the final user-facing response based on these results and the previous conversation context. **CRITICAL: Your response MUST be ONLY the raw JSON object matching the standard schema (should_respond, content, react_with_emoji). Do NOT include the 'tool_requests' field this time.**\n\n**Ensure nothing precedes or follows the JSON.**{message_length_guidance}"
+                "content": f"Okay, the requested tools have been executed. Here are the results. Now, generate the final user-facing response based on these results and the previous conversation context. **CRITICAL: Your response MUST be ONLY the raw JSON object matching the standard schema (should_respond, content, react_with_emoji). Do NOT include the 'tool_requests' field this time.**\n\n**IMPORTANT: If you set 'should_respond' to true, you MUST provide a non-empty string for the 'content' field.**\n\n**Ensure nothing precedes or follows the JSON.**{message_length_guidance}"
             })
 
             follow_up_payload = {

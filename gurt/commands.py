@@ -125,7 +125,10 @@ def format_stats_embeds(stats: Dict[str, Any]) -> List[discord.Embed]:
 def setup_commands(cog: 'GurtCog'):
     """Adds Gurt-specific commands to the cog."""
 
-    # Example using app_commands - adapt existing commands if needed
+    # Create a list to store command functions for proper registration
+    command_functions = []
+
+    # --- Gurt Mood Command ---
     @cog.bot.tree.command(name="gurtmood", description="Check or set Gurt's current mood.")
     @app_commands.describe(mood="Optional: Set Gurt's mood to one of the available options.")
     @app_commands.choices(mood=[
@@ -133,6 +136,11 @@ def setup_commands(cog: 'GurtCog'):
     ])
     async def gurtmood(interaction: discord.Interaction, mood: Optional[app_commands.Choice[str]] = None):
         """Handles the /gurtmood command."""
+        # Check if user is the bot owner for mood setting
+        if mood and interaction.user.id != cog.bot.owner_id:
+            await interaction.response.send_message("⛔ Only the bot owner can change Gurt's mood.", ephemeral=True)
+            return
+
         if mood:
             cog.current_mood = mood.value
             cog.last_mood_change = time.time()
@@ -141,6 +149,9 @@ def setup_commands(cog: 'GurtCog'):
             time_since_change = time.time() - cog.last_mood_change
             await interaction.response.send_message(f"Gurt's current mood is: {cog.current_mood} (Set {int(time_since_change // 60)} minutes ago)", ephemeral=True)
 
+    command_functions.append(gurtmood)
+
+    # --- Gurt Memory Command ---
     @cog.bot.tree.command(name="gurtmemory", description="Interact with Gurt's memory.")
     @app_commands.describe(
         action="Choose an action: add_user, add_general, get_user, get_general",
@@ -160,6 +171,11 @@ def setup_commands(cog: 'GurtCog'):
 
         target_user_id = str(user.id) if user else None
         action_value = action.value
+
+        # Check if user is the bot owner for modification actions
+        if (action_value in ["add_user", "add_general"]) and interaction.user.id != cog.bot.owner_id:
+            await interaction.followup.send("⛔ Only the bot owner can add facts to Gurt's memory.", ephemeral=True)
+            return
 
         if action_value == "add_user":
             if not target_user_id or not fact:
@@ -207,10 +223,17 @@ def setup_commands(cog: 'GurtCog'):
         else:
             await interaction.followup.send("Invalid action specified.", ephemeral=True)
 
+    command_functions.append(gurtmemory)
+
     # --- Gurt Stats Command ---
-    @cog.bot.tree.command(name="gurtstats", description="Display Gurt's internal statistics.")
+    @cog.bot.tree.command(name="gurtstats", description="Display Gurt's internal statistics. (Owner only)")
     async def gurtstats(interaction: discord.Interaction):
         """Handles the /gurtstats command."""
+        # Check if user is the bot owner
+        if interaction.user.id != cog.bot.owner_id:
+            await interaction.response.send_message("⛔ Only the bot owner can view detailed stats.", ephemeral=True)
+            return
+
         await interaction.response.defer(ephemeral=True) # Defer as stats collection might take time
         try:
             stats_data = await cog.get_gurt_stats()
@@ -222,5 +245,38 @@ def setup_commands(cog: 'GurtCog'):
             traceback.print_exc()
             await interaction.followup.send("An error occurred while fetching Gurt's stats.", ephemeral=True)
 
+    command_functions.append(gurtstats)
 
-    print("Gurt commands setup in cog.")
+    # --- Sync Gurt Commands (Owner Only) ---
+    @cog.bot.tree.command(name="gurtsync", description="Sync Gurt commands with Discord (Owner only)")
+    async def gurtsync(interaction: discord.Interaction):
+        """Handles the /gurtsync command to force sync commands."""
+        # Check if user is the bot owner
+        if interaction.user.id != cog.bot.owner_id:
+            await interaction.response.send_message("⛔ Only the bot owner can sync commands.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            # Sync commands
+            synced = await cog.bot.tree.sync()
+
+            # Get list of commands after sync
+            commands_after = []
+            for cmd in cog.bot.tree.get_commands():
+                if cmd.name.startswith("gurt"):
+                    commands_after.append(cmd.name)
+
+            await interaction.followup.send(f"✅ Successfully synced {len(synced)} commands!\nGurt commands: {', '.join(commands_after)}", ephemeral=True)
+        except Exception as e:
+            print(f"Error in /gurtsync command: {e}")
+            import traceback
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ Error syncing commands: {str(e)}", ephemeral=True)
+
+    command_functions.append(gurtsync)
+
+    print(f"Gurt commands setup in cog: {[func.__name__ for func in command_functions]}")
+
+    # Return the command functions for proper registration
+    return command_functions

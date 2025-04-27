@@ -131,12 +131,14 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
 
         # --- Setup Commands and Listeners ---
         # Add commands defined in commands.py
-        setup_commands(self)
+        self.command_functions = setup_commands(self)
+        # Store command functions for reference
+        self.registered_commands = [func.__name__ for func in self.command_functions]
         # Add listeners defined in listeners.py
         # Note: Listeners need to be added to the bot instance, not the cog directly in this pattern.
         # We'll add them in cog_load or the main setup function.
 
-        print("GurtCog initialized.")
+        print(f"GurtCog initialized with commands: {self.registered_commands}")
 
     async def cog_load(self):
         """Create aiohttp session, initialize DB, load baselines, start background task"""
@@ -176,6 +178,20 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
             await on_reaction_remove_listener(self, reaction, user)
 
         print("GurtCog: Listeners added.")
+
+        # Sync commands with Discord
+        try:
+            print("GurtCog: Syncing commands with Discord...")
+            synced = await self.bot.tree.sync()
+            print(f"GurtCog: Synced {len(synced)} command(s)")
+
+            # List the synced commands
+            gurt_commands = [cmd.name for cmd in self.bot.tree.get_commands() if cmd.name.startswith("gurt")]
+            print(f"GurtCog: Available Gurt commands: {', '.join(gurt_commands)}")
+        except Exception as e:
+            print(f"GurtCog: Failed to sync commands: {e}")
+            import traceback
+            traceback.print_exc()
 
         # Start background task
         if self.background_task is None or self.background_task.done():
@@ -313,6 +329,24 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
                 data["average_time_ms"] = 0
 
         return stats
+
+    async def sync_commands(self):
+        """Manually sync commands with Discord."""
+        try:
+            print("GurtCog: Manually syncing commands with Discord...")
+            synced = await self.bot.tree.sync()
+            print(f"GurtCog: Synced {len(synced)} command(s)")
+
+            # List the synced commands
+            gurt_commands = [cmd.name for cmd in self.bot.tree.get_commands() if cmd.name.startswith("gurt")]
+            print(f"GurtCog: Available Gurt commands: {', '.join(gurt_commands)}")
+
+            return synced, gurt_commands
+        except Exception as e:
+            print(f"GurtCog: Failed to sync commands: {e}")
+            import traceback
+            traceback.print_exc()
+            return [], []
 
 
 # Setup function for loading the cog
