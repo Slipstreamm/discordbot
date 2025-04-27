@@ -28,8 +28,8 @@ PISTON_API_URL = os.getenv("PISTON_API_URL") # For run_python_code tool
 PISTON_API_KEY = os.getenv("PISTON_API_KEY") # Optional key for Piston
 
 # --- Model Configuration ---
-DEFAULT_MODEL = os.getenv("GURT_DEFAULT_MODEL", "google/gemini-2.5-pro-preview-03-25")
-FALLBACK_MODEL = os.getenv("GURT_FALLBACK_MODEL", "openai/gpt-4.1-nano")
+DEFAULT_MODEL = os.getenv("GURT_DEFAULT_MODEL", "gemini-2.5-pro-preview-03-25")
+FALLBACK_MODEL = os.getenv("GURT_FALLBACK_MODEL", "gemini-2.5-pro-preview-03-25")
 SAFETY_CHECK_MODEL = os.getenv("GURT_SAFETY_CHECK_MODEL", "openai/gpt-4.1-nano") # For terminal command safety
 
 # --- Database Paths ---
