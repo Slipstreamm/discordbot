@@ -202,9 +202,19 @@ class ProfileUpdaterCog(commands.Cog):
         # Construct the prompt for the AI
         # Need to access GurtCog's mood and potentially facts/interests
         current_mood = getattr(self.gurt_cog, 'current_mood', 'neutral') # Get mood safely
-        # TODO: Get interests/facts relevant to profile updates (e.g., Kasane Teto)
-        # This might require adding a method to GurtCog or MemoryManager
-        interests_str = "Kasane Teto, gooning (jerking off)" # Placeholder
+        # Fetch general facts (interests) from memory
+        interests_list = []
+        try:
+            # Limit to a reasonable number, e.g., 10, to avoid overly long prompts
+            interests_list = await self.gurt_cog.memory_manager.get_general_facts(limit=10)
+            print(f"ProfileUpdaterTask: Fetched {len(interests_list)} general facts for prompt.")
+        except Exception as e:
+            print(f"ProfileUpdaterTask: Error fetching general facts from memory: {e}")
+
+        if interests_list:
+            interests_str = ", ".join(interests_list)
+        else:
+            interests_str = "No specific interests currently remembered." # Fallback if no facts
 
         # Prepare current state string for the prompt, safely handling None bio
         bio_value = current_state.get('bio')

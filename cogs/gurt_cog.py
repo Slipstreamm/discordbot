@@ -30,7 +30,7 @@ class GurtCog(commands.Cog):
         self.api_url = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions") # Load from env
         self.session = None
         self.tavily_client = TavilyClient(api_key=self.tavily_api_key) if self.tavily_api_key else None # Initialize Tavily client
-        self.default_model = os.getenv("GURT_DEFAULT_MODEL", "google/gemini-2.0-flash-exp:free") # Load from env
+        self.default_model = os.getenv("GURT_DEFAULT_MODEL", "google/gemini-2.5-pro-preview-03-25") # Load from env
         self.fallback_model = os.getenv("GURT_FALLBACK_MODEL", "openai/gpt-4.1-nano") # Load from env
         self.current_channel = None
         self.db_path = os.getenv("GURT_DB_PATH", "data/gurt_memory.db") # Load from env, define database path
