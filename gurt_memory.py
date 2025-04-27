@@ -126,6 +126,8 @@ class MemoryManager:
         """Initializes the SQLite database and creates tables if they don't exist."""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("PRAGMA journal_mode=WAL;")
+
+            # Create user_facts table if it doesn't exist
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_facts (
                     user_id TEXT NOT NULL,
@@ -135,8 +137,26 @@ class MemoryManager:
                     PRIMARY KEY (user_id, fact)
                 );
             """)
+
+            # Check if chroma_id column exists in user_facts table
+            try:
+                # Try to get column info
+                cursor = await db.execute("PRAGMA table_info(user_facts)")
+                columns = await cursor.fetchall()
+                column_names = [column[1] for column in columns]
+
+                # If chroma_id column doesn't exist, add it
+                if 'chroma_id' not in column_names:
+                    logger.info("Adding chroma_id column to user_facts table")
+                    await db.execute("ALTER TABLE user_facts ADD COLUMN chroma_id TEXT")
+            except Exception as e:
+                logger.error(f"Error checking/adding chroma_id column to user_facts: {e}", exc_info=True)
+
+            # Create indexes
             await db.execute("CREATE INDEX IF NOT EXISTS idx_user_facts_user ON user_facts (user_id);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_user_facts_chroma_id ON user_facts (chroma_id);") # Index for chroma_id
+
+            # Create general_facts table if it doesn't exist
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS general_facts (
                     fact TEXT PRIMARY KEY NOT NULL,
@@ -144,6 +164,22 @@ class MemoryManager:
                     timestamp REAL DEFAULT (unixepoch('now'))
                 );
             """)
+
+            # Check if chroma_id column exists in general_facts table
+            try:
+                # Try to get column info
+                cursor = await db.execute("PRAGMA table_info(general_facts)")
+                columns = await cursor.fetchall()
+                column_names = [column[1] for column in columns]
+
+                # If chroma_id column doesn't exist, add it
+                if 'chroma_id' not in column_names:
+                    logger.info("Adding chroma_id column to general_facts table")
+                    await db.execute("ALTER TABLE general_facts ADD COLUMN chroma_id TEXT")
+            except Exception as e:
+                logger.error(f"Error checking/adding chroma_id column to general_facts: {e}", exc_info=True)
+
+            # Create index for general_facts
             await db.execute("CREATE INDEX IF NOT EXISTS idx_general_facts_chroma_id ON general_facts (chroma_id);") # Index for chroma_id
 
             # --- Add Personality Table ---
