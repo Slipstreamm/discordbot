@@ -16,7 +16,7 @@ from tavily import TavilyClient # Needed for tavily_client init
 
 # --- Relative Imports from Gurt Package ---
 from .config import (
-    API_KEY, TAVILY_API_KEY, OPENROUTER_API_URL, DEFAULT_MODEL, FALLBACK_MODEL,
+    PROJECT_ID, LOCATION, TAVILY_API_KEY, DEFAULT_MODEL, FALLBACK_MODEL, # Use GCP config
     DB_PATH, CHROMA_PATH, SEMANTIC_MODEL_NAME, MAX_USER_FACTS, MAX_GENERAL_FACTS,
     MOOD_OPTIONS, BASELINE_PERSONALITY, BASELINE_INTERESTS, MOOD_CHANGE_INTERVAL_MIN,
     MOOD_CHANGE_INTERVAL_MAX, CHANNEL_TOPIC_CACHE_TTL, CONTEXT_WINDOW_SIZE,
@@ -41,14 +41,13 @@ from . import config as GurtConfig # Import config module for get_gurt_stats
 load_dotenv()
 
 class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
-    """A special cog for the Gurt bot that uses OpenRouter API"""
+    """A special cog for the Gurt bot that uses Google Vertex AI API"""
 
     def __init__(self, bot):
         self.bot = bot
-        self.api_key = API_KEY # Use imported config
+        # GCP Project/Location are used by vertexai.init() in api.py
         self.tavily_api_key = TAVILY_API_KEY # Use imported config
-        self.api_url = OPENROUTER_API_URL # Use imported config
-        self.session: Optional[aiohttp.ClientSession] = None # Initialize session as None
+        self.session: Optional[aiohttp.ClientSession] = None # Keep for other potential HTTP requests (e.g., Piston)
         self.tavily_client = TavilyClient(api_key=self.tavily_api_key) if self.tavily_api_key else None
         self.default_model = DEFAULT_MODEL # Use imported config
         self.fallback_model = FALLBACK_MODEL # Use imported config
@@ -161,10 +160,8 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
         await self.memory_manager.load_baseline_personality(BASELINE_PERSONALITY)
         await self.memory_manager.load_baseline_interests(BASELINE_INTERESTS)
 
-        if not self.api_key:
-            print("WARNING: OpenRouter API key not configured (AI_API_KEY).")
-        else:
-            print(f"GurtCog: Using model: {self.default_model}")
+        # Vertex AI initialization happens in api.py using PROJECT_ID and LOCATION from config
+        print(f"GurtCog: Using default model: {self.default_model}")
         if not self.tavily_api_key:
              print("WARNING: Tavily API key not configured (TAVILY_API_KEY). Web search disabled.")
 
@@ -258,7 +255,8 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
         stats["config"]["topic_update_interval"] = GurtConfig.TOPIC_UPDATE_INTERVAL
         stats["config"]["sentiment_update_interval"] = GurtConfig.SENTIMENT_UPDATE_INTERVAL
         stats["config"]["docker_command_timeout"] = GurtConfig.DOCKER_COMMAND_TIMEOUT
-        stats["config"]["api_key_set"] = bool(GurtConfig.API_KEY) # Don't expose key itself
+        stats["config"]["project_id_set"] = bool(GurtConfig.PROJECT_ID != "your-gcp-project-id") # Check if default is overridden
+        stats["config"]["location_set"] = bool(GurtConfig.LOCATION != "us-central1") # Check if default is overridden
         stats["config"]["tavily_api_key_set"] = bool(GurtConfig.TAVILY_API_KEY)
         stats["config"]["piston_api_url_set"] = bool(GurtConfig.PISTON_API_URL)
 

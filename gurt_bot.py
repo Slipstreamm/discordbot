@@ -39,7 +39,6 @@ async def main():
     """Main async function to load the gurt cog and start the bot."""
     # Check for required environment variables
     TOKEN = os.getenv('DISCORD_TOKEN_GURT')
-    OPENROUTER_API_KEY = os.getenv('AI_API_KEY')
 
     # If Discord token not found, try to use the main bot token
     if not TOKEN:
@@ -48,10 +47,8 @@ async def main():
     if not TOKEN:
         raise ValueError("No Discord token found. Make sure to set DISCORD_TOKEN_GURT or DISCORD_TOKEN in your .env file.")
 
-    if not OPENROUTER_API_KEY:
-        print("Warning: AI_API_KEY not found in environment variables. AI functionality will not work.")
-        print("Please set the AI_API_KEY in your .env file.")
-        print("You can get an API key from https://openrouter.ai/keys")
+    # Note: Vertex AI authentication is handled by the library using ADC or GOOGLE_APPLICATION_CREDENTIALS.
+    # No explicit API key check is needed here. Ensure GCP_PROJECT_ID and GCP_LOCATION are set in .env
 
     try:
         async with bot:
