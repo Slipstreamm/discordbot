@@ -311,7 +311,12 @@ class MemoryManager:
                         self.fact_collection.query,
                         query_texts=[context],
                         n_results=limit,
-                        where={"user_id": user_id, "type": "user"}, # Filter by user_id and type
+                        where={ # Use $and for multiple conditions
+                            "$and": [
+                                {"user_id": user_id},
+                                {"type": "user"}
+                            ]
+                        },
                         include=['documents'] # Only need the fact text
                     )
                     logger.debug(f"ChromaDB user fact query results: {results}")

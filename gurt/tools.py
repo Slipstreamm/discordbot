@@ -540,6 +540,19 @@ async def create_poll(cog: commands.Cog, question: str, options: List[str]) -> D
     except discord.HTTPException as e: print(f"Poll API error: {e}"); return {"error": f"API error creating poll: {e}"}
     except Exception as e: print(f"Poll unexpected error: {e}"); traceback.print_exc(); return {"error": f"Unexpected error creating poll: {str(e)}"}
 
+# Helper function to convert memory string (e.g., "128m") to bytes
+def parse_mem_limit(mem_limit_str: str) -> Optional[int]:
+    if not mem_limit_str: return None
+    mem_limit_str = mem_limit_str.lower()
+    if mem_limit_str.endswith('m'):
+        try: return int(mem_limit_str[:-1]) * 1024 * 1024
+        except ValueError: return None
+    elif mem_limit_str.endswith('g'):
+        try: return int(mem_limit_str[:-1]) * 1024 * 1024 * 1024
+        except ValueError: return None
+    try: return int(mem_limit_str) # Assume bytes if no suffix
+    except ValueError: return None
+
 async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, Any]:
     """Uses a secondary AI call to check if a command is potentially harmful."""
     from .api import get_internal_ai_json_response # Import here
@@ -581,29 +594,92 @@ async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any
     try: cpu_limit = float(DOCKER_CPU_LIMIT); cpu_period = 100000; cpu_quota = int(cpu_limit * cpu_period)
     except ValueError: print(f"Warning: Invalid DOCKER_CPU_LIMIT '{DOCKER_CPU_LIMIT}'. Using default."); cpu_quota = 50000; cpu_period = 100000
 
+    mem_limit_bytes = parse_mem_limit(DOCKER_MEM_LIMIT)
+    if mem_limit_bytes is None:
+        print(f"Warning: Invalid DOCKER_MEM_LIMIT '{DOCKER_MEM_LIMIT}'. Disabling memory limit.")
+
     client = None
+    container = None
     try:
-        client = aiodocker.Docker() # Use aiodocker client
+        client = aiodocker.Docker()
         print(f"Running command in Docker ({DOCKER_EXEC_IMAGE})...")
-        output_bytes = await asyncio.wait_for(
-            client.containers.run(
-                image=DOCKER_EXEC_IMAGE, command=["/bin/sh", "-c", command], remove=True, detach=False,
-                stdout=True, stderr=True, network_disabled=True, mem_limit=DOCKER_MEM_LIMIT,
-                cpu_period=cpu_period, cpu_quota=cpu_quota,
-            ), timeout=DOCKER_COMMAND_TIMEOUT
+
+        config = {
+            'Image': DOCKER_EXEC_IMAGE,
+            'Cmd': ["/bin/sh", "-c", command],
+            'AttachStdout': True,
+            'AttachStderr': True,
+            'HostConfig': {
+                'NetworkDisabled': True,
+                'AutoRemove': True,
+                'CpuPeriod': cpu_period,
+                'CpuQuota': cpu_quota,
+            }
+        }
+        if mem_limit_bytes is not None:
+            config['HostConfig']['Memory'] = mem_limit_bytes
+
+        # Use wait_for for the run call itself in case image pulling takes time
+        container = await asyncio.wait_for(
+            client.containers.run(config=config),
+            timeout=DOCKER_COMMAND_TIMEOUT + 15 # Add buffer for container start/stop/pull
         )
-        stdout = output_bytes.decode('utf-8', errors='replace') if output_bytes else ""
+
+        # Wait for the container to finish execution
+        wait_result = await asyncio.wait_for(
+            container.wait(),
+            timeout=DOCKER_COMMAND_TIMEOUT
+        )
+        exit_code = wait_result.get('StatusCode', -1)
+
+        # Get logs after container finishes
+        stdout_bytes = await container.log(stdout=True, stderr=False)
+        stderr_bytes = await container.log(stdout=False, stderr=True)
+
+        stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
+        stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
+
         max_len = 1000
         stdout_trunc = stdout[:max_len] + ('...' if len(stdout) > max_len else '')
-        result = {"status": "success", "stdout": stdout_trunc, "stderr": "", "exit_code": 0} # Assume success if no error
-        print(f"Docker command finished. Output length: {len(stdout)}")
+        stderr_trunc = stderr[:max_len] + ('...' if len(stderr) > max_len else '')
+
+        result = {"status": "success" if exit_code == 0 else "execution_error", "stdout": stdout_trunc, "stderr": stderr_trunc, "exit_code": exit_code}
+        print(f"Docker command finished. Exit Code: {exit_code}. Output length: {len(stdout)}, Stderr length: {len(stderr)}")
         return result
-    except asyncio.TimeoutError: print("Docker command timed out."); return {"error": f"Command timed out after {DOCKER_COMMAND_TIMEOUT}s", "command": command, "status": "timeout"}
-    except docker.errors.ImageNotFound: print(f"Docker image not found: {DOCKER_EXEC_IMAGE}"); return {"error": f"Docker image '{DOCKER_EXEC_IMAGE}' not found.", "command": command, "status": "docker_error"}
-    except docker.errors.APIError as e: print(f"Docker API error: {e}"); return {"error": f"Docker API error: {str(e)}", "command": command, "status": "docker_error"}
-    except Exception as e: print(f"Unexpected Docker error: {e}"); traceback.print_exc(); return {"error": f"Unexpected error during Docker execution: {str(e)}", "command": command, "status": "error"}
+
+    except asyncio.TimeoutError:
+        print("Docker command run, wait, or log retrieval timed out.")
+        # Attempt to stop/remove container if it exists and timed out
+        if container:
+            try:
+                print(f"Attempting to stop timed-out container {container.id[:12]}...")
+                await container.stop(t=1)
+                print(f"Container {container.id[:12]} stopped.")
+                # AutoRemove should handle removal, but log deletion attempt if needed
+                # print(f"Attempting to delete timed-out container {container.id[:12]}...")
+                # await container.delete(force=True) # Force needed if stop failed?
+                # print(f"Container {container.id[:12]} deleted.")
+            except aiodocker.exceptions.DockerError as stop_err:
+                print(f"Error stopping/deleting timed-out container {container.id[:12]}: {stop_err}")
+            except Exception as stop_exc:
+                 print(f"Unexpected error stopping/deleting timed-out container {container.id[:12]}: {stop_exc}")
+        return {"error": f"Command execution/log retrieval timed out after {DOCKER_COMMAND_TIMEOUT}s", "command": command, "status": "timeout"}
+    except aiodocker.exceptions.DockerError as e: # Catch specific aiodocker errors
+        print(f"Docker API error: {e} (Status: {e.status})")
+        # Check for ImageNotFound specifically
+        if e.status == 404 and ("No such image" in str(e) or "not found" in str(e)):
+             print(f"Docker image not found: {DOCKER_EXEC_IMAGE}")
+             return {"error": f"Docker image '{DOCKER_EXEC_IMAGE}' not found.", "command": command, "status": "docker_error"}
+        return {"error": f"Docker API error ({e.status}): {str(e)}", "command": command, "status": "docker_error"}
+    except Exception as e:
+        print(f"Unexpected Docker error: {e}")
+        traceback.print_exc()
+        return {"error": f"Unexpected error during Docker execution: {str(e)}", "command": command, "status": "error"}
     finally:
-        if client: await client.close()
+        # Container should be auto-removed by HostConfig.AutoRemove=True
+        # Ensure the client connection is closed
+        if client:
+            await client.close()
 
 
 # --- Tool Mapping ---
