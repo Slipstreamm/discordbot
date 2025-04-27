@@ -15,6 +15,7 @@ intents.members = True
 
 # Create bot instance with command prefix '%'
 bot = commands.Bot(command_prefix='%', intents=intents)
+bot.owner_id = int(os.getenv('OWNER_USER_ID'))
 
 @bot.event
 async def on_ready():
