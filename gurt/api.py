@@ -1077,7 +1077,15 @@ async def get_internal_ai_json_response(
             raise Exception("Internal API call returned no response or candidates.")
 
         # --- Parse and Validate ---
-        final_response_text = _get_response_text(response_obj) # Use helper
+        # Directly use response.text when application/json is expected
+        if generation_config.response_mime_type == "application/json":
+            final_response_text = response_obj.text
+            print(f"Parsing ({task_description}): Using response_obj.text for JSON.")
+        else:
+            # Fallback to _get_response_text if not expecting JSON (though this function usually does)
+            print(f"Parsing ({task_description}): Using _get_response_text helper (non-JSON expected).")
+            final_response_text = _get_response_text(response_obj) # Use helper
+
         final_parsed_data = parse_and_validate_json_response(
             final_response_text, response_schema_dict, f"internal task ({task_description})"
         )
