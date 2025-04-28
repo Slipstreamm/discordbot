@@ -30,7 +30,7 @@ PISTON_API_KEY = os.getenv("PISTON_API_KEY") # Optional key for Piston
 # --- Model Configuration ---
 DEFAULT_MODEL = os.getenv("GURT_DEFAULT_MODEL", "gemini-2.5-pro-preview-03-25")
 FALLBACK_MODEL = os.getenv("GURT_FALLBACK_MODEL", "gemini-2.5-pro-preview-03-25")
-SAFETY_CHECK_MODEL = os.getenv("GURT_SAFETY_CHECK_MODEL", "openai/gpt-4.1-nano") # For terminal command safety
+SAFETY_CHECK_MODEL = os.getenv("GURT_SAFETY_CHECK_MODEL", "gemini-2.5-flash-preview-04-17") # Use a Vertex AI model for safety checks
 
 # --- Database Paths ---
 DB_PATH = os.getenv("GURT_DB_PATH", "data/gurt_memory.db")
@@ -164,6 +164,98 @@ RESPONSE_SCHEMA = {
         "required": ["should_respond", "content"]
     }
 }
+
+# --- Summary Response Schema ---
+SUMMARY_RESPONSE_SCHEMA = {
+    "name": "conversation_summary",
+    "description": "A concise summary of a conversation.",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "summary": {
+                "type": "string",
+                "description": "The generated summary of the conversation."
+            }
+        },
+        "required": ["summary"]
+    }
+}
+
+# --- Profile Update Schema ---
+PROFILE_UPDATE_SCHEMA = {
+    "name": "profile_update_decision",
+    "description": "Decision on whether and how to update the bot's profile.",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "should_update": {
+                "type": "boolean",
+                "description": "True if any profile element should be changed, false otherwise."
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief reasoning for the decision and chosen updates (or lack thereof)."
+            },
+            "updates": {
+                "type": "object",
+                "properties": {
+                    "avatar_query": {
+                        "anyOf": [{"type": "string"}, {"type": "null"}],
+                        "description": "Search query for a new avatar image, or null if no change."
+                    },
+                    "new_bio": {
+                        "anyOf": [{"type": "string"}, {"type": "null"}],
+                        "description": "The new bio text (max 190 chars), or null if no change."
+                    },
+                    "role_theme": {
+                        "anyOf": [{"type": "string"}, {"type": "null"}],
+                        "description": "A theme for role selection (e.g., color, interest), or null if no role changes."
+                    },
+                    "new_activity": {
+                        "type": "object",
+                        "description": "Object containing the new activity details. Set type and text to null if no change.",
+                        "properties": {
+                            "type": {
+                                "anyOf": [{"type": "string", "enum": ["playing", "watching", "listening", "competing"]}, {"type": "null"}],
+                                "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null."
+                            },
+                            "text": {
+                                "anyOf": [{"type": "string"}, {"type": "null"}],
+                                "description": "The activity text, or null."
+                            }
+                        },
+                        "required": ["type", "text"]
+                    }
+                },
+                "required": ["avatar_query", "new_bio", "role_theme", "new_activity"]
+            }
+        },
+        "required": ["should_update", "reasoning", "updates"]
+    }
+}
+
+# --- Role Selection Schema ---
+ROLE_SELECTION_SCHEMA = {
+    "name": "role_selection_decision",
+    "description": "Decision on which roles to add or remove based on a theme.",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "roles_to_add": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of role names to add (max 2)."
+            },
+            "roles_to_remove": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of role names to remove (max 2, only from current roles)."
+            }
+        },
+        "required": ["roles_to_add", "roles_to_remove"]
+    }
+}
+
 
 # --- Tools Definition ---
 def create_tools_list():

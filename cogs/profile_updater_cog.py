@@ -10,9 +10,9 @@ import base64
 import time
 from typing import Optional, Dict, Any, List
 
-# Assuming GurtCog is in the same directory level or accessible
-# from .gurt_cog import GurtCog # This might cause circular import issues if GurtCog imports this.
-# It's safer to get the cog instance via self.bot.get_cog('GurtCog')
+# Gurt imports for AI calls and config
+from ..gurt.api import get_internal_ai_json_response
+from ..gurt.config import PROFILE_UPDATE_SCHEMA, ROLE_SELECTION_SCHEMA, DEFAULT_MODEL
 
 class ProfileUpdaterCog(commands.Cog):
     """Cog for automatically updating Gurt's profile elements based on AI decisions."""
@@ -249,67 +249,19 @@ Current State:
              image_prompt_part = "\n(Current avatar image data is provided below)" # Text hint for the AI
 
         # Define the JSON schema for the AI's response content
-        response_schema_json = {
-            "type": "object",
-            "properties": {
-                "should_update": {
-                    "type": "boolean",
-                    "description": "True if you want to change anything, false otherwise"
-                },
-                "reasoning": {
-                    "type": "string",
-                    "description": "Your reasoning for the decision and chosen updates (or lack thereof)."
-                },
-                "updates": {
-                    "type": "object",
-                    "properties": {
-                        "avatar_query": {
-                            "anyOf": [{"type": "string"}, {"type": "null"}],
-                            "description": "Search query for a new avatar. Try to be specific, rather than something very broad like 'Kasane Teto' or 'anime.'"
-                        },
-                        "new_bio": {
-                            "anyOf": [{"type": "string"}, {"type": "null"}],
-                            "description": "The new bio text, or null"
-                        },
-                        "role_theme": {
-                            "anyOf": [{"type": "string"}, {"type": "null"}],
-                            "description": "A theme for role selection, could be a specific name color role, interest, or theme, or null"
-                        },
-                        "new_activity": {
-                            "type": "object",
-                            "description": "Object containing the new activity details. Set type and text to null if no change is desired.",
-                            "properties": {
-                                "type": {
-                                    "anyOf": [{"type": "string", "enum": ["playing", "watching", "listening", "competing"]}, {"type": "null"}],
-                                    "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null."
-                                },
-                                "text": {
-                                    "anyOf": [{"type": "string"}, {"type": "null"}],
-                                    "description": "The activity text, or null."
-                                }
-                            },
-                            "required": ["type", "text"],
-                            "additionalProperties": False
-                        }
-                    },
-                    "required": ["avatar_query", "new_bio", "role_theme", "new_activity"],
-                    "additionalProperties": False
-                }
-            },
-            "required": ["should_update", "reasoning", "updates"],
-            "additionalProperties": False # Enforce strictness at schema level too
-        }
-        json_format_instruction = json.dumps(response_schema_json, indent=2) # For the prompt
+        # Use the schema imported from config.py
+        response_schema_dict = PROFILE_UPDATE_SCHEMA['schema']
+        # json_format_instruction = json.dumps(response_schema_dict, indent=2) # No longer needed for prompt
 
-        # Define the payload for the response_format parameter
-        response_format_payload = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "profile_update_decision",
-                "strict": True, # Enforce strict adherence to the schema
-                "schema": response_schema_json
-            }
-        }
+        # Define the payload for the response_format parameter - REMOVED for Vertex AI
+        # response_format_payload = {
+        #     "type": "json_schema",
+        #     "json_schema": {
+        #         "name": "profile_update_decision",
+        #         "strict": True, # Enforce strict adherence to the schema
+        #         "schema": response_schema_json
+        #     }
+        # }
 
         # Construct the full prompt message list for the AI
         # Updated system prompt to include dynamic traits, mood, and interests
@@ -319,41 +271,36 @@ Your current mood is: {current_mood}.
 Your current interests include: {interests_str}.
 
 Review your current profile state (provided below) and decide if you want to make any changes based on your personality, mood, and interests. Be creative and in-character.
-**IMPORTANT: Your *entire* response MUST be a single JSON object, with no other text before or after it.**"""
+**IMPORTANT: Your *entire* response MUST be a single JSON object matching the required schema, with no other text before or after it.**""" # Simplified instruction
 
         prompt_messages = [
             {"role": "system", "content": system_prompt_content}, # Use the updated system prompt
             {"role": "user", "content": [
-                 # Added emphasis at start and end of the text prompt
-                {"type": "text", "text": f"**Your entire response MUST be ONLY the JSON object described below. No introductory text, no explanations, just the JSON.**\n\n{state_summary}{image_prompt_part}\n\nReview your current profile state. Decide if you want to change your avatar, bio, roles, or activity status based on your personality, mood, and interests. If yes, specify the changes in the JSON. If not, set 'should_update' to false.\n\n**CRITICAL: Respond ONLY with a valid JSON object matching this exact structure:**\n```json\n{json_format_instruction}\n```\n**ABSOLUTELY NO TEXT BEFORE OR AFTER THE JSON OBJECT.**"}
+                 # Simplified user prompt instruction
+                {"type": "text", "text": f"{state_summary}{image_prompt_part}\n\nReview your current profile state. Decide if you want to change your avatar, bio, roles, or activity status based on your personality, mood, and interests. If yes, specify the changes in the JSON. If not, set 'should_update' to false.\n\n**CRITICAL: Respond ONLY with a valid JSON object matching the required schema.**"}
             ]}
         ]
-
         # Add image data if available and model supports it
         if current_state.get('avatar_image_data'):
-            # Assuming the user message content is a list when multimodal
-            prompt_messages[-1]["content"].append({ # Add to the list in the last user message
-                "type": "image_url",
-                "image_url": {"url": current_state["avatar_image_data"]}
-            })
+            # Convert to Vertex AI format if needed (get_internal_ai_json_response handles this)
+            # prompt_messages[-1]["content"].append(Part.from_data(...)) # Example
             print("ProfileUpdaterTask: Added current avatar image to AI prompt.")
 
 
         try:
-            # Need a way to call GurtCog's core AI logic directly
-            # This might require refactoring GurtCog or adding a dedicated method
-            # Call the internal AI method from GurtCog, specifying the model and structured output format
-            result_json = await self.gurt_cog._get_internal_ai_json_response(
+            # Use the imported get_internal_ai_json_response function
+            result_json = await get_internal_ai_json_response(
+                cog=self.gurt_cog, # Pass the GurtCog instance
                 prompt_messages=prompt_messages,
-                model="openai/o4-mini-high", # Use the specified OpenAI model
-                response_format=response_format_payload, # Enforce structured output
                 task_description="Profile Update Decision",
+                response_schema_dict=response_schema_dict, # Pass the schema dict
+                model_name=DEFAULT_MODEL, # Use model from config
                 temperature=0.5, # Keep temperature for some creativity
-                max_tokens=5000
+                max_tokens=500 # Adjust max tokens if needed
             )
 
             if result_json and isinstance(result_json, dict):
-                # Basic validation of the received structure (now includes reasoning)
+                # Basic validation of the received structure
                 if "should_update" in result_json and "updates" in result_json and "reasoning" in result_json:
                     print(f"ProfileUpdaterTask: AI Reasoning: {result_json.get('reasoning', 'N/A')}") # Log the reasoning
                     return result_json
@@ -515,48 +462,36 @@ Review your current profile state (provided below) and decide if you want to mak
         current_role_names = [role.name for role in member.roles if role.name != "@everyone"]
 
         # Define the JSON schema for the role selection AI response
-        role_selection_schema = {
-            "type": "object",
-            "properties": {
-                "roles_to_add": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of role names to add (max 2)"
-                },
-                "roles_to_remove": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of role names to remove (max 2, only from current roles)"
-                }
-            },
-            "required": ["roles_to_add", "roles_to_remove"],
-            "additionalProperties": False
-        }
-        role_selection_format = json.dumps(role_selection_schema, indent=2)
+        # Use the schema imported from config.py
+        role_selection_schema_dict = ROLE_SELECTION_SCHEMA['schema']
+        # role_selection_format = json.dumps(role_selection_schema_dict, indent=2) # No longer needed for prompt
 
         # Prepare prompt for the second AI call
         role_prompt_messages = [
             {"role": "system", "content": f"You are Gurt. Based on the theme '{role_theme}', select roles to add or remove from the available list for this server. Prioritize adding roles that fit the theme and removing roles that don't or conflict. You can add/remove up to 2 roles total."},
-            {"role": "user", "content": f"Available assignable roles: {assignable_role_names}\nYour current roles: {current_role_names}\nTheme: '{role_theme}'\n\nSelect roles to add/remove based on the theme.\n\n**CRITICAL: Respond ONLY with a valid JSON object matching this structure:**\n```json\n{role_selection_format}\n```\n**Ensure nothing precedes or follows the JSON.**"}
+            # Simplified user prompt instruction
+            {"role": "user", "content": f"Available assignable roles: {assignable_role_names}\nYour current roles: {current_role_names}\nTheme: '{role_theme}'\n\nSelect roles to add/remove based on the theme.\n\n**CRITICAL: Respond ONLY with a valid JSON object matching the required schema.**"}
         ]
 
         try:
             # Make the AI call to select roles
-            # Define the payload for the response_format parameter
-            role_selection_format_payload = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "role_selection_decision",
-                    "strict": True,
-                    "schema": role_selection_schema
-                }
-            }
+            # Define the payload for the response_format parameter - REMOVED for Vertex AI
+            # role_selection_format_payload = {
+            #     "type": "json_schema",
+            #     "json_schema": {
+            #         "name": "role_selection_decision",
+            #         "strict": True,
+            #         "schema": role_selection_schema
+            #     }
+            # }
 
-            role_decision = await self.gurt_cog._get_internal_ai_json_response(
+            # Use the imported get_internal_ai_json_response function
+            role_decision = await get_internal_ai_json_response(
+                cog=self.gurt_cog, # Pass the GurtCog instance
                 prompt_messages=role_prompt_messages,
-                model="openai/o4-mini-high", # Use the specified OpenAI model
-                response_format=role_selection_format_payload, # Enforce structured output
                 task_description=f"Role Selection for Guild {guild.id}",
+                response_schema_dict=role_selection_schema_dict, # Pass the schema dict
+                model_name=DEFAULT_MODEL, # Use model from config
                 temperature=0.5 # More deterministic for role selection
             )
 

@@ -28,7 +28,7 @@ from .config import (
 # Assume these helpers will be moved or are accessible via cog
 # We might need to pass 'cog' to these tool functions if they rely on cog state heavily
 # from .utils import format_message # This will be needed by context tools
-# from .api import call_llm_api_with_retry, get_internal_ai_json_response # Needed for summary, safety check
+from .api import get_internal_ai_json_response # Needed for summary, safety check
 
 # --- Tool Implementations ---
 # Note: Most of these functions will need the 'cog' instance passed to them
@@ -242,7 +242,7 @@ async def get_user_interaction_history(cog: commands.Cog, user_id_1: str, limit:
 
 async def get_conversation_summary(cog: commands.Cog, channel_id: str = None, message_limit: int = 25) -> Dict[str, Any]:
     """Generates and returns a summary of the recent conversation in a channel using an LLM call."""
-    from .api import call_llm_api_with_retry # Import here
+    from .config import SUMMARY_RESPONSE_SCHEMA, DEFAULT_MODEL # Import schema and model
     try:
         target_channel_id_str = channel_id or (str(cog.current_channel.id) if cog.current_channel else None)
         if not target_channel_id_str: return {"error": "No channel context"}
@@ -260,7 +260,7 @@ async def get_conversation_summary(cog: commands.Cog, channel_id: str = None, me
             }
 
         print(f"Generating new summary for channel {target_channel_id}")
-        if not API_KEY or not cog.session: return {"error": "API key or session not available"}
+        # No need to check API_KEY or cog.session for Vertex AI calls via get_internal_ai_json_response
 
         recent_messages_text = []
         try:
@@ -277,25 +277,31 @@ async def get_conversation_summary(cog: commands.Cog, channel_id: str = None, me
 
         conversation_context = "\n".join(recent_messages_text)
         summarization_prompt = f"Summarize the main points and current topic of this Discord chat snippet:\n\n---\n{conversation_context}\n---\n\nSummary:"
-        summary_payload = {
-            "model": DEFAULT_MODEL, # Consider cheaper model
-            "messages": [{"role": "system", "content": "Summarize concisely."}, {"role": "user", "content": summarization_prompt}],
-            "temperature": 0.3, "max_tokens": 150,
-        }
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}", "HTTP-Referer": "gurt", "X-Title": "Gurt Summarizer"}
+
+        # Use get_internal_ai_json_response
+        prompt_messages = [
+            {"role": "system", "content": "You are an expert summarizer. Provide a concise summary of the following conversation."},
+            {"role": "user", "content": summarization_prompt}
+        ]
+
+        summary_data = await get_internal_ai_json_response(
+            cog=cog,
+            prompt_messages=prompt_messages,
+            task_description=f"Summarization for channel {target_channel_id}",
+            response_schema_dict=SUMMARY_RESPONSE_SCHEMA['schema'], # Pass the schema dict
+            model_name=DEFAULT_MODEL, # Consider a cheaper/faster model if needed
+            temperature=0.3,
+            max_tokens=200 # Adjust as needed
+        )
 
         summary = "Error generating summary."
-        try:
-            data = await call_llm_api_with_retry(cog, summary_payload, headers, SUMMARY_API_TIMEOUT, f"Summarization for {target_channel_id}")
-            if data.get("choices") and data["choices"][0].get("message"):
-                summary = data["choices"][0]["message"].get("content", "Failed content extraction.").strip()
-                print(f"Summary generated for {target_channel_id}: {summary[:100]}...")
-            else:
-                summary = f"Unexpected summary API format: {str(data)[:200]}"
-                print(f"Summarization Error (Channel {target_channel_id}): {summary}")
-        except Exception as e:
-            summary = f"Failed summary for {target_channel_id}. Error: {str(e)}"
-            print(summary) # Error already printed in helper
+        if summary_data and isinstance(summary_data.get("summary"), str):
+            summary = summary_data["summary"].strip()
+            print(f"Summary generated for {target_channel_id}: {summary[:100]}...")
+        else:
+            error_detail = f"Invalid format or missing 'summary' key. Response: {summary_data}"
+            summary = f"Failed summary for {target_channel_id}. Error: {error_detail}"
+            print(summary)
 
         cog.conversation_summaries[target_channel_id] = {"summary": summary, "timestamp": time.time()}
         return {"channel_id": target_channel_id_str, "summary": summary, "source": "generated", "timestamp": datetime.datetime.now().isoformat()}
@@ -555,7 +561,7 @@ def parse_mem_limit(mem_limit_str: str) -> Optional[int]:
 
 async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, Any]:
     """Uses a secondary AI call to check if a command is potentially harmful."""
-    from .api import get_internal_ai_json_response # Import here
+    # from .api import get_internal_ai_json_response # Already imported at top level
     print(f"Performing AI safety check for command: '{command}' using model {SAFETY_CHECK_MODEL}")
     safety_schema = {
         "type": "object",
@@ -565,12 +571,17 @@ async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, An
         }, "required": ["is_safe", "reason"]
     }
     prompt_messages = [
-        {"role": "system", "content": f"Analyze shell command safety for execution in isolated, network-disabled Docker ({DOCKER_EXEC_IMAGE}) with CPU/Mem limits. Focus on data destruction, resource exhaustion, container escape, network attacks (disabled), env var leaks. Simple echo/ls/pwd safe. rm/mkfs/shutdown/wget/curl/install/fork bombs unsafe. Respond ONLY with JSON matching schema: {{{{json.dumps(safety_schema)}}}}"},
+        {"role": "system", "content": f"Analyze shell command safety for execution in isolated, network-disabled Docker ({DOCKER_EXEC_IMAGE}) with CPU/Mem limits. Focus on data destruction, resource exhaustion, container escape, network attacks (disabled), env var leaks. Simple echo/ls/pwd safe. rm/mkfs/shutdown/wget/curl/install/fork bombs unsafe. Respond ONLY with JSON matching the provided schema."},
         {"role": "user", "content": f"Analyze safety: ```{command}```"}
     ]
     safety_response = await get_internal_ai_json_response(
-        cog, prompt_messages, "Command Safety Check", SAFETY_CHECK_MODEL, 0.1, 150,
-        {"type": "json_schema", "json_schema": {"name": "safety_check", "schema": safety_schema}}
+        cog=cog,
+        prompt_messages=prompt_messages,
+        task_description="Command Safety Check",
+        response_schema_dict=safety_schema, # Pass the schema dict directly
+        model_name=SAFETY_CHECK_MODEL,
+        temperature=0.1,
+        max_tokens=150
     )
     if safety_response and isinstance(safety_response.get("is_safe"), bool):
         is_safe = safety_response["is_safe"]
