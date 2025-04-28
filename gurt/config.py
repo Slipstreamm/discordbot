@@ -230,14 +230,14 @@ PROFILE_UPDATE_SCHEMA = {
                         "type": "object",
                         "description": "Object containing the new activity details. Set type and text to null if no change.",
                         "properties": {
-                            "type": {
-                                "anyOf": [{"type": "string", "enum": ["playing", "watching", "listening", "competing"]}, {"type": "null"}],
-                                "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null."
-                            },
-                            "text": {
-                                "anyOf": [{"type": "string"}, {"type": "null"}],
-                                "description": "The activity text, or null."
-                            }
+                                "type": {
+                                    "anyOf": [{"type": "string", "enum": ["playing", "watching", "listening", "competing"]}],
+                                    "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null."
+                                },
+                                "text": {
+                                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                                    "description": "The activity text, or null."
+                                }
                         },
                         "required": ["type", "text"]
                     }
