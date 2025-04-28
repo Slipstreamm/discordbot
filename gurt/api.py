@@ -1059,14 +1059,8 @@ async def get_internal_ai_json_response(
                  {"role": c.role, "parts": [p.text if hasattr(p,'text') else str(type(p)) for p in c.parts]}
                  for c in contents
              ],
-             # Convert GenerationConfig to a serializable dict for logging
-             "generation_config": {
-                 "temperature": generation_config.temperature,
-                 "max_output_tokens": generation_config.max_output_tokens,
-                 "response_mime_type": generation_config.response_mime_type,
-                 # Schema might be complex, log its presence or basic type
-                 "response_schema": bool(generation_config.response_schema)
-             }
+             # Use the original generation_config dict directly for logging
+             "generation_config": generation_config # It's already a dict
          }
 
         # --- Add detailed logging for raw request ---
