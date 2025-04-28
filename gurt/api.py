@@ -584,17 +584,15 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         function_call = None
         function_call_part_content = None # Store the AI's request message content
 
-        # Check if the finish reason indicates a tool call
-        _FinishReason = getattr(generative_models, 'FinishReason', None)
-        is_tool_call = finish_reason == getattr(_FinishReason, 'TOOL_CALL', None)
-
-        if is_tool_call and hasattr(candidate, 'content') and candidate.content.parts:
-            # Find the function call within the parts
+        # Check primarily for the *presence* of a function call part,
+        # as finish_reason might be STOP even with a function call.
+        if hasattr(candidate, 'content') and candidate.content.parts:
             for part in candidate.content.parts:
                 if hasattr(part, 'function_call'):
                     function_call = part.function_call
-                    function_call_part_content = candidate.content # Store the whole content containing the call
-                    print(f"AI requested tool: {function_call.name}")
+                    # Store the whole content containing the call to add to history later
+                    function_call_part_content = candidate.content
+                    print(f"AI requested tool (found function_call part): {function_call.name}")
                     break # Found the function call part
 
         # --- Process Tool Call or Handle Direct Response ---
