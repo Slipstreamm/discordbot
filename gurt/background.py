@@ -278,6 +278,18 @@ async def background_processing_task(cog: 'GurtCog'):
             # --- Automatic Mood Change (Runs based on its own interval check) ---
             await maybe_change_mood(cog) # Call the mood change logic
 
+            # --- Proactive Goal Creation Check (Runs periodically) ---
+            if now - cog.last_proactive_goal_check > GurtConfig.PROACTIVE_GOAL_CHECK_INTERVAL: # Use imported config
+                print("Checking if Gurt should proactively create goals...")
+                try:
+                    await proactively_create_goals(cog) # Call the function from analysis.py
+                    cog.last_proactive_goal_check = now # Update timestamp
+                    print("Proactive goal check complete.")
+                except Exception as proactive_e:
+                    print(f"Error during proactive goal check: {proactive_e}")
+                    traceback.print_exc()
+                    cog.last_proactive_goal_check = now # Update timestamp even on error
+
     except asyncio.CancelledError:
         print("Background processing task cancelled")
     except Exception as e:
