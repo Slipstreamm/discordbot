@@ -13,7 +13,7 @@ from .config import (
     GOAL_CHECK_INTERVAL, GOAL_EXECUTION_INTERVAL, LEARNING_UPDATE_INTERVAL, EVOLUTION_UPDATE_INTERVAL, INTEREST_UPDATE_INTERVAL,
     INTEREST_DECAY_INTERVAL_HOURS, INTEREST_PARTICIPATION_BOOST,
     INTEREST_POSITIVE_REACTION_BOOST, INTEREST_NEGATIVE_REACTION_PENALTY,
-    INTEREST_FACT_BOOST, STATS_PUSH_INTERVAL, # Added stats interval
+    INTEREST_FACT_BOOST, PROACTIVE_GOAL_CHECK_INTERVAL, STATS_PUSH_INTERVAL, # Added stats interval
     MOOD_OPTIONS, MOOD_CATEGORIES, MOOD_CHANGE_INTERVAL_MIN, MOOD_CHANGE_INTERVAL_MAX, # Mood change imports
     BASELINE_PERSONALITY, # For default traits
     REFLECTION_INTERVAL_SECONDS # Import reflection interval
@@ -279,7 +279,7 @@ async def background_processing_task(cog: 'GurtCog'):
             await maybe_change_mood(cog) # Call the mood change logic
 
             # --- Proactive Goal Creation Check (Runs periodically) ---
-            if now - cog.last_proactive_goal_check > GurtConfig.PROACTIVE_GOAL_CHECK_INTERVAL: # Use imported config
+            if now - cog.last_proactive_goal_check > PROACTIVE_GOAL_CHECK_INTERVAL: # Use imported config
                 print("Checking if Gurt should proactively create goals...")
                 try:
                     await proactively_create_goals(cog) # Call the function from analysis.py

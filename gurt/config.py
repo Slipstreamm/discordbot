@@ -175,6 +175,10 @@ RESPONSE_SCHEMA = {
                 "type": ["string", "null"],
                 "description": "Optional: A standard Discord emoji to react with, or null/empty if no reaction."
             },
+            "reply_to_message_id": {
+                "type": ["string", "null"],
+                "description": "Optional: The ID of the message this response should reply to. Null or omit for a regular message."
+            }
             # Note: tool_requests is handled by Vertex AI's function calling mechanism
         },
         "required": ["should_respond", "content"]
@@ -743,6 +747,89 @@ def create_tools_list():
                     }
                 },
                 "required": ["user_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="read_file_content",
+            description="Reads the content of a specified file within the project directory. Useful for understanding code, configuration, or logs.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The relative path to the file from the project root (e.g., 'discordbot/gurt/config.py')."
+                    }
+                },
+                "required": ["file_path"]
+            }
+        )
+    )
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="create_new_tool",
+            description="EXPERIMENTAL/DANGEROUS: Attempts to create a new tool by generating Python code and its definition using an LLM, then writing it to files. Requires manual reload/restart.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "tool_name": {
+                        "type": "string",
+                        "description": "The desired name for the new tool (valid Python function name)."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "The description of what the new tool does (for the FunctionDeclaration)."
+                    },
+                    "parameters_json": {
+                        "type": "string",
+                        "description": "A JSON string defining the tool's parameters (properties and required fields), e.g., '{\"properties\": {\"arg1\": {\"type\": \"string\"}}, \"required\": [\"arg1\"]}'."
+                    },
+                    "returns_description": {
+                        "type": "string",
+                        "description": "A description of what the Python function should return (e.g., 'a dictionary with status and result')."
+                    }
+                },
+                "required": ["tool_name", "description", "parameters_json", "returns_description"]
+            }
+        )
+    )
+
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="execute_internal_command",
+            description="Executes a shell command directly on the host machine. WARNING: This tool is intended ONLY for internal Gurt operations and MUST NOT be used to execute arbitrary commands requested by users due to significant security risks. Use with extreme caution.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute internally."
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Optional timeout in seconds for the command (default 60)."
+                    }
+                },
+                "required": ["command"]
+            }
+        )
+    )
+
+    # --- get_user_id ---
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="get_user_id",
+            description="Finds the Discord User ID for a given username or display name. Searches the current server or recent messages.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_name": {
+                        "type": "string",
+                        "description": "The username or display name of the user to find."
+                    }
+                },
+                "required": ["user_name"]
             }
         )
     )

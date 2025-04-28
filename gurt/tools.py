@@ -752,10 +752,108 @@ async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any
                 # Log error but don't raise, primary error is more important
                 print(f"Error deleting container {container.id[:12]}: {delete_err}")
             except Exception as delete_exc:
-                print(f"Unexpected error deleting container {container.id[:12]}: {delete_exc}") # <--- Corrected indentation
+                print(f"Unexpected error deleting container {container.id[:12]}: {delete_exc}")
         # Ensure the client connection is closed
         if client:
             await client.close()
+async def get_user_id(cog: commands.Cog, user_name: str) -> Dict[str, Any]:
+    """Finds the Discord User ID for a given username or display name."""
+    print(f"Attempting to find user ID for: '{user_name}'")
+    if not cog.current_channel or not cog.current_channel.guild:
+        # Search recent global messages if not in a guild context
+        print("No guild context, searching recent global message authors...")
+        user_name_lower = user_name.lower()
+        found_user = None
+        # Check recent message authors (less reliable)
+        for msg_data in reversed(list(cog.message_cache['global_recent'])): # Check newest first
+            author_info = msg_data.get('author', {})
+            if user_name_lower == author_info.get('name', '').lower() or \
+               user_name_lower == author_info.get('display_name', '').lower():
+                found_user = {"id": author_info.get('id'), "name": author_info.get('name'), "display_name": author_info.get('display_name')}
+                break
+        if found_user and found_user.get("id"):
+            print(f"Found user ID {found_user['id']} for '{user_name}' in global message cache.")
+            return {"status": "success", "user_id": found_user["id"], "user_name": found_user["name"], "display_name": found_user["display_name"]}
+        else:
+            print(f"User '{user_name}' not found in recent global message cache.")
+            return {"error": f"User '{user_name}' not found in recent messages.", "user_name": user_name}
+
+    # If in a guild, search members
+    guild = cog.current_channel.guild
+    member = guild.get_member_named(user_name) # Case-sensitive username#discriminator or exact display name
+
+    if not member: # Try case-insensitive display name search
+        user_name_lower = user_name.lower()
+        for m in guild.members:
+            if m.display_name.lower() == user_name_lower:
+                member = m
+                break
+
+    if member:
+        print(f"Found user ID {member.id} for '{user_name}' in guild '{guild.name}'.")
+        return {"status": "success", "user_id": str(member.id), "user_name": member.name, "display_name": member.display_name}
+    else:
+        print(f"User '{user_name}' not found in guild '{guild.name}'.")
+        return {"error": f"User '{user_name}' not found in this server.", "user_name": user_name}
+
+
+async def execute_internal_command(cog: commands.Cog, command: str, timeout_seconds: int = 60) -> Dict[str, Any]:
+    """
+    Executes a shell command directly on the host machine where the bot is running.
+    WARNING: This tool is intended ONLY for internal Gurt operations and MUST NOT
+    be used to execute arbitrary commands requested by users due to significant security risks.
+    It bypasses safety checks and containerization. Use with extreme caution.
+    """
+    print(f"--- INTERNAL EXECUTION (UNSAFE): Running command: {command} ---")
+    try:
+        process = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+        exit_code = process.returncode
+
+        stdout = stdout_bytes.decode(errors='replace').strip()
+        stderr = stderr_bytes.decode(errors='replace').strip()
+
+        max_len = 1000
+        stdout_trunc = stdout[:max_len] + ('...' if len(stdout) > max_len else '')
+        stderr_trunc = stderr[:max_len] + ('...' if len(stderr) > max_len else '')
+
+        result = {
+            "status": "success" if exit_code == 0 else "execution_error",
+            "stdout": stdout_trunc,
+            "stderr": stderr_trunc,
+            "exit_code": exit_code,
+            "command": command
+        }
+        print(f"Internal command finished. Exit Code: {exit_code}. Output length: {len(stdout)}, Stderr length: {len(stderr)}")
+        return result
+
+    except asyncio.TimeoutError:
+        print(f"Internal command timed out after {timeout_seconds}s: {command}")
+        # Attempt to kill the process if it timed out
+        if process and process.returncode is None:
+            try:
+                process.kill()
+                await process.wait() # Ensure it's cleaned up
+                print(f"Killed timed-out internal process (PID: {process.pid})")
+            except ProcessLookupError:
+                print(f"Internal process (PID: {process.pid}) already finished.")
+            except Exception as kill_e:
+                print(f"Error killing timed-out internal process (PID: {process.pid}): {kill_e}")
+        return {"error": f"Command execution timed out after {timeout_seconds}s", "command": command, "status": "timeout"}
+    except FileNotFoundError:
+        error_message = f"Command not found: {command.split()[0]}"
+        print(f"Internal command error: {error_message}")
+        return {"error": error_message, "command": command, "status": "not_found"}
+    except Exception as e:
+        error_message = f"Unexpected error during internal command execution: {str(e)}"
+        print(f"Internal command error: {error_message}")
+        traceback.print_exc()
+        return {"error": error_message, "command": command, "status": "error"}
 
 async def extract_web_content(cog: commands.Cog, urls: Union[str, List[str]], extract_depth: str = "basic", include_images: bool = False) -> Dict[str, Any]:
     """Extract content from URLs using Tavily API"""
@@ -789,6 +887,303 @@ async def extract_web_content(cog: commands.Cog, urls: Union[str, List[str]], ex
         print(error_message)
         return {"error": error_message, "timestamp": datetime.datetime.now().isoformat()}
 
+async def read_file_content(cog: commands.Cog, file_path: str) -> Dict[str, Any]:
+    """Reads the content of a specified file. Limited access for safety."""
+    print(f"Attempting to read file: {file_path}")
+    # --- Basic Safety Check (Needs significant enhancement for production) ---
+    # 1. Normalize path
+    try:
+        # WARNING: This assumes the bot runs from a specific root. Adjust as needed.
+        # For now, let's assume the bot runs from the 'combined' directory level.
+        # We need to prevent accessing files outside the project directory.
+        base_path = os.path.abspath(os.getcwd()) # z:/projects_git/combined
+        full_path = os.path.abspath(os.path.join(base_path, file_path))
+
+        # Prevent path traversal (../)
+        if not full_path.startswith(base_path):
+            error_message = "Access denied: Path traversal detected."
+            print(f"Read file error: {error_message} (Attempted: {full_path}, Base: {base_path})")
+            return {"error": error_message, "file_path": file_path}
+
+        # 2. Check allowed directories/extensions (Example - very basic)
+        allowed_dirs = [os.path.join(base_path, "discordbot"), os.path.join(base_path, "api_service")] # Example allowed dirs
+        allowed_extensions = [".py", ".txt", ".md", ".json", ".log", ".cfg", ".ini", ".yaml", ".yml", ".html", ".css", ".js"]
+        is_allowed_dir = any(full_path.startswith(allowed) for allowed in allowed_dirs)
+        _, ext = os.path.splitext(full_path)
+        is_allowed_ext = ext.lower() in allowed_extensions
+
+        # Allow reading only within specific subdirectories of the project
+        # For now, let's restrict to reading within 'discordbot' or 'api_service' for safety
+        if not is_allowed_dir:
+             error_message = f"Access denied: Reading files outside allowed directories is forbidden."
+             print(f"Read file error: {error_message} (Path: {full_path})")
+             return {"error": error_message, "file_path": file_path}
+
+        if not is_allowed_ext:
+            error_message = f"Access denied: Reading files with extension '{ext}' is forbidden."
+            print(f"Read file error: {error_message} (Path: {full_path})")
+            return {"error": error_message, "file_path": file_path}
+
+    except Exception as path_e:
+        error_message = f"Error processing file path: {str(path_e)}"
+        print(f"Read file error: {error_message}")
+        return {"error": error_message, "file_path": file_path}
+
+    # --- Read File ---
+    try:
+        # Use async file reading if available/needed, otherwise sync with to_thread
+        # For simplicity, using standard open with asyncio.to_thread
+        def sync_read():
+            with open(full_path, 'r', encoding='utf-8') as f:
+                # Limit file size read? For now, read whole file.
+                return f.read()
+
+        content = await asyncio.to_thread(sync_read)
+        max_len = 5000 # Limit returned content length
+        content_trunc = content[:max_len] + ('...' if len(content) > max_len else '')
+        print(f"Successfully read {len(content)} bytes from {file_path}. Returning {len(content_trunc)} bytes.")
+        return {"status": "success", "file_path": file_path, "content": content_trunc}
+
+    except FileNotFoundError:
+        error_message = "File not found."
+        print(f"Read file error: {error_message} (Path: {full_path})")
+        return {"error": error_message, "file_path": file_path}
+    except PermissionError:
+        error_message = "Permission denied."
+        print(f"Read file error: {error_message} (Path: {full_path})")
+        return {"error": error_message, "file_path": file_path}
+    except UnicodeDecodeError:
+        error_message = "Cannot decode file content (likely not a text file)."
+        print(f"Read file error: {error_message} (Path: {full_path})")
+        return {"error": error_message, "file_path": file_path}
+    except Exception as e:
+        error_message = f"An unexpected error occurred: {str(e)}"
+        print(f"Read file error: {error_message} (Path: {full_path})")
+        traceback.print_exc()
+        return {"error": error_message, "file_path": file_path}
+
+# --- Meta Tool: Create New Tool ---
+# WARNING: HIGHLY EXPERIMENTAL AND DANGEROUS. Allows AI to write and load code.
+async def create_new_tool(cog: commands.Cog, tool_name: str, description: str, parameters_json: str, returns_description: str) -> Dict[str, Any]:
+    """
+    EXPERIMENTAL/DANGEROUS: Attempts to create a new tool by generating Python code
+    and its definition using an LLM, then writing it to tools.py and config.py.
+    Requires manual reload/restart of the bot for the tool to be fully active.
+    Parameters JSON should be a JSON string describing the 'properties' and 'required' fields
+    for the tool's parameters, similar to other FunctionDeclarations.
+    """
+    print(f"--- DANGEROUS OPERATION: Attempting to create new tool: {tool_name} ---")
+    from .api import get_internal_ai_json_response # Local import
+    from .config import TOOLS # Import for context, though modifying it runtime is hard
+
+    # Basic validation
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', tool_name):
+        return {"error": "Invalid tool name. Must be a valid Python function name."}
+    if tool_name in TOOL_MAPPING:
+        return {"error": f"Tool '{tool_name}' already exists."}
+    try:
+        params_dict = json.loads(parameters_json)
+        if not isinstance(params_dict.get('properties'), dict) or not isinstance(params_dict.get('required'), list):
+            raise ValueError("Invalid parameters_json structure. Must contain 'properties' (dict) and 'required' (list).")
+    except json.JSONDecodeError:
+        return {"error": "Invalid parameters_json. Must be valid JSON."}
+    except ValueError as e:
+        return {"error": str(e)}
+
+    # --- Prompt LLM to generate code and definition ---
+    generation_schema = {
+        "type": "object",
+        "properties": {
+            "python_function_code": {"type": "string", "description": "The complete Python async function code for the new tool, including imports if necessary."},
+            "function_declaration_params": {"type": "string", "description": "The JSON string for the 'parameters' part of the FunctionDeclaration."},
+            "function_declaration_desc": {"type": "string", "description": "The 'description' string for the FunctionDeclaration."}
+        },
+        "required": ["python_function_code", "function_declaration_params", "function_declaration_desc"]
+    }
+    system_prompt = (
+        "You are a Python code generation assistant for Gurt, a Discord bot. "
+        "Generate the Python code for a new asynchronous tool function and the necessary details for its FunctionDeclaration. "
+        "The function MUST be async (`async def`), take `cog: commands.Cog` as its first argument, and accept other arguments as defined in parameters_json. "
+        "It MUST return a dictionary, including an 'error' key if something goes wrong, or other relevant keys on success. "
+        "Ensure necessary imports are included within the function if not standard library or already likely imported in tools.py (like discord, asyncio, aiohttp, os, json, re, time, random, traceback, Dict, List, Any, Optional). "
+        "For the FunctionDeclaration, provide the description and the parameters JSON string based on the user's request. "
+        "Respond ONLY with JSON matching the schema."
+    )
+    user_prompt = (
+        f"Create a new tool named '{tool_name}'.\n"
+        f"Description for FunctionDeclaration: {description}\n"
+        f"Parameters JSON for FunctionDeclaration: {parameters_json}\n"
+        f"Description of what the function should return: {returns_description}\n\n"
+        "Generate the Python function code and the FunctionDeclaration details:"
+    )
+
+    generation_prompt_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    print(f"Generating code for tool '{tool_name}'...")
+    generated_data = await get_internal_ai_json_response(
+        cog=cog,
+        prompt_messages=generation_prompt_messages,
+        task_description=f"Generate code for new tool '{tool_name}'",
+        response_schema_dict=generation_schema,
+        model_name=cog.default_model, # Use default model for generation
+        temperature=0.3, # Lower temperature for more predictable code
+        max_tokens=1500 # Allow ample space for code generation
+    )
+
+    if not generated_data or "python_function_code" not in generated_data or "function_declaration_params" not in generated_data:
+        error_msg = f"Failed to generate code for tool '{tool_name}'. LLM response invalid: {generated_data}"
+        print(error_msg)
+        return {"error": error_msg}
+
+    python_code = generated_data["python_function_code"].strip()
+    declaration_params_str = generated_data["function_declaration_params"].strip()
+    declaration_desc = generated_data["function_declaration_desc"].strip()
+
+    # Basic validation of generated code (very superficial)
+    if not python_code.startswith("async def") or f" {tool_name}(" not in python_code or "cog: commands.Cog" not in python_code:
+         error_msg = f"Generated Python code for '{tool_name}' seems invalid (missing async def, cog param, or function name)."
+         print(error_msg)
+         print("--- Generated Code ---")
+         print(python_code)
+         print("----------------------")
+         return {"error": error_msg, "generated_code": python_code} # Return code for debugging
+
+    # --- Attempt to write to files (HIGH RISK) ---
+    # Note: This is brittle. Concurrent writes or errors could corrupt files.
+    # A more robust solution involves separate files and dynamic loading.
+
+    # 1. Write function to tools.py
+    tools_py_path = "discordbot/gurt/tools.py"
+    try:
+        print(f"Attempting to append function to {tools_py_path}...")
+        # We need to insert *before* the TOOL_MAPPING definition
+        with open(tools_py_path, "r+", encoding="utf-8") as f:
+            content = f.readlines()
+            insert_line = -1
+            for i, line in enumerate(content):
+                if line.strip().startswith("TOOL_MAPPING = {"):
+                    insert_line = i
+                    break
+            if insert_line == -1:
+                raise RuntimeError("Could not find TOOL_MAPPING definition in tools.py")
+
+            # Insert the new function code before the mapping
+            new_function_lines = ["\n"] + [line + "\n" for line in python_code.splitlines()] + ["\n"]
+            content[insert_line:insert_line] = new_function_lines
+
+            f.seek(0)
+            f.writelines(content)
+            f.truncate()
+        print(f"Successfully appended function '{tool_name}' to {tools_py_path}")
+    except Exception as e:
+        error_msg = f"Failed to write function to {tools_py_path}: {e}"
+        print(error_msg); traceback.print_exc()
+        return {"error": error_msg}
+
+    # 2. Add tool to TOOL_MAPPING in tools.py
+    try:
+        print(f"Attempting to add '{tool_name}' to TOOL_MAPPING in {tools_py_path}...")
+        with open(tools_py_path, "r+", encoding="utf-8") as f:
+            content = f.readlines()
+            mapping_end_line = -1
+            in_mapping = False
+            for i, line in enumerate(content):
+                if line.strip().startswith("TOOL_MAPPING = {"):
+                    in_mapping = True
+                if in_mapping and line.strip() == "}":
+                    mapping_end_line = i
+                    break
+            if mapping_end_line == -1:
+                 raise RuntimeError("Could not find end of TOOL_MAPPING definition '}' in tools.py")
+
+            # Add the new mapping entry before the closing brace
+            new_mapping_line = f'    "{tool_name}": {tool_name},\n'
+            content.insert(mapping_end_line, new_mapping_line)
+
+            f.seek(0)
+            f.writelines(content)
+            f.truncate()
+        print(f"Successfully added '{tool_name}' to TOOL_MAPPING.")
+    except Exception as e:
+        error_msg = f"Failed to add '{tool_name}' to TOOL_MAPPING in {tools_py_path}: {e}"
+        print(error_msg); traceback.print_exc()
+        # Attempt to revert the function addition if mapping fails? Complex.
+        return {"error": error_msg}
+
+    # 3. Add FunctionDeclaration to config.py
+    config_py_path = "discordbot/gurt/config.py"
+    try:
+        print(f"Attempting to add FunctionDeclaration for '{tool_name}' to {config_py_path}...")
+        declaration_code = (
+            f"    tool_declarations.append(\n"
+            f"        generative_models.FunctionDeclaration(\n"
+            f"            name=\"{tool_name}\",\n"
+            f"            description=\"{declaration_desc.replace('\"', '\\\"')}\", # Generated description\n"
+            f"            parameters={declaration_params_str} # Generated parameters\n"
+            f"        )\n"
+            f"    )\n"
+        )
+        with open(config_py_path, "r+", encoding="utf-8") as f:
+            content = f.readlines()
+            insert_line = -1
+            # Find the line 'return tool_declarations' within create_tools_list
+            in_function = False
+            for i, line in enumerate(content):
+                if "def create_tools_list():" in line:
+                    in_function = True
+                if in_function and line.strip() == "return tool_declarations":
+                    insert_line = i
+                    break
+            if insert_line == -1:
+                raise RuntimeError("Could not find 'return tool_declarations' in config.py")
+
+            # Insert the new declaration code before the return statement
+            new_declaration_lines = ["\n"] + [line + "\n" for line in declaration_code.splitlines()]
+            content[insert_line:insert_line] = new_declaration_lines
+
+            f.seek(0)
+            f.writelines(content)
+            f.truncate()
+        print(f"Successfully added FunctionDeclaration for '{tool_name}' to {config_py_path}")
+    except Exception as e:
+        error_msg = f"Failed to add FunctionDeclaration to {config_py_path}: {e}"
+        print(error_msg); traceback.print_exc()
+        # Attempt to revert previous changes? Very complex.
+        return {"error": error_msg}
+
+    # --- Attempt Runtime Update (Limited Scope) ---
+    # This will only affect the *current* running instance and won't persist restarts.
+    # It also won't update the TOOLS list used by the LLM without a reload.
+    try:
+        # Dynamically execute the generated code to define the function in the current scope
+        # This is risky and might fail depending on imports/scope.
+        # exec(python_code, globals()) # Avoid exec if possible
+        # A safer way might involve importlib, but that's more complex.
+
+        # For now, just update the runtime TOOL_MAPPING if possible.
+        # This requires the function to be somehow available in the current scope.
+        # Let's assume for now it needs a restart/reload.
+        print(f"Runtime update of TOOL_MAPPING for '{tool_name}' skipped. Requires bot reload.")
+        # If we could dynamically import:
+        # TOOL_MAPPING[tool_name] = dynamically_imported_function
+
+    except Exception as e:
+        print(f"Error during runtime update attempt for '{tool_name}': {e}")
+        # Don't return error here, as file writes succeeded.
+
+    return {
+        "status": "success",
+        "tool_name": tool_name,
+        "message": f"Tool '{tool_name}' code and definition written to files. Bot reload/restart likely required for full activation.",
+        "generated_function_code": python_code, # Return for inspection
+        "generated_declaration_desc": declaration_desc,
+        "generated_declaration_params": declaration_params_str
+    }
+
+
 # --- Tool Mapping ---
 # This dictionary maps tool names (used in the AI prompt) to their implementation functions.
 TOOL_MAPPING = {
@@ -813,5 +1208,9 @@ TOOL_MAPPING = {
     "create_poll": create_poll,
     "run_terminal_command": run_terminal_command,
     "remove_timeout": remove_timeout,
-    "extract_web_content": extract_web_content
+    "extract_web_content": extract_web_content,
+    "read_file_content": read_file_content,
+    "create_new_tool": create_new_tool, # Added the meta-tool
+    "execute_internal_command": execute_internal_command, # Added internal command execution
+    "get_user_id": get_user_id # Added user ID lookup tool
 }

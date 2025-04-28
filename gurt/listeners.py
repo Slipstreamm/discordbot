@@ -8,6 +8,8 @@ import os # Added for file handling in error case
 from typing import TYPE_CHECKING, Union, Dict, Any, Optional
 
 # Relative imports
+from .utils import format_message # Import format_message
+from .config import CONTEXT_WINDOW_SIZE # Import context window size
 # Assuming api, utils, analysis functions are defined and imported correctly later
 # We might need to adjust these imports based on final structure
 # from .api import get_ai_response, get_proactive_ai_response
@@ -39,6 +41,53 @@ async def on_ready_listener(cog: 'GurtCog'):
         print(f"GurtCog: Failed to sync commands: {e}")
         import traceback
         traceback.print_exc()
+
+    # --- Pre-load message history ---
+    print("GurtCog: Starting to pre-load message history for accessible channels...")
+    loaded_count = 0
+    skipped_count = 0
+    error_count = 0
+    start_time = time.time()
+    for guild in cog.bot.guilds:
+        for channel in guild.text_channels:
+            # Check permissions
+            perms = channel.permissions_for(guild.me)
+            if perms.read_message_history and perms.read_messages:
+                try:
+                    print(f"GurtCog: Loading history for #{channel.name} in {guild.name}...")
+                    history = []
+                    async for msg in channel.history(limit=CONTEXT_WINDOW_SIZE, oldest_first=False):
+                        # Avoid adding messages already potentially cached by recent activity during startup
+                        if msg.id not in [m['id'] for m in cog.message_cache['by_channel'].get(channel.id, [])]:
+                            history.append(format_message(cog, msg)) # Use imported function
+
+                    # Prepend history (oldest messages first in deque)
+                    # The history is fetched newest first, so reverse it before extending
+                    history.reverse()
+                    cog.message_cache['by_channel'][channel.id].extendleft(history) # Use extendleft to add to the beginning
+                    if history:
+                        print(f"GurtCog: Loaded {len(history)} messages for #{channel.name}.")
+                        loaded_count += 1
+                    else:
+                        print(f"GurtCog: No new messages found to load for #{channel.name}.")
+                        skipped_count += 1 # Count channels where no *new* history was loaded
+
+                except discord.Forbidden:
+                    print(f"GurtCog: Permission denied (Forbidden) for #{channel.name} in {guild.name}.")
+                    error_count += 1
+                except discord.HTTPException as e:
+                    print(f"GurtCog: HTTP error loading history for #{channel.name} in {guild.name}: {e}")
+                    error_count += 1
+                except Exception as e:
+                    print(f"GurtCog: Unexpected error loading history for #{channel.name} in {guild.name}: {e}")
+                    error_count += 1
+            else:
+                # print(f"GurtCog: Skipping #{channel.name} in {guild.name} due to missing permissions.") # Too verbose maybe
+                skipped_count += 1
+    end_time = time.time()
+    print(f"GurtCog: Finished pre-loading history. Loaded: {loaded_count}, Skipped/No New: {skipped_count}, Errors: {error_count}. Took {end_time - start_time:.2f}s.")
+    # --- End Pre-load ---
+
 
 async def on_message_listener(cog: 'GurtCog', message: discord.Message):
     """Listener function for on_message."""
@@ -347,57 +396,105 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
         reacted = False
 
         # Helper function to handle sending a single response text and caching
-        async def send_response_content(response_data: Optional[Dict[str, Any]], response_label: str) -> bool:
+        async def send_response_content(
+            response_data: Optional[Dict[str, Any]],
+            response_label: str,
+            original_message: discord.Message # Add original message for context
+        ) -> bool:
             nonlocal sent_any_message # Allow modification of the outer scope variable
-            if response_data and isinstance(response_data, dict) and \
-               response_data.get("should_respond") and response_data.get("content"):
-                response_text = response_data["content"]
-                print(f"Attempting to send {response_label} content...")
-                if len(response_text) > 1900:
-                    filepath = f'gurt_{response_label}_{message.id}.txt'
-                    try:
-                        with open(filepath, 'w', encoding='utf-8') as f: f.write(response_text)
-                        await message.channel.send(f"{response_label.capitalize()} response too long:", file=discord.File(filepath))
-                        sent_any_message = True
-                        print(f"Sent {response_label} content as file.")
-                        return True
-                    except Exception as file_e: print(f"Error writing/sending long {response_label} response file: {file_e}")
-                    finally:
-                        try: os.remove(filepath)
-                        except OSError as os_e: print(f"Error removing temp file {filepath}: {os_e}")
-                else:
-                    try:
-                        async with message.channel.typing():
-                            await simulate_human_typing(cog, message.channel, response_text) # Use simulation
-                        sent_msg = await message.channel.send(response_text)
-                        sent_any_message = True
-                        # Cache this bot response
-                        bot_response_cache_entry = format_message(cog, sent_msg)
-                        cog.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
-                        cog.message_cache['global_recent'].append(bot_response_cache_entry)
-                        # cog.message_cache['replied_to'][channel_id].append(bot_response_cache_entry) # Maybe track replies differently?
-                        cog.bot_last_spoke[channel_id] = time.time()
-                        # Track participation topic
-                        identified_topics = identify_conversation_topics(cog, [bot_response_cache_entry])
-                        if identified_topics:
-                            topic = identified_topics[0]['topic'].lower().strip()
-                            cog.gurt_participation_topics[topic] += 1
-                            print(f"Tracked Gurt participation ({response_label}) in topic: '{topic}'")
-                        print(f"Sent {response_label} content.")
-                        return True
-                    except Exception as send_e:
-                        print(f"Error sending {response_label} content: {send_e}")
+            if not response_data or not isinstance(response_data, dict) or \
+               not response_data.get("should_respond") or not response_data.get("content"):
+                return False # Nothing to send
+
+            response_text = response_data["content"]
+            reply_to_id = response_data.get("reply_to_message_id")
+            message_reference = None
+
+            print(f"Preparing to send {response_label} content...")
+
+            # --- Handle Reply ---
+            if reply_to_id:
+                try:
+                    original_reply_msg = await original_message.channel.fetch_message(int(reply_to_id))
+                    if original_reply_msg:
+                        message_reference = original_reply_msg.to_reference(fail_if_not_exists=False) # Don't error if deleted
+                        print(f"Will reply to message ID: {reply_to_id}")
+                    else:
+                        print(f"Warning: Could not fetch message {reply_to_id} to reply to.")
+                except (ValueError, discord.NotFound, discord.Forbidden) as fetch_err:
+                    print(f"Warning: Error fetching message {reply_to_id} to reply to: {fetch_err}")
+                except Exception as e:
+                     print(f"Unexpected error fetching reply message {reply_to_id}: {e}")
+
+
+            # --- Handle Pings ---
+            ping_matches = re.findall(r'\[PING:\s*([^\]]+)\s*\]', response_text)
+            if ping_matches:
+                print(f"Found ping placeholders: {ping_matches}")
+                # Import get_user_id tool function dynamically or ensure it's accessible
+                from .tools import get_user_id
+                for user_name_to_ping in ping_matches:
+                    user_id_result = await get_user_id(cog, user_name_to_ping.strip())
+                    if user_id_result and user_id_result.get("status") == "success":
+                        user_id_to_ping = user_id_result.get("user_id")
+                        if user_id_to_ping:
+                            response_text = response_text.replace(f'[PING: {user_name_to_ping}]', f'<@{user_id_to_ping}>', 1)
+                            print(f"Replaced ping placeholder for '{user_name_to_ping}' with <@{user_id_to_ping}>")
+                        else:
+                             print(f"Warning: get_user_id succeeded for '{user_name_to_ping}' but returned no ID.")
+                             response_text = response_text.replace(f'[PING: {user_name_to_ping}]', user_name_to_ping, 1) # Replace with name as fallback
+                    else:
+                        print(f"Warning: Could not find user ID for ping placeholder '{user_name_to_ping}'. Error: {user_id_result.get('error')}")
+                        response_text = response_text.replace(f'[PING: {user_name_to_ping}]', user_name_to_ping, 1) # Replace with name as fallback
+
+            # --- Send Message ---
+            if len(response_text) > 1900:
+                filepath = f'gurt_{response_label}_{original_message.id}.txt'
+                try:
+                    with open(filepath, 'w', encoding='utf-8') as f: f.write(response_text)
+                    # Send file with reference if applicable
+                    await original_message.channel.send(f"{response_label.capitalize()} response too long:", file=discord.File(filepath), reference=message_reference, mention_author=False)
+                    sent_any_message = True
+                    print(f"Sent {response_label} content as file (Reply: {bool(message_reference)}).")
+                    return True
+                except Exception as file_e: print(f"Error writing/sending long {response_label} response file: {file_e}")
+                finally:
+                    try: os.remove(filepath)
+                    except OSError as os_e: print(f"Error removing temp file {filepath}: {os_e}")
+            else:
+                try:
+                    async with original_message.channel.typing():
+                        await simulate_human_typing(cog, original_message.channel, response_text) # Use simulation
+                    # Send message with reference if applicable
+                    sent_msg = await original_message.channel.send(response_text, reference=message_reference, mention_author=False) # mention_author=False is usually preferred for bots
+                    sent_any_message = True
+                    # Cache this bot response
+                    bot_response_cache_entry = format_message(cog, sent_msg) # Pass cog
+                    cog.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
+                    cog.message_cache['global_recent'].append(bot_response_cache_entry)
+                    cog.bot_last_spoke[channel_id] = time.time()
+                    # Track participation topic
+                    identified_topics = identify_conversation_topics(cog, [bot_response_cache_entry]) # Pass cog
+                    if identified_topics:
+                        topic = identified_topics[0]['topic'].lower().strip()
+                        cog.gurt_participation_topics[topic] += 1
+                        print(f"Tracked Gurt participation ({response_label}) in topic: '{topic}'")
+                    print(f"Sent {response_label} content (Reply: {bool(message_reference)}).")
+                    return True
+                except Exception as send_e:
+                    print(f"Error sending {response_label} content: {send_e}")
             return False
 
         # Send initial response content if valid
-        sent_initial_message = await send_response_content(initial_response, "initial")
+        # Pass the original message object 'message' here
+        sent_initial_message = await send_response_content(initial_response, "initial", message)
 
         # Send final response content if valid (and different from initial, if initial was sent)
         sent_final_message = False
-        # Ensure initial_response exists before accessing its content for comparison
         initial_content = initial_response.get("content") if initial_response else None
         if final_response and (not sent_initial_message or initial_content != final_response.get("content")):
-             sent_final_message = await send_response_content(final_response, "final")
+             # Pass the original message object 'message' here too
+             sent_final_message = await send_response_content(final_response, "final", message)
 
         # Handle Reaction (prefer final response for reaction if it exists)
         reaction_source = final_response if final_response else initial_response
