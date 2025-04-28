@@ -566,31 +566,29 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         if not initial_response or not initial_response.candidates:
              raise Exception("Initial API call returned no response or candidates.")
 
-        # --- Attempt to parse initial response (might be placeholder or final if no tool call) ---
-        initial_response_text = _get_response_text(initial_response) # Use helper
-        # Use relaxed validation? For now, try standard schema. Might fail if it's just a tool call trigger.
-        initial_parsed_data = parse_and_validate_json_response(
-            initial_response_text, RESPONSE_SCHEMA['schema'], "initial response check"
-        )
-        # If initial parsing fails but a tool call happens, initial_parsed_data will be None, which is okay.
-
-        # Check for function call request
+        # --- Check for Tool Call FIRST ---
         candidate = initial_response.candidates[0]
-        # Use getattr for safer access in case candidate structure varies or finish_reason is None
         finish_reason = getattr(candidate, 'finish_reason', None)
-        function_call_part = None
-        if hasattr(candidate, 'content') and candidate.content.parts:
-             # Find the first part that has a function_call attribute
-             for part in candidate.content.parts:
-                 if hasattr(part, 'function_call'):
-                      function_call_part = part
-                      break
+        function_call = None
+        function_call_part_content = None # Store the AI's request message content
 
-        # Use getattr for safer access, compare with the actual FinishReason enum if available
+        # Check if the finish reason indicates a tool call
         _FinishReason = getattr(generative_models, 'FinishReason', None)
-        if finish_reason == getattr(_FinishReason, 'TOOL_CALL', None) and function_call_part:
-            function_call = function_call_part.function_call
-            print(f"AI requested tool: {function_call.name}")
+        is_tool_call = finish_reason == getattr(_FinishReason, 'TOOL_CALL', None)
+
+        if is_tool_call and hasattr(candidate, 'content') and candidate.content.parts:
+            # Find the function call within the parts
+            for part in candidate.content.parts:
+                if hasattr(part, 'function_call'):
+                    function_call = part.function_call
+                    function_call_part_content = candidate.content # Store the whole content containing the call
+                    print(f"AI requested tool: {function_call.name}")
+                    break # Found the function call part
+
+        # --- Process Tool Call or Handle Direct Response ---
+        if function_call and function_call_part_content:
+            # --- Tool Call Path ---
+            initial_parsed_data = None # No initial JSON expected if tool is called
 
             # Process the tool request
             tool_response_part = await process_requested_tools(cog, function_call)
@@ -651,23 +649,28 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                          error_message = "Failed to get valid JSON response after re-prompting."
                 else:
                  error_message = "Failed to get response after re-prompting."
-            # final_parsed_data is now set (or None if failed) after tool use
-
+            # final_parsed_data is now set (or None if failed) after tool use and potential re-prompt
 
         else:
-            # No tool call requested, the first response IS the final one.
-            # We already attempted to parse it into initial_parsed_data.
-            print("No tool call requested by AI.")
-            final_parsed_data = initial_parsed_data # The initial parse IS the final result here.
+            # --- No Tool Call Path ---
+            print("No tool call requested by AI. Processing initial response as final.")
+            # Attempt to parse the initial response text directly.
+            initial_response_text = _get_response_text(initial_response) # Use helper
+            # Validate against the final schema because this IS the final response.
+            final_parsed_data = parse_and_validate_json_response(
+                initial_response_text, RESPONSE_SCHEMA['schema'], "final response (no tools)"
+            )
+            initial_parsed_data = final_parsed_data # Keep initial_parsed_data consistent for return dict
 
             if final_parsed_data is None:
-                 # This means the initial_parsed_data failed validation earlier
+                 # This means the initial response failed validation.
                  print("Critical Error: Initial response failed validation (no tools).")
                  error_message = "Failed to parse/validate initial AI JSON response."
                  # Create a basic fallback if the bot was mentioned
                  replied_to_bot = message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user
                  if cog.bot.user.mentioned_in(message) or replied_to_bot:
                      fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+            # initial_parsed_data is not used in this path, only final_parsed_data matters
 
 
     except Exception as e:
