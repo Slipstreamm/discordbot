@@ -248,11 +248,13 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
 
         if error_msg:
             print(f"Critical Error from AI response function: {error_msg}")
-            if fallback_initial and (bot_mentioned or replied_to_bot):
-                initial_response = fallback_initial
-            elif bot_mentioned or replied_to_bot:
-                await message.channel.send(random.choice(["...", "*confused gurting*", "brain broke sorry"]))
-            return
+            # NEW LOGIC: Always send a notification if an error occurred here
+            error_notification = f"Oops! Something went wrong while processing that. (`{error_msg[:100]}`)" # Include part of the error
+            try:
+                await message.channel.send(error_notification)
+            except Exception as send_err:
+                print(f"Failed to send error notification to channel: {send_err}")
+            return # Still exit after handling the error
 
         # --- Process and Send Responses ---
         sent_any_message = False
