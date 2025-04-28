@@ -136,7 +136,7 @@ async def on_message_listener(cog: 'WheatleyCog', message: discord.Message):
     # Check conditions for potentially responding
     bot_mentioned = cog.bot.user.mentioned_in(message)
     replied_to_bot = message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user
-    gurt_in_message = "gurt" in message.content.lower()
+    gurt_in_message = "wheatley" in message.content.lower()
     now = time.time()
     time_since_last_activity = now - cog.channel_activity.get(channel_id, 0)
     time_since_bot_spoke = now - cog.bot_last_spoke.get(channel_id, 0)
