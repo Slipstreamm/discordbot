@@ -8,6 +8,7 @@ import time
 import datetime
 from typing import TYPE_CHECKING, Optional, List, Dict, Any, Union, AsyncIterable
 import jsonschema # For manual JSON validation
+from .tools import get_conversation_summary
 
 # Vertex AI Imports
 try:

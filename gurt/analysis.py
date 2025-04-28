@@ -1,8 +1,11 @@
 import time
 import re
 import traceback
+import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING, List, Dict, Any
+from typing import TYPE_CHECKING, List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 # Relative imports
 from .config import (

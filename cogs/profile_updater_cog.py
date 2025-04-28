@@ -11,8 +11,8 @@ import time
 from typing import Optional, Dict, Any, List
 
 # Gurt imports for AI calls and config
-from ..gurt.api import get_internal_ai_json_response
-from ..gurt.config import PROFILE_UPDATE_SCHEMA, ROLE_SELECTION_SCHEMA, DEFAULT_MODEL
+from gurt.api import get_internal_ai_json_response
+from gurt.config import PROFILE_UPDATE_SCHEMA, ROLE_SELECTION_SCHEMA, DEFAULT_MODEL
 
 class ProfileUpdaterCog(commands.Cog):
     """Cog for automatically updating Gurt's profile elements based on AI decisions."""
