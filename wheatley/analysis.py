@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 # Relative imports
 from .config import (
-    LEARNING_RATE, TOPIC_UPDATE_INTERVAL,
+    TOPIC_UPDATE_INTERVAL,
     TOPIC_RELEVANCE_DECAY, MAX_ACTIVE_TOPICS, SENTIMENT_DECAY_RATE,
     EMOTION_KEYWORDS, EMOJI_SENTIMENT # Import necessary configs
 )
