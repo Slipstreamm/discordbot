@@ -215,15 +215,15 @@ PROFILE_UPDATE_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "avatar_query": {
-                        "anyOf": [{"type": "string"}, {"type": "null"}],
+                        "type": ["string", "null"], # Use list type for preprocessor
                         "description": "Search query for a new avatar image, or null if no change."
                     },
                     "new_bio": {
-                        "anyOf": [{"type": "string"}, {"type": "null"}],
+                        "type": ["string", "null"], # Use list type for preprocessor
                         "description": "The new bio text (max 190 chars), or null if no change."
                     },
                     "role_theme": {
-                        "anyOf": [{"type": "string"}, {"type": "null"}],
+                        "type": ["string", "null"], # Use list type for preprocessor
                         "description": "A theme for role selection (e.g., color, interest), or null if no role changes."
                     },
                     "new_activity": {
@@ -231,11 +231,12 @@ PROFILE_UPDATE_SCHEMA = {
                         "description": "Object containing the new activity details. Set type and text to null if no change.",
                         "properties": {
                                 "type": {
-                                    "anyOf": [{"type": "string", "enum": ["playing", "watching", "listening", "competing"]}],
+                                    "type": ["string", "null"], # Use list type for preprocessor
+                                    "enum": ["playing", "watching", "listening", "competing"],
                                     "description": "Activity type: 'playing', 'watching', 'listening', 'competing', or null."
                                 },
                                 "text": {
-                                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                                    "type": ["string", "null"], # Use list type for preprocessor
                                     "description": "The activity text, or null."
                                 }
                         },
