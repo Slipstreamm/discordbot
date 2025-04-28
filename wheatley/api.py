@@ -57,7 +57,7 @@ from .config import (
     PROJECT_ID, LOCATION, DEFAULT_MODEL, FALLBACK_MODEL,
     API_TIMEOUT, API_RETRY_ATTEMPTS, API_RETRY_DELAY, TOOLS, RESPONSE_SCHEMA,
     PROACTIVE_PLAN_SCHEMA, # Import the new schema
-    TAVILY_API_KEY, PISTON_API_URL, PISTON_API_KEY, BASELINE_PERSONALITY # Import other needed configs
+    TAVILY_API_KEY, PISTON_API_URL, PISTON_API_KEY # Import other needed configs
 )
 from .prompt import build_dynamic_system_prompt
 from .context import gather_conversation_context, get_memory_context # Renamed functions

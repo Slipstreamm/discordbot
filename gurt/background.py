@@ -21,11 +21,16 @@ from .config import (
 # Assuming analysis functions are moved
 from .analysis import (
     analyze_conversation_patterns, evolve_personality, identify_conversation_topics,
-    reflect_on_memories, decompose_goal_into_steps # Import goal decomposition
+    reflect_on_memories, decompose_goal_into_steps, # Import goal decomposition
+    proactively_create_goals # Import placeholder for proactive goal creation
 )
 
 if TYPE_CHECKING:
     from .cog import GurtCog # For type hinting
+
+# --- Tool Mapping Import ---
+# Import the mapping to execute tools by name
+from .tools import TOOL_MAPPING
 
 # --- Background Task ---
 
@@ -181,24 +186,55 @@ async def background_processing_task(cog: 'GurtCog'):
 
                                 if tool_name:
                                     print(f"    - Attempting tool: {tool_name} with args: {tool_args}")
-                                    # --- TODO: Implement Tool Execution Logic ---
-                                    # 1. Find tool_func in TOOL_MAPPING
-                                    # 2. Execute tool_func(cog, **tool_args)
-                                    # 3. Handle success/failure of the tool call
-                                    # 4. Store tool result if needed for subsequent steps (requires modifying goal details/plan structure)
-                                    tool_success = False # Placeholder
-                                    tool_error = "Tool execution not yet implemented." # Placeholder
+                                    tool_func = TOOL_MAPPING.get(tool_name)
+                                    tool_result = None
+                                    tool_error = None
+                                    tool_success = False
 
+                                    if tool_func:
+                                        try:
+                                            # Ensure args are a dictionary, default to empty if None/missing
+                                            args_to_pass = tool_args if isinstance(tool_args, dict) else {}
+                                            print(f"    - Executing: {tool_name}(cog, **{args_to_pass})")
+                                            start_time = time.monotonic()
+                                            tool_result = await tool_func(cog, **args_to_pass)
+                                            end_time = time.monotonic()
+                                            print(f"    - Tool '{tool_name}' returned: {str(tool_result)[:200]}...") # Log truncated result
+
+                                            # Check result for success/error
+                                            if isinstance(tool_result, dict) and "error" in tool_result:
+                                                tool_error = tool_result["error"]
+                                                print(f"    - Tool '{tool_name}' reported error: {tool_error}")
+                                                cog.tool_stats[tool_name]["failure"] += 1
+                                            else:
+                                                tool_success = True
+                                                print(f"    - Tool '{tool_name}' executed successfully.")
+                                                cog.tool_stats[tool_name]["success"] += 1
+                                            # Record stats
+                                            cog.tool_stats[tool_name]["count"] += 1
+                                            cog.tool_stats[tool_name]["total_time"] += (end_time - start_time)
+
+                                        except Exception as exec_e:
+                                            tool_error = f"Exception during execution: {str(exec_e)}"
+                                            print(f"    - Tool '{tool_name}' raised exception: {exec_e}")
+                                            traceback.print_exc()
+                                            cog.tool_stats[tool_name]["failure"] += 1
+                                            cog.tool_stats[tool_name]["count"] += 1 # Count failures too
+                                    else:
+                                        tool_error = f"Tool '{tool_name}' not found in TOOL_MAPPING."
+                                        print(f"    - Error: {tool_error}")
+
+                                    # --- Handle Tool Outcome ---
                                     if tool_success:
-                                        print(f"    - Tool '{tool_name}' executed successfully.")
+                                        # Store result if needed (optional, requires plan structure modification)
+                                        # plan['step_results'][current_step_index] = tool_result
                                         current_step_index += 1
                                     else:
-                                        print(f"    - Tool '{tool_name}' failed: {tool_error}")
                                         goal_failed = True
-                                        plan['error_message'] = f"Failed at step {current_step_index + 1}: {tool_error}"
+                                        plan['error_message'] = f"Failed at step {current_step_index + 1} ({tool_name}): {tool_error}"
                                 else:
                                     # Step doesn't require a tool (e.g., internal reasoning/check)
-                                    print("    - No tool required for this step.")
+                                    print("    - No tool required for this step (internal check/reasoning).")
                                     current_step_index += 1 # Assume non-tool steps succeed for now
 
                                 # Check if goal completed
