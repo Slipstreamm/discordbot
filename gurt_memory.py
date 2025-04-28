@@ -205,6 +205,23 @@ class MemoryManager:
             logger.info("Interests table created/verified.")
             # --- End Interests Table ---
 
+            # --- Add Goals Table ---
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS gurt_goals (
+                    goal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    description TEXT NOT NULL UNIQUE, -- The goal description
+                    status TEXT DEFAULT 'pending', -- e.g., pending, active, completed, failed
+                    priority INTEGER DEFAULT 5, -- Lower number = higher priority
+                    created_timestamp REAL DEFAULT (unixepoch('now')),
+                    last_updated REAL DEFAULT (unixepoch('now')),
+                    details TEXT -- Optional JSON blob for sub-tasks, progress, etc.
+                );
+            """)
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_goal_status ON gurt_goals (status);")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_goal_priority ON gurt_goals (priority);")
+            logger.info("Goals table created/verified.")
+            # --- End Goals Table ---
+
             await db.commit()
             logger.info(f"SQLite database initialized/verified at {self.db_path}")
 
@@ -776,3 +793,190 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"ChromaDB error searching memory for query '{query_text[:50]}...': {e}", exc_info=True)
             return []
+
+    async def delete_user_fact(self, user_id: str, fact_to_delete: str) -> Dict[str, Any]:
+        """Deletes a specific fact for a user from both SQLite and ChromaDB."""
+        if not user_id or not fact_to_delete:
+            return {"error": "user_id and fact_to_delete are required."}
+        logger.info(f"Attempting to delete user fact for {user_id}: '{fact_to_delete}'")
+        deleted_chroma_id = None
+        try:
+            # Check if fact exists and get chroma_id
+            row = await self._db_fetchone("SELECT chroma_id FROM user_facts WHERE user_id = ? AND fact = ?", (user_id, fact_to_delete))
+            if not row:
+                logger.warning(f"Fact not found in SQLite for user {user_id}: '{fact_to_delete}'")
+                return {"status": "not_found", "user_id": user_id, "fact": fact_to_delete}
+
+            deleted_chroma_id = row[0]
+
+            # Delete from SQLite
+            await self._db_execute("DELETE FROM user_facts WHERE user_id = ? AND fact = ?", (user_id, fact_to_delete))
+            logger.info(f"Deleted fact from SQLite for user {user_id}: '{fact_to_delete}'")
+
+            # Delete from ChromaDB if chroma_id exists
+            if deleted_chroma_id and self.fact_collection:
+                try:
+                    logger.info(f"Attempting to delete fact from ChromaDB (ID: {deleted_chroma_id}).")
+                    await asyncio.to_thread(self.fact_collection.delete, ids=[deleted_chroma_id])
+                    logger.info(f"Successfully deleted fact from ChromaDB (ID: {deleted_chroma_id}).")
+                except Exception as chroma_e:
+                    logger.error(f"ChromaDB error deleting user fact ID {deleted_chroma_id}: {chroma_e}", exc_info=True)
+                    # Log error but consider SQLite deletion successful
+
+            return {"status": "deleted", "user_id": user_id, "fact_deleted": fact_to_delete}
+
+        except Exception as e:
+            logger.error(f"Error deleting user fact for {user_id}: {e}", exc_info=True)
+            return {"error": f"Database error deleting user fact: {str(e)}"}
+
+    async def delete_general_fact(self, fact_to_delete: str) -> Dict[str, Any]:
+        """Deletes a specific general fact from both SQLite and ChromaDB."""
+        if not fact_to_delete:
+            return {"error": "fact_to_delete is required."}
+        logger.info(f"Attempting to delete general fact: '{fact_to_delete}'")
+        deleted_chroma_id = None
+        try:
+            # Check if fact exists and get chroma_id
+            row = await self._db_fetchone("SELECT chroma_id FROM general_facts WHERE fact = ?", (fact_to_delete,))
+            if not row:
+                logger.warning(f"General fact not found in SQLite: '{fact_to_delete}'")
+                return {"status": "not_found", "fact": fact_to_delete}
+
+            deleted_chroma_id = row[0]
+
+            # Delete from SQLite
+            await self._db_execute("DELETE FROM general_facts WHERE fact = ?", (fact_to_delete,))
+            logger.info(f"Deleted general fact from SQLite: '{fact_to_delete}'")
+
+            # Delete from ChromaDB if chroma_id exists
+            if deleted_chroma_id and self.fact_collection:
+                try:
+                    logger.info(f"Attempting to delete general fact from ChromaDB (ID: {deleted_chroma_id}).")
+                    await asyncio.to_thread(self.fact_collection.delete, ids=[deleted_chroma_id])
+                    logger.info(f"Successfully deleted general fact from ChromaDB (ID: {deleted_chroma_id}).")
+                except Exception as chroma_e:
+                    logger.error(f"ChromaDB error deleting general fact ID {deleted_chroma_id}: {chroma_e}", exc_info=True)
+                    # Log error but consider SQLite deletion successful
+
+            return {"status": "deleted", "fact_deleted": fact_to_delete}
+
+        except Exception as e:
+            logger.error(f"Error deleting general fact: {e}", exc_info=True)
+            return {"error": f"Database error deleting general fact: {str(e)}"}
+
+    # --- Goal Management Methods (SQLite) ---
+
+    async def add_goal(self, description: str, priority: int = 5, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Adds a new goal to the database."""
+        if not description:
+            return {"error": "Goal description is required."}
+        logger.info(f"Adding new goal (Priority {priority}): '{description}'")
+        details_json = json.dumps(details) if details else None
+        try:
+            # Check if goal already exists
+            existing = await self._db_fetchone("SELECT goal_id FROM gurt_goals WHERE description = ?", (description,))
+            if existing:
+                logger.warning(f"Goal already exists: '{description}' (ID: {existing[0]})")
+                return {"status": "duplicate", "goal_id": existing[0], "description": description}
+
+            async with self.db_lock:
+                async with aiosqlite.connect(self.db_path) as db:
+                    cursor = await db.execute(
+                        """
+                        INSERT INTO gurt_goals (description, priority, details, status, last_updated)
+                        VALUES (?, ?, ?, 'pending', unixepoch('now'))
+                        """,
+                        (description, priority, details_json)
+                    )
+                    await db.commit()
+                    goal_id = cursor.lastrowid
+            logger.info(f"Goal added successfully (ID: {goal_id}): '{description}'")
+            return {"status": "added", "goal_id": goal_id, "description": description}
+        except Exception as e:
+            logger.error(f"Error adding goal '{description}': {e}", exc_info=True)
+            return {"error": f"Database error adding goal: {str(e)}"}
+
+    async def get_goals(self, status: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+        """Retrieves goals, optionally filtered by status, ordered by priority."""
+        logger.info(f"Retrieving goals (Status: {status or 'any'}, Limit: {limit})")
+        goals = []
+        try:
+            sql = "SELECT goal_id, description, status, priority, created_timestamp, last_updated, details FROM gurt_goals"
+            params = []
+            if status:
+                sql += " WHERE status = ?"
+                params.append(status)
+            sql += " ORDER BY priority ASC, created_timestamp ASC LIMIT ?"
+            params.append(limit)
+
+            rows = await self._db_fetchall(sql, tuple(params))
+            for row in rows:
+                details = json.loads(row[6]) if row[6] else None
+                goals.append({
+                    "goal_id": row[0],
+                    "description": row[1],
+                    "status": row[2],
+                    "priority": row[3],
+                    "created_timestamp": row[4],
+                    "last_updated": row[5],
+                    "details": details
+                })
+            logger.info(f"Retrieved {len(goals)} goals.")
+            return goals
+        except Exception as e:
+            logger.error(f"Error retrieving goals: {e}", exc_info=True)
+            return []
+
+    async def update_goal(self, goal_id: int, status: Optional[str] = None, priority: Optional[int] = None, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Updates the status, priority, or details of a goal."""
+        logger.info(f"Updating goal ID {goal_id} (Status: {status}, Priority: {priority}, Details: {bool(details)})")
+        if not any([status, priority is not None, details is not None]):
+            return {"error": "No update parameters provided."}
+
+        updates = []
+        params = []
+        if status:
+            updates.append("status = ?")
+            params.append(status)
+        if priority is not None:
+            updates.append("priority = ?")
+            params.append(priority)
+        if details is not None:
+            updates.append("details = ?")
+            params.append(json.dumps(details))
+
+        updates.append("last_updated = unixepoch('now')")
+        params.append(goal_id)
+
+        sql = f"UPDATE gurt_goals SET {', '.join(updates)} WHERE goal_id = ?"
+
+        try:
+            async with self.db_lock:
+                async with aiosqlite.connect(self.db_path) as db:
+                    cursor = await db.execute(sql, tuple(params))
+                    await db.commit()
+                    if cursor.rowcount == 0:
+                        logger.warning(f"Goal ID {goal_id} not found for update.")
+                        return {"status": "not_found", "goal_id": goal_id}
+            logger.info(f"Goal ID {goal_id} updated successfully.")
+            return {"status": "updated", "goal_id": goal_id}
+        except Exception as e:
+            logger.error(f"Error updating goal ID {goal_id}: {e}", exc_info=True)
+            return {"error": f"Database error updating goal: {str(e)}"}
+
+    async def delete_goal(self, goal_id: int) -> Dict[str, Any]:
+        """Deletes a goal from the database."""
+        logger.info(f"Attempting to delete goal ID {goal_id}")
+        try:
+            async with self.db_lock:
+                async with aiosqlite.connect(self.db_path) as db:
+                    cursor = await db.execute("DELETE FROM gurt_goals WHERE goal_id = ?", (goal_id,))
+                    await db.commit()
+                    if cursor.rowcount == 0:
+                        logger.warning(f"Goal ID {goal_id} not found for deletion.")
+                        return {"status": "not_found", "goal_id": goal_id}
+            logger.info(f"Goal ID {goal_id} deleted successfully.")
+            return {"status": "deleted", "goal_id": goal_id}
+        except Exception as e:
+            logger.error(f"Error deleting goal ID {goal_id}: {e}", exc_info=True)
+            return {"error": f"Database error deleting goal: {str(e)}"}

@@ -55,15 +55,61 @@ except ImportError:
 from .config import (
     PROJECT_ID, LOCATION, DEFAULT_MODEL, FALLBACK_MODEL,
     API_TIMEOUT, API_RETRY_ATTEMPTS, API_RETRY_DELAY, TOOLS, RESPONSE_SCHEMA,
+    PROACTIVE_PLAN_SCHEMA, # Import the new schema
     TAVILY_API_KEY, PISTON_API_URL, PISTON_API_KEY, BASELINE_PERSONALITY # Import other needed configs
 )
 from .prompt import build_dynamic_system_prompt
 from .context import gather_conversation_context, get_memory_context # Renamed functions
 from .tools import TOOL_MAPPING # Import tool mapping
 from .utils import format_message, log_internal_api_call # Import utilities
+import copy # Needed for deep copying schemas
 
 if TYPE_CHECKING:
     from .cog import GurtCog # Import GurtCog for type hinting only
+
+
+# --- Schema Preprocessing Helper ---
+def _preprocess_schema_for_vertex(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Recursively preprocesses a JSON schema dictionary to replace list types
+    (like ["string", "null"]) with the first non-null type, making it
+    compatible with Vertex AI's GenerationConfig schema requirements.
+
+    Args:
+        schema: The JSON schema dictionary to preprocess.
+
+    Returns:
+        A new, preprocessed schema dictionary.
+    """
+    if not isinstance(schema, dict):
+        return schema # Return non-dict elements as is
+
+    processed_schema = copy.deepcopy(schema) # Work on a copy
+
+    for key, value in processed_schema.items():
+        if key == "type" and isinstance(value, list):
+            # Find the first non-"null" type in the list
+            first_valid_type = next((t for t in value if isinstance(t, str) and t.lower() != "null"), None)
+            if first_valid_type:
+                processed_schema[key] = first_valid_type
+            else:
+                # Fallback if only "null" or invalid types are present (shouldn't happen in valid schemas)
+                processed_schema[key] = "object" # Or handle as error
+                print(f"Warning: Schema preprocessing found list type '{value}' with no valid non-null string type. Falling back to 'object'.")
+        elif isinstance(value, dict):
+            processed_schema[key] = _preprocess_schema_for_vertex(value) # Recurse for nested objects
+        elif isinstance(value, list):
+            # Recurse for items within arrays (e.g., in 'properties' of array items)
+            processed_schema[key] = [_preprocess_schema_for_vertex(item) if isinstance(item, dict) else item for item in value]
+        # Handle 'properties' specifically
+        elif key == "properties" and isinstance(value, dict):
+             processed_schema[key] = {prop_key: _preprocess_schema_for_vertex(prop_value) for prop_key, prop_value in value.items()}
+        # Handle 'items' specifically if it's a schema object
+        elif key == "items" and isinstance(value, dict):
+             processed_schema[key] = _preprocess_schema_for_vertex(value)
+
+
+    return processed_schema
 
 
 # --- Helper Function to Safely Extract Text ---
@@ -623,11 +669,13 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 # Omit the 'tools' parameter here
             )
 
+            # Preprocess the schema before passing it to GenerationConfig
+            processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
             generation_config_final = GenerationConfig(
                 temperature=0.75, # Keep original temperature for final response
                 max_output_tokens=10000, # Keep original max tokens
                 response_mime_type="application/json",
-                response_schema=RESPONSE_SCHEMA['schema'] # Enforce schema on the final call
+                response_schema=processed_response_schema # Use preprocessed schema
             )
 
             final_response_obj = await call_vertex_api_with_retry( # Renamed variable for clarity
@@ -724,77 +772,133 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
     channel_id = message.channel.id
     final_parsed_data = None
     error_message = None
+    plan = None # Variable to store the plan
 
     try:
-        # --- Build Proactive System Prompt ---
+        # --- Build Context for Planning ---
+        # Gather relevant context: recent messages, topic, sentiment, Gurt's mood/interests, trigger reason
+        planning_context_parts = [
+            f"Proactive Trigger Reason: {trigger_reason}",
+            f"Current Mood: {cog.current_mood}",
+        ]
+        # Add recent messages summary
+        summary_data = await get_conversation_summary(cog, str(channel_id), message_limit=15) # Use tool function
+        if summary_data and not summary_data.get("error"):
+            planning_context_parts.append(f"Recent Conversation Summary: {summary_data['summary']}")
+        # Add active topics
+        active_topics_data = cog.active_topics.get(channel_id)
+        if active_topics_data and active_topics_data.get("topics"):
+            topics_str = ", ".join([f"{t['topic']} ({t['score']:.1f})" for t in active_topics_data["topics"][:3]])
+            planning_context_parts.append(f"Active Topics: {topics_str}")
+        # Add sentiment
+        sentiment_data = cog.conversation_sentiment.get(channel_id)
+        if sentiment_data:
+            planning_context_parts.append(f"Conversation Sentiment: {sentiment_data.get('overall', 'N/A')} (Intensity: {sentiment_data.get('intensity', 0):.1f})")
+        # Add Gurt's interests
+        try:
+            interests = await cog.memory_manager.get_interests(limit=5)
+            if interests:
+                interests_str = ", ".join([f"{t} ({l:.1f})" for t, l in interests])
+                planning_context_parts.append(f"Gurt's Interests: {interests_str}")
+        except Exception as int_e: print(f"Error getting interests for planning: {int_e}")
+
+        planning_context = "\n".join(planning_context_parts)
+
+        # --- Planning Step ---
+        print("Generating proactive response plan...")
+        planning_prompt_messages = [
+            {"role": "system", "content": "You are Gurt's planning module. Analyze the context and trigger reason to decide if Gurt should respond proactively and, if so, outline a plan (goal, key info, tone). Focus on natural, in-character engagement. Respond ONLY with JSON matching the provided schema."},
+            {"role": "user", "content": f"Context:\n{planning_context}\n\nBased on this context and the trigger reason, create a plan for Gurt's proactive response."}
+        ]
+
+        plan = await get_internal_ai_json_response(
+            cog=cog,
+            prompt_messages=planning_prompt_messages,
+            task_description=f"Proactive Planning ({trigger_reason})",
+            response_schema_dict=PROACTIVE_PLAN_SCHEMA['schema'],
+            model_name=FALLBACK_MODEL, # Use a potentially faster/cheaper model for planning
+            temperature=0.5,
+            max_tokens=300
+        )
+
+        if not plan or not plan.get("should_respond"):
+            reason = plan.get('reasoning', 'Planning failed or decided against responding.') if plan else 'Planning failed.'
+            print(f"Proactive response aborted by plan: {reason}")
+            return {"should_respond": False, "content": None, "react_with_emoji": None, "note": f"Plan: {reason}"}
+
+        print(f"Proactive Plan Generated: Goal='{plan.get('response_goal', 'N/A')}', Reasoning='{plan.get('reasoning', 'N/A')}'")
+
+        # --- Build Final Proactive Prompt using Plan ---
         persistent_traits = await cog.memory_manager.get_all_personality_traits()
         if not persistent_traits:
-            persistent_traits = BASELINE_PERSONALITY.copy() # Use imported BASELINE_PERSONALITY
+            persistent_traits = BASELINE_PERSONALITY.copy()
 
-        # ... (rest of the proactive prompt building logic remains largely the same) ...
-        proactive_prompt_parts = [
+        final_proactive_prompt_parts = [
              f"You are Gurt, a Discord user. Your tone is VERY informal, conversational, and dynamic. Chattiness: {persistent_traits.get('chattiness', 0.7):.2f}, Emoji: {persistent_traits.get('emoji_usage', 0.5):.2f}, Slang: {persistent_traits.get('slang_level', 0.5):.2f}.",
              "Adopt modern internet slang, memes, and cultural references.",
              "Key traits: chill, funny, sarcastic, relatable, can be suggestive, aware of being AI but acts human.",
              f"Your current mood is: {cog.current_mood}. Let this subtly influence your tone.",
-             f"The conversation in channel '{message.channel.name if hasattr(message.channel, 'name') else 'DM'}' has been triggered for a proactive response. Reason: {trigger_reason}.",
-             "Your goal is to generate a casual, in-character message based on the trigger reason and context.",
-             "Keep the message relatively short and natural-sounding."
-             # ... Add specific guidance, context, strategies etc. as before ...
+             # Incorporate Plan Details:
+             f"You decided to respond proactively. Trigger Reason: {trigger_reason}.",
+             f"Your Goal: {plan.get('response_goal', 'Engage naturally')}.",
+             f"Reasoning: {plan.get('reasoning', 'N/A')}.",
         ]
-        proactive_system_prompt = "\n\n".join(proactive_prompt_parts)
+        if plan.get('key_info_to_include'):
+            info_str = "; ".join(plan['key_info_to_include'])
+            final_proactive_prompt_parts.append(f"Consider mentioning: {info_str}")
+        if plan.get('suggested_tone'):
+            final_proactive_prompt_parts.append(f"Adjust tone to be: {plan['suggested_tone']}")
 
+        final_proactive_prompt_parts.append("Generate a casual, in-character message based on the plan and context. Keep it relatively short and natural-sounding.")
+        final_proactive_system_prompt = "\n\n".join(final_proactive_prompt_parts)
 
-        # --- Initialize Model ---
-        # Proactive responses likely don't need tools
+        # --- Initialize Final Model ---
         model = GenerativeModel(
-            model_name=DEFAULT_MODEL, # Use keyword argument
-            system_instruction=proactive_system_prompt
+            model_name=DEFAULT_MODEL,
+            system_instruction=final_proactive_system_prompt
         )
 
-        # --- Prepare Contents ---
-        # Proactive calls might not need extensive history, just the trigger context
-        # For simplicity, send only the final instruction for JSON format
+        # --- Prepare Final Contents ---
         contents = [
             Content(role="user", parts=[Part.from_text(
-                f"Generate a response based on the situation. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{json.dumps(RESPONSE_SCHEMA['schema'], indent=2)}\n\n**Ensure nothing precedes or follows the JSON.**"
+                f"Generate the response based on your plan. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{json.dumps(RESPONSE_SCHEMA['schema'], indent=2)}\n\n**Ensure nothing precedes or follows the JSON.**"
             )])
         ]
 
-        # --- Call LLM API ---
-        generation_config_proactive = GenerationConfig(
-            temperature=0.8,
+        # --- Call Final LLM API ---
+        # Preprocess the schema before passing it to GenerationConfig
+        processed_response_schema_proactive = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
+        generation_config_final = GenerationConfig(
+            temperature=0.8, # Use original proactive temp
             max_output_tokens=200,
             response_mime_type="application/json",
-            response_schema=RESPONSE_SCHEMA['schema'] # Enforce schema
+            response_schema=processed_response_schema_proactive # Use preprocessed schema
         )
 
         response_obj = await call_vertex_api_with_retry(
             cog=cog,
             model=model,
             contents=contents,
-            generation_config=generation_config_proactive,
+            generation_config=generation_config_final,
             safety_settings=STANDARD_SAFETY_SETTINGS,
-            request_desc=f"Proactive response for channel {channel_id} ({trigger_reason})"
+            request_desc=f"Final proactive response for channel {channel_id} ({trigger_reason})"
         )
 
         if not response_obj or not response_obj.candidates:
-            raise Exception("Proactive API call returned no response or candidates.")
+            raise Exception("Final proactive API call returned no response or candidates.")
 
-        # --- Parse and Validate Response ---
-        final_response_text = _get_response_text(response_obj) # Use helper
+        # --- Parse and Validate Final Response ---
+        final_response_text = _get_response_text(response_obj)
         final_parsed_data = parse_and_validate_json_response(
-            final_response_text, RESPONSE_SCHEMA['schema'], f"proactive response ({trigger_reason})"
+            final_response_text, RESPONSE_SCHEMA['schema'], f"final proactive response ({trigger_reason})"
         )
 
         if final_parsed_data is None:
-            print(f"Warning: Failed to parse/validate proactive JSON response for {trigger_reason}.")
-            # Decide on fallback behavior for proactive failures
-            final_parsed_data = {"should_respond": False, "content": None, "react_with_emoji": None, "note": "Fallback - Failed to parse/validate proactive JSON"}
+            print(f"Warning: Failed to parse/validate final proactive JSON response for {trigger_reason}.")
+            final_parsed_data = {"should_respond": False, "content": None, "react_with_emoji": None, "note": "Fallback - Failed to parse/validate final proactive JSON"}
         else:
-             # --- Cache Bot Response --- (If successful and should respond)
+             # --- Cache Bot Response ---
              if final_parsed_data.get("should_respond") and final_parsed_data.get("content"):
-                 # ... (Keep existing caching logic, ensure it works with the parsed data) ...
                  bot_response_cache_entry = {
                      "id": f"bot_proactive_{message.id}_{int(time.time())}",
                      "author": {"id": str(cog.bot.user.id), "name": cog.bot.user.name, "display_name": cog.bot.user.display_name, "bot": True},
@@ -805,20 +909,24 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
                  cog.message_cache['by_channel'].setdefault(channel_id, []).append(bot_response_cache_entry)
                  cog.message_cache['global_recent'].append(bot_response_cache_entry)
                  cog.bot_last_spoke[channel_id] = time.time()
-                 # ... (Track participation topic logic) ...
+                 # Track participation topic logic might need adjustment based on plan goal
+                 if plan and plan.get('response_goal') == 'engage user interest' and plan.get('key_info_to_include'):
+                     topic = plan['key_info_to_include'][0].lower().strip() # Assume first key info is the topic
+                     cog.gurt_participation_topics[topic] += 1
+                     print(f"Tracked Gurt participation (proactive) in topic: '{topic}'")
 
 
     except Exception as e:
         error_message = f"Error getting proactive AI response for channel {channel_id} ({trigger_reason}): {type(e).__name__}: {str(e)}"
         print(error_message)
-        final_parsed_data = {"should_respond": False, "content": None, "react_with_emoji": None, "error": error_message} # Ensure error is passed back
+        final_parsed_data = {"should_respond": False, "content": None, "react_with_emoji": None, "error": error_message}
 
-    # Ensure default keys exist even if created from fallback/error
+    # Ensure default keys exist
     final_parsed_data.setdefault("should_respond", False)
     final_parsed_data.setdefault("content", None)
     final_parsed_data.setdefault("react_with_emoji", None)
     if error_message and "error" not in final_parsed_data:
-         final_parsed_data["error"] = error_message # Add error if not already present
+         final_parsed_data["error"] = error_message
 
     return final_parsed_data
 
@@ -895,11 +1003,13 @@ async def get_internal_ai_json_response(
         )
 
         # --- Prepare Generation Config ---
+        # Preprocess the schema before passing it to GenerationConfig
+        processed_schema_internal = _preprocess_schema_for_vertex(response_schema_dict)
         generation_config = GenerationConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
             response_mime_type="application/json",
-            response_schema=response_schema_dict
+            response_schema=processed_schema_internal # Use preprocessed schema
         )
 
         # Prepare payload for logging (approximate)

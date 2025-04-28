@@ -152,13 +152,18 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
         # --- Proactive Engagement Triggers ---
         from .config import (PROACTIVE_LULL_THRESHOLD, PROACTIVE_BOT_SILENCE_THRESHOLD, PROACTIVE_LULL_CHANCE,
                              PROACTIVE_TOPIC_RELEVANCE_THRESHOLD, PROACTIVE_TOPIC_CHANCE,
-                             PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD, PROACTIVE_RELATIONSHIP_CHANCE)
+                             PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD, PROACTIVE_RELATIONSHIP_CHANCE,
+                         # Import new config values
+                             # Import new config values
+                             PROACTIVE_SENTIMENT_SHIFT_THRESHOLD, PROACTIVE_SENTIMENT_DURATION_THRESHOLD,
+                             PROACTIVE_SENTIMENT_CHANCE, PROACTIVE_USER_INTEREST_THRESHOLD,
+                             PROACTIVE_USER_INTEREST_CHANCE)
 
         # 1. Lull Trigger
         if time_since_last_activity > PROACTIVE_LULL_THRESHOLD and time_since_bot_spoke > PROACTIVE_BOT_SILENCE_THRESHOLD:
-             has_relevant_context = bool(cog.active_topics.get(channel_id, {}).get("topics", [])) or \
-                                    bool(await cog.memory_manager.get_general_facts(limit=1))
-             if has_relevant_context and random.random() < PROACTIVE_LULL_CHANCE:
+            has_relevant_context = bool(cog.active_topics.get(channel_id, {}).get("topics", [])) or \
+                                   bool(await cog.memory_manager.get_general_facts(limit=1))
+            if has_relevant_context and random.random() < PROACTIVE_LULL_CHANCE:
                 should_consider_responding = True
                 proactive_trigger_met = True
                 consideration_reason = f"Proactive: Lull ({time_since_last_activity:.0f}s idle, bot silent {time_since_bot_spoke:.0f}s)"
@@ -175,8 +180,10 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
                             proactive_trigger_met = True
                             consideration_reason = f"Proactive: Relevant topic (Sim: {similarity_score:.2f})"
                             print(f"Topic relevance trigger met for msg {message.id}. Sim: {similarity_score:.2f}")
-                        else: print(f"Topic relevance trigger skipped by chance ({PROACTIVE_TOPIC_CHANCE}). Sim: {similarity_score:.2f}")
-            except Exception as semantic_e: print(f"Error during semantic search for topic trigger: {semantic_e}")
+                    else:
+                        print(f"Topic relevance trigger skipped by chance ({PROACTIVE_TOPIC_CHANCE}). Sim: {similarity_score:.2f}")
+            except Exception as semantic_e:
+                print(f"Error during semantic search for topic trigger: {semantic_e}")
 
         # 3. Relationship Score Trigger
         if not proactive_trigger_met:
@@ -191,11 +198,89 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
                         proactive_trigger_met = True
                         consideration_reason = f"Proactive: High relationship ({relationship_score:.1f})"
                         print(f"Relationship trigger met for user {user_id_str}. Score: {relationship_score:.1f}")
-                    else: print(f"Relationship trigger skipped by chance ({PROACTIVE_RELATIONSHIP_CHANCE}). Score: {relationship_score:.1f}")
-            except Exception as rel_e: print(f"Error during relationship trigger check: {rel_e}")
+                    else:
+                        print(f"Relationship trigger skipped by chance ({PROACTIVE_RELATIONSHIP_CHANCE}). Score: {relationship_score:.1f}")
+            except Exception as rel_e:
+                print(f"Error during relationship trigger check: {rel_e}")
+
+        # 4. Sentiment Shift Trigger
+        if not proactive_trigger_met:
+            channel_sentiment_data = cog.conversation_sentiment.get(channel_id, {})
+            overall_sentiment = channel_sentiment_data.get("overall", "neutral")
+            sentiment_intensity = channel_sentiment_data.get("intensity", 0.5)
+            sentiment_last_update = channel_sentiment_data.get("last_update", 0) # Need last update time
+            sentiment_duration = now - sentiment_last_update # How long has this sentiment been dominant?
+
+            if overall_sentiment != "neutral" and \
+               sentiment_intensity >= PROACTIVE_SENTIMENT_SHIFT_THRESHOLD and \
+               sentiment_duration >= PROACTIVE_SENTIMENT_DURATION_THRESHOLD and \
+               time_since_bot_spoke > 180: # Bot hasn't spoken recently about this
+                if random.random() < PROACTIVE_SENTIMENT_CHANCE:
+                    should_consider_responding = True
+                    proactive_trigger_met = True
+                    consideration_reason = f"Proactive: Sentiment Shift ({overall_sentiment}, Intensity: {sentiment_intensity:.2f}, Duration: {sentiment_duration:.0f}s)"
+                    print(f"Sentiment Shift trigger met for channel {channel_id}. Sentiment: {overall_sentiment}, Intensity: {sentiment_intensity:.2f}, Duration: {sentiment_duration:.0f}s")
+                else:
+                    print(f"Sentiment Shift trigger skipped by chance ({PROACTIVE_SENTIMENT_CHANCE}). Sentiment: {overall_sentiment}")
+
+        # 5. User Interest Trigger (Based on Gurt's interests mentioned in message)
+        if not proactive_trigger_met and message.content:
+            try:
+                gurt_interests = await cog.memory_manager.get_interests(limit=10, min_level=PROACTIVE_USER_INTEREST_THRESHOLD)
+                if gurt_interests:
+                    message_content_lower = message.content.lower()
+                    mentioned_interest = None
+                    for interest_topic, interest_level in gurt_interests:
+                        # Simple check if interest topic is in message
+                        if re.search(r'\b' + re.escape(interest_topic.lower()) + r'\b', message_content_lower):
+                            mentioned_interest = interest_topic
+                            break # Found a mentioned interest
+
+                    if mentioned_interest and time_since_bot_spoke > 90:  # Bot hasn't spoken recently
+                        if random.random() < PROACTIVE_USER_INTEREST_CHANCE:
+                            should_consider_responding = True
+                            proactive_trigger_met = True
+                            consideration_reason = f"Proactive: Gurt Interest Mentioned ('{mentioned_interest}')"
+                            print(f"Gurt Interest trigger met for message {message.id}. Interest: '{mentioned_interest}'")
+                        else:
+                            print(f"Gurt Interest trigger skipped by chance ({PROACTIVE_USER_INTEREST_CHANCE}). Interest: '{mentioned_interest}'")
+            except Exception as interest_e:
+                print(f"Error during Gurt Interest trigger check: {interest_e}")
+
+        # 6. Active Goal Relevance Trigger
+        if not proactive_trigger_met and message.content:
+            try:
+                # Fetch 1-2 active goals with highest priority
+                active_goals = await cog.memory_manager.get_goals(status='active', limit=2)
+                if active_goals:
+                    message_content_lower = message.content.lower()
+                    relevant_goal = None
+                    for goal in active_goals:
+                        # Simple check: does message content relate to goal description?
+                        # TODO: Improve this check, maybe use semantic similarity or keyword extraction from goal details
+                        goal_keywords = set(re.findall(r'\b\w{3,}\b', goal.get('description', '').lower())) # Basic keywords from description
+                        message_words = set(re.findall(r'\b\w{3,}\b', message_content_lower))
+                        if len(goal_keywords.intersection(message_words)) > 1: # Require >1 keyword overlap
+                            relevant_goal = goal
+                            break
+
+                    if relevant_goal and time_since_bot_spoke > 120: # Bot hasn't spoken recently
+                        # Use a slightly higher chance for goal-related triggers?
+                        goal_relevance_chance = PROACTIVE_USER_INTEREST_CHANCE * 1.2 # Example: Reuse interest chance slightly boosted
+                        if random.random() < goal_relevance_chance:
+                            should_consider_responding = True
+                            proactive_trigger_met = True
+                            goal_desc_short = relevant_goal.get('description', 'N/A')[:40]
+                            consideration_reason = f"Proactive: Relevant Active Goal ('{goal_desc_short}...')"
+                            print(f"Active Goal trigger met for message {message.id}. Goal ID: {relevant_goal.get('goal_id')}")
+                        else:
+                            print(f"Active Goal trigger skipped by chance ({goal_relevance_chance:.2f}).")
+            except Exception as goal_trigger_e:
+                print(f"Error during Active Goal trigger check: {goal_trigger_e}")
+
 
         # --- Fallback Contextual Chance ---
-        if not should_consider_responding: # Check if already decided to respond
+        if not should_consider_responding:  # Check if already decided to respond
             # Fetch current personality traits for chattiness
             persistent_traits = await cog.memory_manager.get_all_personality_traits()
             chattiness = persistent_traits.get('chattiness', 0.7) # Use default if fetch fails
@@ -221,7 +306,7 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
                 should_consider_responding = True
                 consideration_reason = f"Contextual chance ({final_chance:.2f})"
             else:
-                 consideration_reason = f"Skipped (chance {final_chance:.2f})"
+                consideration_reason = f"Skipped (chance {final_chance:.2f})"
 
     print(f"Consideration check for message {message.id}: {should_consider_responding} (Reason: {consideration_reason})")
 

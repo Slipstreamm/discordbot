@@ -15,11 +15,13 @@ from .config import (
     INTEREST_POSITIVE_REACTION_BOOST, INTEREST_NEGATIVE_REACTION_PENALTY,
     INTEREST_FACT_BOOST, STATS_PUSH_INTERVAL, # Added stats interval
     MOOD_OPTIONS, MOOD_CATEGORIES, MOOD_CHANGE_INTERVAL_MIN, MOOD_CHANGE_INTERVAL_MAX, # Mood change imports
-    BASELINE_PERSONALITY # For default traits
+    BASELINE_PERSONALITY, # For default traits
+    REFLECTION_INTERVAL_SECONDS # Import reflection interval
 )
 # Assuming analysis functions are moved
 from .analysis import (
-    analyze_conversation_patterns, evolve_personality, identify_conversation_topics
+    analyze_conversation_patterns, evolve_personality, identify_conversation_topics,
+    reflect_on_memories, decompose_goal_into_steps # Import goal decomposition
 )
 
 if TYPE_CHECKING:
@@ -28,7 +30,7 @@ if TYPE_CHECKING:
 # --- Background Task ---
 
 async def background_processing_task(cog: 'GurtCog'):
-    """Background task that periodically analyzes conversations, evolves personality, updates interests, changes mood, and pushes stats."""
+    """Background task that periodically analyzes conversations, evolves personality, updates interests, changes mood, reflects on memory, and pushes stats."""
     # Get API details from environment for stats pushing
     api_internal_url = os.getenv("API_INTERNAL_URL")
     gurt_stats_push_secret = os.getenv("GURT_STATS_PUSH_SECRET")
@@ -109,6 +111,133 @@ async def background_processing_task(cog: 'GurtCog'):
                 )
                 cog.last_interest_update = now # Reset timer after update and decay check
                 print("Interest update and decay check complete.")
+
+            # --- Memory Reflection (Runs less frequently) ---
+            if now - cog.last_reflection_time > REFLECTION_INTERVAL_SECONDS:
+                print("Running memory reflection...")
+                await reflect_on_memories(cog) # Call the reflection function from analysis.py
+                cog.last_reflection_time = now # Update timestamp
+                print("Memory reflection cycle complete.")
+
+            # --- Goal Decomposition (Runs periodically) ---
+            # Check less frequently than other tasks, e.g., every few minutes
+            if now - cog.last_goal_check_time > GOAL_CHECK_INTERVAL: # Need to add these to cog and config
+                print("Checking for pending goals to decompose...")
+                try:
+                    pending_goals = await cog.memory_manager.get_goals(status='pending', limit=3) # Limit decomposition attempts per cycle
+                    for goal in pending_goals:
+                        goal_id = goal.get('goal_id')
+                        description = goal.get('description')
+                        if not goal_id or not description: continue
+
+                        print(f"  - Decomposing goal ID {goal_id}: '{description}'")
+                        plan = await decompose_goal_into_steps(cog, description)
+
+                        if plan and plan.get('goal_achievable') and plan.get('steps'):
+                            # Goal is achievable and has steps, update status to active and store plan
+                            await cog.memory_manager.update_goal(goal_id, status='active', details=plan)
+                            print(f"  - Goal ID {goal_id} decomposed and set to active.")
+                        elif plan:
+                            # Goal deemed not achievable by planner
+                            await cog.memory_manager.update_goal(goal_id, status='failed', details={"reason": plan.get('reasoning', 'Deemed unachievable by planner.')})
+                            print(f"  - Goal ID {goal_id} marked as failed (unachievable). Reason: {plan.get('reasoning')}")
+                        else:
+                            # Decomposition failed entirely
+                            await cog.memory_manager.update_goal(goal_id, status='failed', details={"reason": "Goal decomposition process failed."})
+                            print(f"  - Goal ID {goal_id} marked as failed (decomposition error).")
+                        await asyncio.sleep(1) # Small delay between decomposing goals
+
+                    cog.last_goal_check_time = now # Update timestamp after checking
+                except Exception as goal_e:
+                    print(f"Error during goal decomposition check: {goal_e}")
+                    traceback.print_exc()
+                    cog.last_goal_check_time = now # Update timestamp even on error
+
+            # --- Goal Execution (Runs periodically) ---
+            if now - cog.last_goal_execution_time > GOAL_EXECUTION_INTERVAL:
+                print("Checking for active goals to execute...")
+                try:
+                    active_goals = await cog.memory_manager.get_goals(status='active', limit=1) # Process one active goal per cycle for now
+                    if active_goals:
+                        goal = active_goals[0] # Get the highest priority active goal
+                        goal_id = goal.get('goal_id')
+                        description = goal.get('description')
+                        plan = goal.get('details') # The decomposition plan is stored here
+
+                        if goal_id and description and plan and isinstance(plan.get('steps'), list):
+                            print(f"--- Executing Goal ID {goal_id}: '{description}' ---")
+                            steps = plan['steps']
+                            current_step_index = plan.get('current_step_index', 0) # Track progress
+                            goal_failed = False
+                            goal_completed = False
+
+                            if current_step_index < len(steps):
+                                step = steps[current_step_index]
+                                step_desc = step.get('step_description')
+                                tool_name = step.get('tool_name')
+                                tool_args = step.get('tool_arguments')
+
+                                print(f"  - Step {current_step_index + 1}/{len(steps)}: {step_desc}")
+
+                                if tool_name:
+                                    print(f"    - Attempting tool: {tool_name} with args: {tool_args}")
+                                    # --- TODO: Implement Tool Execution Logic ---
+                                    # 1. Find tool_func in TOOL_MAPPING
+                                    # 2. Execute tool_func(cog, **tool_args)
+                                    # 3. Handle success/failure of the tool call
+                                    # 4. Store tool result if needed for subsequent steps (requires modifying goal details/plan structure)
+                                    tool_success = False # Placeholder
+                                    tool_error = "Tool execution not yet implemented." # Placeholder
+
+                                    if tool_success:
+                                        print(f"    - Tool '{tool_name}' executed successfully.")
+                                        current_step_index += 1
+                                    else:
+                                        print(f"    - Tool '{tool_name}' failed: {tool_error}")
+                                        goal_failed = True
+                                        plan['error_message'] = f"Failed at step {current_step_index + 1}: {tool_error}"
+                                else:
+                                    # Step doesn't require a tool (e.g., internal reasoning/check)
+                                    print("    - No tool required for this step.")
+                                    current_step_index += 1 # Assume non-tool steps succeed for now
+
+                                # Check if goal completed
+                                if not goal_failed and current_step_index >= len(steps):
+                                    goal_completed = True
+
+                                # --- Update Goal Status ---
+                                plan['current_step_index'] = current_step_index # Update progress
+                                if goal_completed:
+                                    await cog.memory_manager.update_goal(goal_id, status='completed', details=plan)
+                                    print(f"--- Goal ID {goal_id} completed successfully. ---")
+                                elif goal_failed:
+                                    await cog.memory_manager.update_goal(goal_id, status='failed', details=plan)
+                                    print(f"--- Goal ID {goal_id} failed. ---")
+                                else:
+                                    # Update details with current step index if still in progress
+                                    await cog.memory_manager.update_goal(goal_id, details=plan)
+                                    print(f"  - Goal ID {goal_id} progress updated to step {current_step_index}.")
+
+                            else:
+                                # Should not happen if status is 'active', but handle defensively
+                                print(f"  - Goal ID {goal_id} is active but has no steps or index out of bounds. Marking as failed.")
+                                await cog.memory_manager.update_goal(goal_id, status='failed', details={"reason": "Active goal has invalid step data."})
+
+                        else:
+                             print(f"  - Skipping active goal ID {goal_id}: Missing description or valid plan/steps.")
+                             # Optionally mark as failed if plan is invalid
+                             if goal_id:
+                                 await cog.memory_manager.update_goal(goal_id, status='failed', details={"reason": "Invalid plan structure found during execution."})
+
+                    else:
+                        print("No active goals found to execute.")
+
+                    cog.last_goal_execution_time = now # Update timestamp after checking/executing
+                except Exception as goal_exec_e:
+                    print(f"Error during goal execution check: {goal_exec_e}")
+                    traceback.print_exc()
+                    cog.last_goal_execution_time = now # Update timestamp even on error
+
 
             # --- Automatic Mood Change (Runs based on its own interval check) ---
             await maybe_change_mood(cog) # Call the mood change logic

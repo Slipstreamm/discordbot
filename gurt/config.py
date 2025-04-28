@@ -98,6 +98,13 @@ PROACTIVE_TOPIC_RELEVANCE_THRESHOLD = float(os.getenv("PROACTIVE_TOPIC_RELEVANCE
 PROACTIVE_TOPIC_CHANCE = float(os.getenv("PROACTIVE_TOPIC_CHANCE", 0.4))
 PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD = int(os.getenv("PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD", 70))
 PROACTIVE_RELATIONSHIP_CHANCE = float(os.getenv("PROACTIVE_RELATIONSHIP_CHANCE", 0.2))
+PROACTIVE_SENTIMENT_SHIFT_THRESHOLD = float(os.getenv("PROACTIVE_SENTIMENT_SHIFT_THRESHOLD", 0.7)) # Intensity threshold for trigger
+PROACTIVE_SENTIMENT_DURATION_THRESHOLD = int(os.getenv("PROACTIVE_SENTIMENT_DURATION_THRESHOLD", 600)) # How long sentiment needs to persist (10 mins)
+PROACTIVE_SENTIMENT_CHANCE = float(os.getenv("PROACTIVE_SENTIMENT_CHANCE", 0.25))
+PROACTIVE_USER_INTEREST_THRESHOLD = float(os.getenv("PROACTIVE_USER_INTEREST_THRESHOLD", 0.6)) # Min interest level for Gurt to trigger
+PROACTIVE_USER_INTEREST_MATCH_THRESHOLD = float(os.getenv("PROACTIVE_USER_INTEREST_MATCH_THRESHOLD", 0.5)) # Min interest level for User (if tracked) - Currently not tracked per user, but config is ready
+PROACTIVE_USER_INTEREST_CHANCE = float(os.getenv("PROACTIVE_USER_INTEREST_CHANCE", 0.35))
+
 
 # --- Interest Tracking Config ---
 INTEREST_UPDATE_INTERVAL = int(os.getenv("INTEREST_UPDATE_INTERVAL", 1800)) # 30 mins
@@ -113,6 +120,9 @@ INTEREST_MAX_FOR_PROMPT = int(os.getenv("INTEREST_MAX_FOR_PROMPT", 4))
 LEARNING_RATE = 0.05
 MAX_PATTERNS_PER_CHANNEL = 50
 LEARNING_UPDATE_INTERVAL = 3600 # Update learned patterns every hour
+REFLECTION_INTERVAL_SECONDS = int(os.getenv("REFLECTION_INTERVAL_SECONDS", 6 * 3600)) # Reflect every 6 hours
+GOAL_CHECK_INTERVAL = int(os.getenv("GOAL_CHECK_INTERVAL", 300)) # Check for pending goals every 5 mins
+GOAL_EXECUTION_INTERVAL = int(os.getenv("GOAL_EXECUTION_INTERVAL", 60)) # Check for active goals to execute every 1 min
 
 # --- Topic Tracking Config ---
 TOPIC_UPDATE_INTERVAL = 300 # Update topics every 5 minutes
@@ -258,6 +268,81 @@ ROLE_SELECTION_SCHEMA = {
             }
         },
         "required": ["roles_to_add", "roles_to_remove"]
+    }
+}
+
+# --- Proactive Planning Schema ---
+PROACTIVE_PLAN_SCHEMA = {
+    "name": "proactive_response_plan",
+    "description": "Plan for generating a proactive response based on context and trigger.",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "should_respond": {
+                "type": "boolean",
+                "description": "Whether Gurt should respond proactively based on the plan."
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief reasoning for the decision (why respond or not respond)."
+            },
+            "response_goal": {
+                "type": "string",
+                "description": "The intended goal of the proactive message (e.g., 'revive chat', 'share related info', 'react to sentiment', 'engage user interest')."
+            },
+            "key_info_to_include": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of key pieces of information or context points to potentially include in the response (e.g., specific topic, user fact, relevant external info)."
+            },
+            "suggested_tone": {
+                "type": "string",
+                "description": "Suggested tone adjustment based on context (e.g., 'more upbeat', 'more curious', 'slightly teasing')."
+            }
+        },
+        "required": ["should_respond", "reasoning", "response_goal"]
+    }
+}
+
+# --- Goal Decomposition Schema ---
+GOAL_DECOMPOSITION_SCHEMA = {
+    "name": "goal_decomposition_plan",
+    "description": "Plan outlining the steps (including potential tool calls) to achieve a goal.",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "goal_achievable": {
+                "type": "boolean",
+                "description": "Whether the goal seems achievable with available tools and context."
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief reasoning for achievability and the chosen steps."
+            },
+            "steps": {
+                "type": "array",
+                "description": "Ordered list of steps to achieve the goal. Each step is a dictionary.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "step_description": {
+                            "type": "string",
+                            "description": "Natural language description of the step."
+                        },
+                        "tool_name": {
+                            "type": ["string", "null"],
+                            "description": "The name of the tool to use for this step, or null if no tool is needed (e.g., internal reasoning)."
+                        },
+                        "tool_arguments": {
+                            "type": ["object", "null"],
+                            "description": "A dictionary of arguments for the tool call, or null."
+                        }
+                    },
+                    "required": ["step_description"]
+                }
+            }
+        },
+        "required": ["goal_achievable", "reasoning", "steps"]
     }
 }
 

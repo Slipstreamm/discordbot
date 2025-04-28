@@ -272,6 +272,193 @@ def setup_commands(cog: 'GurtCog'):
 
     command_functions.append(gurtsync)
 
+    # --- Gurt Forget Command ---
+    @cog.bot.tree.command(name="gurtforget", description="Make Gurt forget a specific fact.")
+    @app_commands.describe(
+        scope="Choose the scope: user (for facts about a specific user) or general.",
+        fact="The exact fact text Gurt should forget.",
+        user="The user to forget a fact about (only if scope is 'user')."
+    )
+    @app_commands.choices(scope=[
+        app_commands.Choice(name="User Fact", value="user"),
+        app_commands.Choice(name="General Fact", value="general"),
+    ])
+    async def gurtforget(interaction: discord.Interaction, scope: app_commands.Choice[str], fact: str, user: Optional[discord.User] = None):
+        """Handles the /gurtforget command."""
+        await interaction.response.defer(ephemeral=True)
+
+        scope_value = scope.value
+        target_user_id = str(user.id) if user else None
+
+        # Permissions Check: Allow users to forget facts about themselves, owner can forget anything.
+        can_forget = False
+        if scope_value == "user":
+            if target_user_id == str(interaction.user.id): # User forgetting their own fact
+                can_forget = True
+            elif interaction.user.id == cog.bot.owner_id: # Owner forgetting any user fact
+                can_forget = True
+            elif not target_user_id:
+                 await interaction.followup.send("❌ Please specify a user when forgetting a user fact.", ephemeral=True)
+                 return
+        elif scope_value == "general":
+            if interaction.user.id == cog.bot.owner_id: # Only owner can forget general facts
+                can_forget = True
+
+        if not can_forget:
+            await interaction.followup.send("⛔ You don't have permission to forget this fact.", ephemeral=True)
+            return
+
+        if not fact:
+            await interaction.followup.send("❌ Please provide the exact fact text to forget.", ephemeral=True)
+            return
+
+        result = None
+        if scope_value == "user":
+            if not target_user_id: # Should be caught above, but double-check
+                 await interaction.followup.send("❌ User is required for scope 'user'.", ephemeral=True)
+                 return
+            result = await cog.memory_manager.delete_user_fact(target_user_id, fact)
+            if result.get("status") == "deleted":
+                await interaction.followup.send(f"✅ Okay, I've forgotten the fact '{fact}' about {user.display_name}.", ephemeral=True)
+            elif result.get("status") == "not_found":
+                await interaction.followup.send(f"❓ I couldn't find that exact fact ('{fact}') stored for {user.display_name}.", ephemeral=True)
+            else:
+                await interaction.followup.send(f"⚠️ Error forgetting user fact: {result.get('error', 'Unknown error')}", ephemeral=True)
+
+        elif scope_value == "general":
+            result = await cog.memory_manager.delete_general_fact(fact)
+            if result.get("status") == "deleted":
+                await interaction.followup.send(f"✅ Okay, I've forgotten the general fact: '{fact}'.", ephemeral=True)
+            elif result.get("status") == "not_found":
+                await interaction.followup.send(f"❓ I couldn't find that exact general fact: '{fact}'.", ephemeral=True)
+            else:
+                await interaction.followup.send(f"⚠️ Error forgetting general fact: {result.get('error', 'Unknown error')}", ephemeral=True)
+
+    command_functions.append(gurtforget)
+
+    # --- Gurt Goal Command Group ---
+    gurtgoal_group = app_commands.Group(name="gurtgoal", description="Manage Gurt's long-term goals (Owner only)")
+
+    @gurtgoal_group.command(name="add", description="Add a new goal for Gurt.")
+    @app_commands.describe(
+        description="The description of the goal.",
+        priority="Priority (1=highest, 10=lowest, default=5).",
+        details_json="Optional JSON string for goal details (e.g., sub-tasks)."
+    )
+    async def gurtgoal_add(interaction: discord.Interaction, description: str, priority: Optional[int] = 5, details_json: Optional[str] = None):
+        if interaction.user.id != cog.bot.owner_id:
+            await interaction.response.send_message("⛔ Only the bot owner can add goals.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        details = None
+        if details_json:
+            try:
+                details = json.loads(details_json)
+            except json.JSONDecodeError:
+                await interaction.followup.send("❌ Invalid JSON format for details.", ephemeral=True)
+                return
+        result = await cog.memory_manager.add_goal(description, priority, details)
+        if result.get("status") == "added":
+            await interaction.followup.send(f"✅ Goal added (ID: {result.get('goal_id')}): '{description}'", ephemeral=True)
+        elif result.get("status") == "duplicate":
+             await interaction.followup.send(f"⚠️ Goal '{description}' already exists (ID: {result.get('goal_id')}).", ephemeral=True)
+        else:
+            await interaction.followup.send(f"⚠️ Error adding goal: {result.get('error', 'Unknown error')}", ephemeral=True)
+
+    @gurtgoal_group.command(name="list", description="List Gurt's current goals.")
+    @app_commands.describe(status="Filter goals by status (e.g., pending, active).", limit="Maximum goals to show (default 10).")
+    @app_commands.choices(status=[
+        app_commands.Choice(name="Pending", value="pending"),
+        app_commands.Choice(name="Active", value="active"),
+        app_commands.Choice(name="Completed", value="completed"),
+        app_commands.Choice(name="Failed", value="failed"),
+    ])
+    async def gurtgoal_list(interaction: discord.Interaction, status: Optional[app_commands.Choice[str]] = None, limit: Optional[int] = 10):
+        if interaction.user.id != cog.bot.owner_id:
+            await interaction.response.send_message("⛔ Only the bot owner can list goals.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        status_value = status.value if status else None
+        limit_value = max(1, min(limit or 10, 25)) # Clamp limit
+        goals = await cog.memory_manager.get_goals(status=status_value, limit=limit_value)
+        if not goals:
+            await interaction.followup.send(f"No goals found matching the criteria (Status: {status_value or 'any'}).", ephemeral=True)
+            return
+
+        embed = create_gurt_embed(f"Gurt Goals (Status: {status_value or 'All'})", color=discord.Color.purple())
+        for goal in goals:
+            details_str = f"\n   Details: `{json.dumps(goal.get('details'))}`" if goal.get('details') else ""
+            created_ts = int(goal.get('created_timestamp', 0))
+            updated_ts = int(goal.get('last_updated', 0))
+            embed.add_field(
+                name=f"ID: {goal.get('goal_id')} | P: {goal.get('priority', '?')} | Status: {goal.get('status', '?')}",
+                value=f"> {goal.get('description', 'N/A')}{details_str}\n"
+                      f"> Created: <t:{created_ts}:R> | Updated: <t:{updated_ts}:R>",
+                inline=False
+            )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @gurtgoal_group.command(name="update", description="Update a goal's status, priority, or details.")
+    @app_commands.describe(
+        goal_id="The ID of the goal to update.",
+        status="New status for the goal.",
+        priority="New priority (1=highest, 10=lowest).",
+        details_json="Optional: New JSON string for goal details (replaces existing)."
+    )
+    @app_commands.choices(status=[
+        app_commands.Choice(name="Pending", value="pending"),
+        app_commands.Choice(name="Active", value="active"),
+        app_commands.Choice(name="Completed", value="completed"),
+        app_commands.Choice(name="Failed", value="failed"),
+    ])
+    async def gurtgoal_update(interaction: discord.Interaction, goal_id: int, status: Optional[app_commands.Choice[str]] = None, priority: Optional[int] = None, details_json: Optional[str] = None):
+        if interaction.user.id != cog.bot.owner_id:
+            await interaction.response.send_message("⛔ Only the bot owner can update goals.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+
+        status_value = status.value if status else None
+        details = None
+        if details_json:
+            try:
+                details = json.loads(details_json)
+            except json.JSONDecodeError:
+                await interaction.followup.send("❌ Invalid JSON format for details.", ephemeral=True)
+                return
+
+        if not any([status_value, priority is not None, details is not None]):
+             await interaction.followup.send("❌ You must provide at least one field to update (status, priority, or details_json).", ephemeral=True)
+             return
+
+        result = await cog.memory_manager.update_goal(goal_id, status=status_value, priority=priority, details=details)
+        if result.get("status") == "updated":
+            await interaction.followup.send(f"✅ Goal ID {goal_id} updated.", ephemeral=True)
+        elif result.get("status") == "not_found":
+            await interaction.followup.send(f"❓ Goal ID {goal_id} not found.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"⚠️ Error updating goal: {result.get('error', 'Unknown error')}", ephemeral=True)
+
+    @gurtgoal_group.command(name="delete", description="Delete a goal.")
+    @app_commands.describe(goal_id="The ID of the goal to delete.")
+    async def gurtgoal_delete(interaction: discord.Interaction, goal_id: int):
+        if interaction.user.id != cog.bot.owner_id:
+            await interaction.response.send_message("⛔ Only the bot owner can delete goals.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        result = await cog.memory_manager.delete_goal(goal_id)
+        if result.get("status") == "deleted":
+            await interaction.followup.send(f"✅ Goal ID {goal_id} deleted.", ephemeral=True)
+        elif result.get("status") == "not_found":
+            await interaction.followup.send(f"❓ Goal ID {goal_id} not found.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"⚠️ Error deleting goal: {result.get('error', 'Unknown error')}", ephemeral=True)
+
+    # Add the command group to the bot's tree
+    cog.bot.tree.add_command(gurtgoal_group)
+    # Add group command functions to the list for tracking (optional, but good practice)
+    command_functions.extend([gurtgoal_add, gurtgoal_list, gurtgoal_update, gurtgoal_delete])
+
+
     # Get command names safely - Command objects don't have __name__ attribute
     command_names = []
     for func in command_functions:
