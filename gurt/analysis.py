@@ -684,3 +684,36 @@ def update_conversation_sentiment(cog: 'GurtCog', channel_id: int, user_id: str,
 
     channel_sentiment["last_update"] = now
     # No need to reassign cog.conversation_sentiment[channel_id] as it's modified in place
+
+# --- Proactive Goal Creation ---
+
+async def proactively_create_goals(cog: 'GurtCog'):
+    """
+    Analyzes Gurt's current state, environment, and recent interactions
+    to determine if any new goals should be created autonomously.
+    (Placeholder Implementation)
+    """
+    logger.info("Checking for potential proactive goals...")
+    # --- Placeholder Logic ---
+    # This is where the complex decision-making would go.
+    # Examples of potential triggers:
+    # 1. Detect a long lull in a channel Gurt is interested in.
+    #    Goal: "Generate a conversation starter related to [topic] in channel [channel_id]."
+    # 2. Notice repeated errors in logs (requires log access tool).
+    #    Goal: "Search web for solutions to error '[error message]'."
+    # 3. Detect a significant negative sentiment shift in a channel.
+    #    Goal: "Analyze recent messages in [channel_id] for cause of negative sentiment."
+    # 4. A user expresses interest in a topic Gurt knows about.
+    #    Goal: "Share an interesting fact about [topic] with user [user_id]."
+    # 5. Scheduled task reminder (e.g., daily summary).
+    #    Goal: "Generate daily summary for channel [channel_id]."
+
+    # For now, just log that the check happened.
+    logger.info("Proactive goal creation check complete (Placeholder - no goals created).")
+
+    # Example of adding a goal (if logic determined one was needed):
+    # if should_create_goal:
+    #     goal_description = "Example: Summarize channel #general activity from the last 12 hours."
+    #     priority = 3 # Lower priority for autonomous goals initially
+    #     await cog.memory_manager.add_goal(goal_description, priority=priority)
+    #     logger.info(f"Proactively created goal: {goal_description}")
