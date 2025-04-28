@@ -1058,9 +1058,27 @@ async def get_internal_ai_json_response(
             "contents": [ # Simplified representation for logging
                  {"role": c.role, "parts": [p.text if hasattr(p,'text') else str(type(p)) for p in c.parts]}
                  for c in contents
-            ],
-            "generation_config": generation_config, # Already a dict-like object
-        }
+             ],
+             # Convert GenerationConfig to a serializable dict for logging
+             "generation_config": {
+                 "temperature": generation_config.temperature,
+                 "max_output_tokens": generation_config.max_output_tokens,
+                 "response_mime_type": generation_config.response_mime_type,
+                 # Schema might be complex, log its presence or basic type
+                 "response_schema": bool(generation_config.response_schema)
+             }
+         }
+
+        # --- Add detailed logging for raw request ---
+        try:
+            print(f"--- Raw request payload for {task_description} ---")
+            # Use json.dumps for pretty printing, handle potential errors
+            print(json.dumps(request_payload_for_logging, indent=2, default=str)) # Use default=str as fallback
+            print(f"--- End Raw request payload ---")
+        except Exception as req_log_e:
+            print(f"Error logging raw request payload: {req_log_e}")
+            print(f"Payload causing error: {request_payload_for_logging}") # Print the raw dict on error
+        # --- End detailed logging ---
 
 
         # --- Call API ---
@@ -1079,6 +1097,11 @@ async def get_internal_ai_json_response(
         # --- Parse and Validate ---
         # This function always expects JSON, so directly use response_obj.text
         final_response_text = response_obj.text
+        # --- Add detailed logging for raw response text ---
+        print(f"--- Raw response_obj.text for {task_description} ---")
+        print(final_response_text)
+        print(f"--- End Raw response_obj.text ---")
+        # --- End detailed logging ---
         print(f"Parsing ({task_description}): Using response_obj.text for JSON.")
 
         final_parsed_data = parse_and_validate_json_response(
