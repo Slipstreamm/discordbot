@@ -161,8 +161,8 @@ RESPONSE_SCHEMA = {
                 "description": "The text content of the bot's response. Can be empty if only reacting."
             },
             "react_with_emoji": {
-                "type": ["string", "null"],
-                "description": "Optional: A standard Discord emoji to react with, or null if no reaction."
+                "type": "string", # Corrected: Use single type; nullability handled by not being required
+                "description": "Optional: A standard Discord emoji to react with, or null/empty if no reaction."
             },
             # Note: tool_requests is handled by Vertex AI's function calling mechanism
         },

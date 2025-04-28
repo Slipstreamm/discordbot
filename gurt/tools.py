@@ -16,6 +16,7 @@ from typing import Dict, List, Any, Optional, Tuple, Union # Added Union
 from tavily import TavilyClient
 import docker
 import aiodocker # Use aiodocker for async operations
+from asteval import Interpreter # Added for calculate tool
 
 # Relative imports from within the gurt package and parent
 from .memory import MemoryManager # Import from local memory.py
