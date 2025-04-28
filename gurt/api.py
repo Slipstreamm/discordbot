@@ -607,18 +607,27 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             contents.append(candidate.content) # Add the AI's function call request message
             contents.append(Content(role="function", parts=[tool_response_part])) # Add the function response part
 
-            # --- Second API Call (Get Final Response) ---
+            # --- Second API Call (Get Final Response After Tool) ---
             print("Making follow-up API call with tool results...")
-            generation_config_final = GenerationConfig(
-                temperature=0.75,
-                max_output_tokens=10000, # Adjust as needed
-                response_mime_type="application/json",
-                response_schema=RESPONSE_SCHEMA['schema'] # Use the schema defined in config
+
+            # Initialize a NEW model instance WITHOUT tools for the follow-up call
+            # This prevents the InvalidArgument error when specifying response schema
+            model_final = GenerativeModel(
+                model_name or DEFAULT_MODEL, # Use the same model name
+                system_instruction=final_system_prompt # Keep the same system prompt
+                # Omit the 'tools' parameter here
             )
 
-            final_response_obj = await call_vertex_api_with_retry(
+            generation_config_final = GenerationConfig(
+                temperature=0.75, # Keep original temperature for final response
+                max_output_tokens=10000, # Keep original max tokens
+                response_mime_type="application/json",
+                response_schema=RESPONSE_SCHEMA['schema'] # Enforce schema on the final call
+            )
+
+            final_response_obj = await call_vertex_api_with_retry( # Renamed variable for clarity
                 cog=cog,
-                model=model,
+                model=model_final, # Use the new model instance WITHOUT tools
                 contents=contents, # History now includes tool call/response
                 generation_config=generation_config_final,
                 safety_settings=STANDARD_SAFETY_SETTINGS,
