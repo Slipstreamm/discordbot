@@ -57,7 +57,7 @@ async def main():
     try:
         async with bot:
             # List of cogs to load - Load WheatleyCog instead of GurtCog
-            cogs = ["wheatley.cog", "cogs.profile_updater_cog"] # Assuming profile updater is still desired
+            cogs = ["wheatley.cog"] # Assuming profile updater is still desired
             for cog in cogs:
                 try:
                     await bot.load_extension(cog)

@@ -123,6 +123,7 @@ LEARNING_UPDATE_INTERVAL = 3600 # Update learned patterns every hour
 REFLECTION_INTERVAL_SECONDS = int(os.getenv("REFLECTION_INTERVAL_SECONDS", 6 * 3600)) # Reflect every 6 hours
 GOAL_CHECK_INTERVAL = int(os.getenv("GOAL_CHECK_INTERVAL", 300)) # Check for pending goals every 5 mins
 GOAL_EXECUTION_INTERVAL = int(os.getenv("GOAL_EXECUTION_INTERVAL", 60)) # Check for active goals to execute every 1 min
+PROACTIVE_GOAL_CHECK_INTERVAL = int(os.getenv("PROACTIVE_GOAL_CHECK_INTERVAL", 900)) # Check if Gurt should create its own goals every 15 mins
 
 # --- Topic Tracking Config ---
 TOPIC_UPDATE_INTERVAL = 300 # Update topics every 5 minutes
