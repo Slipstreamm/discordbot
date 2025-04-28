@@ -59,7 +59,7 @@ class ProfileUpdaterCog(commands.Cog):
         print("ProfileUpdaterTask: Bot ready, attempting to get GurtCog...")
         # Retry mechanism to handle potential cog loading race conditions
         for attempt in range(5): # Try up to 5 times
-            self.gurt_cog = self.bot.get_cog('GurtCog')
+            self.gurt_cog = self.bot.get_cog('Gurt')
             if self.gurt_cog:
                 print(f"ProfileUpdaterTask: GurtCog found on attempt {attempt + 1}. Starting loop.")
                 return # Success
