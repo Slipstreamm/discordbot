@@ -449,11 +449,27 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         current_message_parts = []
         formatted_current_message = format_message(cog, message) # Pass cog if needed
 
-        text_content = f"{formatted_current_message['author']['display_name']}: {formatted_current_message['content']}"
+        # --- Construct text content, including reply context if applicable ---
+        text_content = ""
+        if formatted_current_message.get("is_reply") and formatted_current_message.get("replied_to_author_name"):
+            reply_author = formatted_current_message["replied_to_author_name"]
+            reply_content = formatted_current_message.get("replied_to_content", "...") # Use ellipsis if content missing
+            # Truncate long replied content to keep context concise
+            max_reply_len = 150
+            if len(reply_content) > max_reply_len:
+                reply_content = reply_content[:max_reply_len] + "..."
+            text_content += f"(Replying to {reply_author}: \"{reply_content}\")\n"
+
+        # Add current message author and content
+        text_content += f"{formatted_current_message['author']['display_name']}: {formatted_current_message['content']}"
+
+        # Add mention details
         if formatted_current_message.get("mentioned_users_details"):
             mentions_str = ", ".join([f"{m['display_name']}(id:{m['id']})" for m in formatted_current_message["mentioned_users_details"]])
             text_content += f"\n(Message Details: Mentions=[{mentions_str}])"
+
         current_message_parts.append(Part.from_text(text_content))
+        # --- End text content construction ---
 
         if message.attachments:
             print(f"Processing {len(message.attachments)} attachments for message {message.id}")

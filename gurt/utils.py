@@ -77,70 +77,12 @@ def update_relationship(cog: 'GurtCog', user_id_1: str, user_id_2: str, change: 
     # print(f"Updated relationship {user_id_1}-{user_id_2}: {current_score:.1f} -> {new_score:.1f} ({change:+.1f})") # Debug log
 
 async def simulate_human_typing(cog: 'GurtCog', channel, text: str):
-    """Simulates realistic human typing behavior."""
-    base_char_delay = random.uniform(0.05, 0.12)
-    channel_id = channel.id
-
-    # Adjust speed based on channel dynamics if available
-    if hasattr(cog, 'channel_response_timing') and channel_id in cog.channel_response_timing:
-        response_factor = cog.channel_response_timing[channel_id]
-        base_char_delay *= response_factor * random.uniform(0.85, 1.15)
-        # print(f"Adjusting typing speed (factor: {response_factor:.2f})") # Debug
-
-    # Adjust speed based on mood
-    if cog.current_mood in ["excited", "slightly hyper"]: base_char_delay *= 0.7
-    elif cog.current_mood in ["tired", "a bit bored"]: base_char_delay *= 1.3
-
-    # Typo probability (needs personality traits from cog)
-    # Fetch current traits - might be slightly inefficient to fetch each time
-    persistent_traits = await cog.memory_manager.get_all_personality_traits()
-    randomness = persistent_traits.get('randomness', 0.5) # Default if fetch fails
-    typo_probability = 0.02 * (0.5 + randomness)
-
-    nearby_keys = { # Simplified for example
-        'a': 'sqwz', 'b': 'vghn', 'c': 'xdfv', 'd': 'serfcx', 'e': 'wrsdf', 'f': 'drtgvc',
-        'g': 'ftyhbv', 'h': 'gyujnb', 'i': 'uojkl', 'j': 'huikmn', 'k': 'jiolm', 'l': 'kop;',
-        'm': 'njk,', 'n': 'bhjm', 'o': 'iklp', 'p': 'ol;[', 'q': 'asw', 'r': 'edft',
-        's': 'awedxz', 't': 'rfgy', 'u': 'yhji', 'v': 'cfgb', 'w': 'qase', 'x': 'zsdc',
-        'y': 'tghu', 'z': 'asx'
-    }
-
-    total_time = 0; max_time = 10.0
+    """Shows typing indicator without significant delay."""
+    # Minimal delay to ensure the typing indicator shows up reliably
+    # but doesn't add noticeable latency to the response.
+    # The actual sending of the message happens immediately after this.
     async with channel.typing():
-        i = 0
-        while i < len(text) and total_time < max_time:
-            char_delay = base_char_delay
-            if text[i] in ['.', '!', '?', ',']: char_delay *= random.uniform(1.5, 2.5)
-            elif text[i] == ' ': char_delay *= random.uniform(1.0, 1.8)
-
-            if random.random() < 0.03 and text[i] in [' ', ',']:
-                thinking_pause = random.uniform(0.5, 1.5)
-                await asyncio.sleep(thinking_pause); total_time += thinking_pause
-
-            make_typo = random.random() < typo_probability and text[i].lower() in nearby_keys
-            if make_typo:
-                await asyncio.sleep(char_delay); total_time += char_delay # Wait before typo
-                if random.random() < 0.8: # Correct typo
-                    notice_delay = random.uniform(0.2, 0.8)
-                    await asyncio.sleep(notice_delay); total_time += notice_delay
-                    correction_delay = random.uniform(0.1, 0.3) # Simulate backspace+correct
-                    await asyncio.sleep(correction_delay); total_time += correction_delay
-                # else: pass # Don't correct
-            else:
-                await asyncio.sleep(char_delay); total_time += char_delay
-
-            i += 1
-            # Simulate burst typing
-            if random.random() < 0.1 and i < len(text) - 3:
-                next_few_chars = text[i:i+min(5, len(text)-i)]
-                if ' ' not in next_few_chars:
-                    burst_length = min(len(next_few_chars), random.randint(2, 4))
-                    burst_delay = base_char_delay * 0.4 * burst_length
-                    await asyncio.sleep(burst_delay); total_time += burst_delay
-                    i += burst_length - 1
-
-        min_typing_time = min(1.0, len(text) * 0.03)
-        if total_time < min_typing_time: await asyncio.sleep(min_typing_time - total_time)
+        await asyncio.sleep(0.1) # Very short sleep, just to ensure typing shows
 
 async def log_internal_api_call(cog: 'GurtCog', task_description: str, payload: Dict[str, Any], response_data: Optional[Dict[str, Any]], error: Optional[Exception] = None):
     """Helper function to log internal API calls to a file."""
