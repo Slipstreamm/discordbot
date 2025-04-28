@@ -32,9 +32,9 @@ TAVILY_DEFAULT_MAX_RESULTS = int(os.getenv("TAVILY_DEFAULT_MAX_RESULTS", 5))
 TAVILY_DISABLE_ADVANCED = os.getenv("TAVILY_DISABLE_ADVANCED", "false").lower() == "true" # For cost control
 
 # --- Model Configuration ---
-DEFAULT_MODEL = os.getenv("WHEATLEY_DEFAULT_MODEL", "gemini-1.5-pro-preview-0409") # Changed env var name
-FALLBACK_MODEL = os.getenv("WHEATLEY_FALLBACK_MODEL", "gemini-1.5-flash-preview-0514") # Changed env var name
-SAFETY_CHECK_MODEL = os.getenv("WHEATLEY_SAFETY_CHECK_MODEL", "gemini-1.5-flash-preview-0514") # Changed env var name
+DEFAULT_MODEL = os.getenv("WHEATLEY_DEFAULT_MODEL", "gemini-2.5-flash-preview-04-17") # Changed env var name
+FALLBACK_MODEL = os.getenv("WHEATLEY_FALLBACK_MODEL", "gemini-2.5-flash-preview-04-17") # Changed env var name
+SAFETY_CHECK_MODEL = os.getenv("WHEATLEY_SAFETY_CHECK_MODEL", "gemini-2.5-flash-preview-04-17") # Changed env var name
 
 # --- Database Paths ---
 # NOTE: Ensure these paths are unique if running Wheatley alongside Gurt
