@@ -78,6 +78,7 @@ def _get_response_text(response: Optional['GenerationResponse']) -> Optional[str
             if hasattr(part, 'text') and part.text:
                 return part.text
         # If no text part is found (e.g., only function call or empty text parts)
+        print(f"[_get_response_text] No text part found in candidate parts: {response.candidates[0].content.parts}") # Log parts structure
         return None
     except (AttributeError, IndexError) as e:
         # Handle cases where structure is unexpected or parts list is empty
@@ -562,6 +563,17 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             safety_settings=STANDARD_SAFETY_SETTINGS,
             request_desc=f"Initial response check for message {message.id}"
         )
+
+        # --- Log Raw Request and Response ---
+        try:
+            # Log the request payload (contents)
+            request_payload_log = [{"role": c.role, "parts": [str(p) for p in c.parts]} for c in contents] # Convert parts to string for logging
+            print(f"--- Raw API Request (Initial Call) ---\n{json.dumps(request_payload_log, indent=2)}\n------------------------------------")
+            # Log the raw response object
+            print(f"--- Raw API Response (Initial Call) ---\n{initial_response}\n-----------------------------------")
+        except Exception as log_e:
+            print(f"Error logging raw request/response: {log_e}")
+        # --- End Logging ---
 
         if not initial_response or not initial_response.candidates:
              raise Exception("Initial API call returned no response or candidates.")
