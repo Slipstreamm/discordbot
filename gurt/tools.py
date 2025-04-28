@@ -14,7 +14,6 @@ from typing import Dict, List, Any, Optional, Tuple, Union # Added Union
 
 # Third-party imports for tools
 from tavily import TavilyClient
-from asteval import Interpreter
 import docker
 import aiodocker # Use aiodocker for async operations
 
@@ -23,7 +22,9 @@ from .memory import MemoryManager # Import from local memory.py
 from .config import (
     TAVILY_API_KEY, PISTON_API_URL, PISTON_API_KEY, SAFETY_CHECK_MODEL,
     DOCKER_EXEC_IMAGE, DOCKER_COMMAND_TIMEOUT, DOCKER_CPU_LIMIT, DOCKER_MEM_LIMIT,
-    SUMMARY_CACHE_TTL, SUMMARY_API_TIMEOUT, DEFAULT_MODEL # Removed API_KEY, OPENROUTER_API_URL
+    SUMMARY_CACHE_TTL, SUMMARY_API_TIMEOUT, DEFAULT_MODEL,
+    # Add these:
+    TAVILY_DEFAULT_SEARCH_DEPTH, TAVILY_DEFAULT_MAX_RESULTS, TAVILY_DISABLE_ADVANCED
 )
 # Assume these helpers will be moved or are accessible via cog
 # We might need to pass 'cog' to these tool functions if they rely on cog state heavily
@@ -343,14 +344,64 @@ async def get_message_context(cog: commands.Cog, message_id: str, before_count: 
     except Exception as e:
         return {"error": f"Error getting message context: {str(e)}"}
 
-async def web_search(cog: commands.Cog, query: str) -> Dict[str, Any]:
+async def web_search(cog: commands.Cog, query: str, search_depth: str = TAVILY_DEFAULT_SEARCH_DEPTH, max_results: int = TAVILY_DEFAULT_MAX_RESULTS, topic: str = "general", include_domains: Optional[List[str]] = None, exclude_domains: Optional[List[str]] = None, include_answer: bool = True, include_raw_content: bool = False, include_images: bool = False) -> Dict[str, Any]:
     """Search the web using Tavily API"""
     if not hasattr(cog, 'tavily_client') or not cog.tavily_client:
         return {"error": "Tavily client not initialized.", "timestamp": datetime.datetime.now().isoformat()}
+
+    # Cost control / Logging for advanced search
+    final_search_depth = search_depth
+    if search_depth.lower() == "advanced":
+        if TAVILY_DISABLE_ADVANCED:
+            print(f"Warning: Advanced Tavily search requested but disabled by config. Falling back to basic.")
+            final_search_depth = "basic"
+        else:
+            print(f"Performing advanced Tavily search (cost: 10 credits) for query: '{query}'")
+    elif search_depth.lower() != "basic":
+        print(f"Warning: Invalid search_depth '{search_depth}' provided. Using 'basic'.")
+        final_search_depth = "basic"
+
+    # Validate max_results
+    final_max_results = max(5, min(20, max_results)) # Clamp between 5 and 20
+
     try:
-        response = await asyncio.to_thread(cog.tavily_client.search, query=query, search_depth="basic", max_results=5)
-        results = [{"title": r.get("title"), "url": r.get("url"), "content": r.get("content")} for r in response.get("results", [])]
-        return {"query": query, "results": results, "count": len(results), "timestamp": datetime.datetime.now().isoformat()}
+        # Pass parameters to Tavily search
+        response = await asyncio.to_thread(
+            cog.tavily_client.search,
+            query=query,
+            search_depth=final_search_depth, # Use validated depth
+            max_results=final_max_results, # Use validated results count
+            topic=topic,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+            include_answer=include_answer,
+            include_raw_content=include_raw_content,
+            include_images=include_images
+        )
+        # Extract relevant information from results
+        results = []
+        for r in response.get("results", []):
+            result = {"title": r.get("title"), "url": r.get("url"), "content": r.get("content"), "score": r.get("score"), "published_date": r.get("published_date")}
+            if include_raw_content: result["raw_content"] = r.get("raw_content")
+            if include_images: result["images"] = r.get("images")
+            results.append(result)
+
+        return {
+            "query": query,
+            "search_depth": search_depth,
+            "max_results": max_results,
+            "topic": topic,
+            "include_domains": include_domains,
+            "exclude_domains": exclude_domains,
+            "include_answer": include_answer,
+            "include_raw_content": include_raw_content,
+            "include_images": include_images,
+            "results": results,
+            "answer": response.get("answer"),
+            "follow_up_questions": response.get("follow_up_questions"),
+            "count": len(results),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
     except Exception as e:
         error_message = f"Error during Tavily search for '{query}': {str(e)}"
         print(error_message)
@@ -729,5 +780,38 @@ TOOL_MAPPING = {
     "run_python_code": run_python_code,
     "create_poll": create_poll,
     "run_terminal_command": run_terminal_command,
-    "remove_timeout": remove_timeout
+    "remove_timeout": remove_timeout,
+    "extract_web_content": extract_web_content
 }
+
+async def extract_web_content(cog: commands.Cog, urls: Union[str, List[str]], extract_depth: str = "basic", include_images: bool = False) -> Dict[str, Any]:
+    """Extract content from URLs using Tavily API"""
+    if not hasattr(cog, 'tavily_client') or not cog.tavily_client:
+        return {"error": "Tavily client not initialized.", "timestamp": datetime.datetime.now().isoformat()}
+
+    # Cost control / Logging for advanced extract
+    final_extract_depth = extract_depth
+    if extract_depth.lower() == "advanced":
+        if TAVILY_DISABLE_ADVANCED:
+            print(f"Warning: Advanced Tavily extract requested but disabled by config. Falling back to basic.")
+            final_extract_depth = "basic"
+        else:
+            print(f"Performing advanced Tavily extract (cost: 2 credits per 5 URLs) for URLs: {urls}")
+    elif extract_depth.lower() != "basic":
+        print(f"Warning: Invalid extract_depth '{extract_depth}' provided. Using 'basic'.")
+        final_extract_depth = "basic"
+
+    try:
+        response = await asyncio.to_thread(
+            cog.tavily_client.extract,
+            urls=urls,
+            extract_depth=final_extract_depth, # Use validated depth
+            include_images=include_images
+        )
+        results = [{"url": r.get("url"), "raw_content": r.get("raw_content"), "images": r.get("images")} for r in response.get("results", [])]
+        failed_results = response.get("failed_results", [])
+        return {"urls": urls, "extract_depth": extract_depth, "include_images": include_images, "results": results, "failed_results": failed_results, "timestamp": datetime.datetime.now().isoformat()}
+    except Exception as e:
+        error_message = f"Error during Tavily extract for '{urls}': {str(e)}"
+        print(error_message)
+        return {"error": error_message, "timestamp": datetime.datetime.now().isoformat()}

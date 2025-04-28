@@ -27,6 +27,11 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 PISTON_API_URL = os.getenv("PISTON_API_URL") # For run_python_code tool
 PISTON_API_KEY = os.getenv("PISTON_API_KEY") # Optional key for Piston
 
+# --- Tavily Configuration ---
+TAVILY_DEFAULT_SEARCH_DEPTH = os.getenv("TAVILY_DEFAULT_SEARCH_DEPTH", "basic")
+TAVILY_DEFAULT_MAX_RESULTS = int(os.getenv("TAVILY_DEFAULT_MAX_RESULTS", 5))
+TAVILY_DISABLE_ADVANCED = os.getenv("TAVILY_DISABLE_ADVANCED", "false").lower() == "true" # For cost control
+
 # --- Model Configuration ---
 DEFAULT_MODEL = os.getenv("GURT_DEFAULT_MODEL", "gemini-2.5-pro-preview-03-25")
 FALLBACK_MODEL = os.getenv("GURT_FALLBACK_MODEL", "gemini-2.5-pro-preview-03-25")

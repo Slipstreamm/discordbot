@@ -389,6 +389,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
     channel_id = message.channel.id
     user_id = message.author.id
+    initial_parsed_data = None # Added to store initial parsed result
     final_parsed_data = None
     error_message = None
     fallback_response = None
@@ -525,6 +526,14 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         if not initial_response or not initial_response.candidates:
              raise Exception("Initial API call returned no response or candidates.")
 
+        # --- Attempt to parse initial response (might be placeholder or final if no tool call) ---
+        initial_response_text = initial_response.text
+        # Use relaxed validation? For now, try standard schema. Might fail if it's just a tool call trigger.
+        initial_parsed_data = parse_and_validate_json_response(
+            initial_response_text, RESPONSE_SCHEMA['schema'], "initial response check"
+        )
+        # If initial parsing fails but a tool call happens, initial_parsed_data will be None, which is okay.
+
         # Check for function call request
         candidate = initial_response.candidates[0]
         # Use getattr for safer access in case candidate structure varies or finish_reason is None
@@ -601,18 +610,18 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                          print("Critical Error: Re-prompted response still failed validation.")
                          error_message = "Failed to get valid JSON response after re-prompting."
                 else:
-                     error_message = "Failed to get response after re-prompting."
+                 error_message = "Failed to get response after re-prompting."
+            # final_parsed_data is now set (or None if failed) after tool use
 
 
         else:
-            # No tool call requested, the first response is the final one (but needs validation)
+            # No tool call requested, the first response IS the final one.
+            # We already attempted to parse it into initial_parsed_data.
             print("No tool call requested by AI.")
-            final_response_text = initial_response.text
-            final_parsed_data = parse_and_validate_json_response(
-                final_response_text, RESPONSE_SCHEMA['schema'], "initial response (no tools)"
-            )
+            final_parsed_data = initial_parsed_data # The initial parse IS the final result here.
 
             if final_parsed_data is None:
+                 # This means the initial_parsed_data failed validation earlier
                  print("Critical Error: Initial response failed validation (no tools).")
                  error_message = "Failed to parse/validate initial AI JSON response."
                  # Create a basic fallback if the bot was mentioned
@@ -626,12 +635,15 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         print(error_message)
         import traceback
         traceback.print_exc()
-        final_parsed_data = None # Ensure no data is returned on error
+        # Ensure both are None on critical error
+        initial_parsed_data = None
+        final_parsed_data = None
 
     return {
-        "final_response": final_parsed_data,
+        "initial_response": initial_parsed_data, # Return parsed initial data
+        "final_response": final_parsed_data,    # Return parsed final data
         "error": error_message,
-        "fallback_initial": fallback_response # Pass fallback if created
+        "fallback_initial": fallback_response
     }
 
 
