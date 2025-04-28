@@ -1041,6 +1041,8 @@ async def create_new_tool(cog: commands.Cog, tool_name: str, description: str, p
     python_code = generated_data["python_function_code"].strip()
     declaration_params_str = generated_data["function_declaration_params"].strip()
     declaration_desc = generated_data["function_declaration_desc"].strip()
+    # Escape quotes in the description *before* using it in the f-string
+    escaped_declaration_desc = declaration_desc.replace('"', '\\"')
 
     # Basic validation of generated code (very superficial)
     if not python_code.startswith("async def") or f" {tool_name}(" not in python_code or "cog: commands.Cog" not in python_code:
@@ -1121,7 +1123,7 @@ async def create_new_tool(cog: commands.Cog, tool_name: str, description: str, p
             f"    tool_declarations.append(\n"
             f"        generative_models.FunctionDeclaration(\n"
             f"            name=\"{tool_name}\",\n"
-            f"            description=\"{declaration_desc.replace('\"', '\\\"')}\", # Generated description\n"
+            f"            description=\"{escaped_declaration_desc}\", # Use escaped description\n"
             f"            parameters={declaration_params_str} # Generated parameters\n"
             f"        )\n"
             f"    )\n"
