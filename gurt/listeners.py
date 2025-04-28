@@ -336,7 +336,8 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
             # NEW LOGIC: Always send a notification if an error occurred here
             error_notification = f"Oops! Something went wrong while processing that. (`{error_msg[:100]}`)" # Include part of the error
             try:
-                await message.channel.send(error_notification)
+                print('disabled error notification')
+                #await message.channel.send(error_notification)
             except Exception as send_err:
                 print(f"Failed to send error notification to channel: {send_err}")
             return # Still exit after handling the error
