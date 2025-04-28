@@ -77,6 +77,7 @@ PROACTIVE_TOPIC_CHANCE = float(os.getenv("PROACTIVE_TOPIC_CHANCE", 0.2)) # Lower
 # --- Interest Tracking Config --- REMOVED
 
 # --- Learning Config --- REMOVED
+LEARNING_RATE = 0.05
 
 # --- Topic Tracking Config ---
 TOPIC_UPDATE_INTERVAL = 600 # Update topics every 10 minutes (Less frequent?)
