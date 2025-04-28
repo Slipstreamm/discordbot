@@ -589,11 +589,16 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         if hasattr(candidate, 'content') and candidate.content.parts:
             for part in candidate.content.parts:
                 if hasattr(part, 'function_call'):
-                    function_call = part.function_call
-                    # Store the whole content containing the call to add to history later
-                    function_call_part_content = candidate.content
-                    print(f"AI requested tool (found function_call part): {function_call.name}")
-                    break # Found the function call part
+                    function_call = part.function_call # Assign the value
+                    # Add check to ensure function_call is not None before proceeding
+                    if function_call:
+                        # Store the whole content containing the call to add to history later
+                        function_call_part_content = candidate.content
+                        print(f"AI requested tool (found function_call part): {function_call.name}")
+                        break # Found a valid function call part
+                    else:
+                        # Log if the attribute exists but is None (unexpected case)
+                        print("Warning: Found part with 'function_call' attribute, but its value was None.")
 
         # --- Process Tool Call or Handle Direct Response ---
         if function_call and function_call_part_content:
