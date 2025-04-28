@@ -982,7 +982,45 @@ async def get_internal_ai_json_response(
                 continue # Skip adding system messages to contents list
             elif role == "assistant":
                 role = "model"
-            contents.append(Content(role=role, parts=[Part.from_text(content_text)]))
+
+            # --- Process content (string or list) ---
+            content_value = msg.get("content")
+            message_parts: List[Part] = [] # Initialize list to hold parts for this message
+
+            if isinstance(content_value, str):
+                # Handle simple string content
+                message_parts.append(Part.from_text(content_value))
+            elif isinstance(content_value, list):
+                # Handle list content (e.g., multimodal from ProfileUpdater)
+                for part_data in content_value:
+                    part_type = part_data.get("type")
+                    if part_type == "text":
+                        text = part_data.get("text", "")
+                        message_parts.append(Part.from_text(text))
+                    elif part_type == "image_data":
+                        mime_type = part_data.get("mime_type")
+                        base64_data = part_data.get("data")
+                        if mime_type and base64_data:
+                            try:
+                                image_bytes = base64.b64decode(base64_data)
+                                message_parts.append(Part.from_data(data=image_bytes, mime_type=mime_type))
+                            except Exception as decode_err:
+                                print(f"Error decoding/adding image part in get_internal_ai_json_response: {decode_err}")
+                                # Optionally add a placeholder text part indicating failure
+                                message_parts.append(Part.from_text("(System Note: Failed to process an image part)"))
+                        else:
+                             print("Warning: image_data part missing mime_type or data.")
+                    else:
+                        print(f"Warning: Unknown part type '{part_type}' in internal prompt message.")
+            else:
+                 print(f"Warning: Unexpected content type '{type(content_value)}' in internal prompt message.")
+
+            # Add the content object if parts were generated
+            if message_parts:
+                contents.append(Content(role=role, parts=message_parts))
+            else:
+                 print(f"Warning: No parts generated for message role '{role}'.")
+
 
         # Add the critical JSON instruction to the last user message or as a new user message
         json_instruction_content = (

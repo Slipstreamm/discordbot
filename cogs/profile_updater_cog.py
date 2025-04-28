@@ -280,12 +280,27 @@ Review your current profile state (provided below) and decide if you want to mak
                 {"type": "text", "text": f"{state_summary}{image_prompt_part}\n\nReview your current profile state. Decide if you want to change your avatar, bio, roles, or activity status based on your personality, mood, and interests. If yes, specify the changes in the JSON. If not, set 'should_update' to false.\n\n**CRITICAL: Respond ONLY with a valid JSON object matching the required schema.**"}
             ]}
         ]
-        # Add image data if available and model supports it
+        # Add image data if available
         if current_state.get('avatar_image_data'):
-            # Convert to Vertex AI format if needed (get_internal_ai_json_response handles this)
-            # prompt_messages[-1]["content"].append(Part.from_data(...)) # Example
-            print("ProfileUpdaterTask: Added current avatar image to AI prompt.")
-
+            try:
+                # Extract mime type and base64 data from the data URI string
+                data_uri = current_state['avatar_image_data']
+                header, encoded = data_uri.split(',', 1)
+                mime_type = header.split(';')[0].split(':')[1]
+                # Append the image data part to the user message content list
+                prompt_messages[-1]["content"].append({
+                    "type": "image_data", # Use a custom type marker for now
+                    "mime_type": mime_type,
+                    "data": encoded # The raw base64 string
+                })
+                print("ProfileUpdaterTask: Added current avatar image data to AI prompt.")
+            except Exception as img_err:
+                print(f"ProfileUpdaterTask: Failed to process/add avatar image data: {img_err}")
+                # Optionally add a text note about the failure
+                prompt_messages[-1]["content"].append({
+                    "type": "text",
+                    "text": "\n(System Note: Failed to include current avatar image in prompt.)"
+                })
 
         try:
             # Use the imported get_internal_ai_json_response function
