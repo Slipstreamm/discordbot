@@ -16,7 +16,6 @@ except ImportError:
                 pass
     generative_models = DummyGenerativeModels()
 
-
 # Load environment variables
 load_dotenv()
 
@@ -33,49 +32,26 @@ TAVILY_DEFAULT_MAX_RESULTS = int(os.getenv("TAVILY_DEFAULT_MAX_RESULTS", 5))
 TAVILY_DISABLE_ADVANCED = os.getenv("TAVILY_DISABLE_ADVANCED", "false").lower() == "true" # For cost control
 
 # --- Model Configuration ---
-DEFAULT_MODEL = os.getenv("GURT_DEFAULT_MODEL", "gemini-2.5-pro-preview-03-25")
-FALLBACK_MODEL = os.getenv("GURT_FALLBACK_MODEL", "gemini-2.5-pro-preview-03-25")
-SAFETY_CHECK_MODEL = os.getenv("GURT_SAFETY_CHECK_MODEL", "gemini-2.5-flash-preview-04-17") # Use a Vertex AI model for safety checks
+DEFAULT_MODEL = os.getenv("WHEATLEY_DEFAULT_MODEL", "gemini-1.5-pro-preview-0409") # Changed env var name
+FALLBACK_MODEL = os.getenv("WHEATLEY_FALLBACK_MODEL", "gemini-1.5-flash-preview-0514") # Changed env var name
+SAFETY_CHECK_MODEL = os.getenv("WHEATLEY_SAFETY_CHECK_MODEL", "gemini-1.5-flash-preview-0514") # Changed env var name
 
 # --- Database Paths ---
-DB_PATH = os.getenv("GURT_DB_PATH", "data/gurt_memory.db")
-CHROMA_PATH = os.getenv("GURT_CHROMA_PATH", "data/chroma_db")
-SEMANTIC_MODEL_NAME = os.getenv("GURT_SEMANTIC_MODEL", 'all-MiniLM-L6-v2')
+# NOTE: Ensure these paths are unique if running Wheatley alongside Gurt
+DB_PATH = os.getenv("WHEATLEY_DB_PATH", "data/wheatley_memory.db") # Changed env var name and default
+CHROMA_PATH = os.getenv("WHEATLEY_CHROMA_PATH", "data/wheatley_chroma_db") # Changed env var name and default
+SEMANTIC_MODEL_NAME = os.getenv("WHEATLEY_SEMANTIC_MODEL", 'all-MiniLM-L6-v2') # Changed env var name
 
 # --- Memory Manager Config ---
-MAX_USER_FACTS = 20 # TODO: Load from env?
-MAX_GENERAL_FACTS = 100 # TODO: Load from env?
+# These might be adjusted for Wheatley's simpler memory needs if memory.py is fully separated later
+MAX_USER_FACTS = 15 # Reduced slightly
+MAX_GENERAL_FACTS = 50 # Reduced slightly
 
-# --- Personality & Mood ---
-MOOD_OPTIONS = [
-    "chill", "neutral", "curious", "slightly hyper", "a bit bored", "mischievous",
-    "excited", "tired", "sassy", "philosophical", "playful", "dramatic",
-    "nostalgic", "confused", "impressed", "skeptical", "enthusiastic",
-    "distracted", "focused", "creative", "sarcastic", "wholesome"
-]
-# Categorize moods for weighted selection
-MOOD_CATEGORIES = {
-    "positive": ["excited", "enthusiastic", "playful", "wholesome", "creative", "impressed"],
-    "negative": ["tired", "a bit bored", "sassy", "sarcastic", "skeptical", "dramatic", "distracted"],
-    "neutral": ["chill", "neutral", "curious", "philosophical", "focused", "confused", "nostalgic"],
-    "mischievous": ["mischievous"] # Special category for trait link
-}
-BASELINE_PERSONALITY = {
-    "chattiness": 0.7, "emoji_usage": 0.5, "slang_level": 0.5, "randomness": 0.5,
-    "verbosity": 0.4, "optimism": 0.5, "curiosity": 0.6, "sarcasm_level": 0.3,
-    "patience": 0.4, "mischief": 0.5
-}
-BASELINE_INTERESTS = {
-    "kasane teto": 0.8, "vocaloids": 0.6, "gaming": 0.6, "anime": 0.5,
-    "tech": 0.6, "memes": 0.6, "gooning": 0.6
-}
-MOOD_CHANGE_INTERVAL_MIN = 1200 # 20 minutes
-MOOD_CHANGE_INTERVAL_MAX = 2400 # 40 minutes
-EVOLUTION_UPDATE_INTERVAL = 1800 # Evolve personality every 30 minutes
+# --- Personality & Mood --- REMOVED
 
 # --- Stats Push ---
-# How often the Gurt bot should push its stats to the API server (seconds)
-STATS_PUSH_INTERVAL = 30 # Push every 30 seconds
+# How often the Wheatley bot should push its stats to the API server (seconds) - IF NEEDED
+STATS_PUSH_INTERVAL = 60 # Push every 60 seconds (Less frequent?)
 
 # --- Context & Caching ---
 CHANNEL_TOPIC_CACHE_TTL = 600 # seconds (10 minutes)
@@ -90,50 +66,28 @@ SUMMARY_API_TIMEOUT = 45 # seconds
 API_RETRY_ATTEMPTS = 1
 API_RETRY_DELAY = 1 # seconds
 
-# --- Proactive Engagement Config ---
-PROACTIVE_LULL_THRESHOLD = int(os.getenv("PROACTIVE_LULL_THRESHOLD", 180)) # 3 mins
-PROACTIVE_BOT_SILENCE_THRESHOLD = int(os.getenv("PROACTIVE_BOT_SILENCE_THRESHOLD", 600)) # 10 mins
-PROACTIVE_LULL_CHANCE = float(os.getenv("PROACTIVE_LULL_CHANCE", 0.3))
-PROACTIVE_TOPIC_RELEVANCE_THRESHOLD = float(os.getenv("PROACTIVE_TOPIC_RELEVANCE_THRESHOLD", 0.6))
-PROACTIVE_TOPIC_CHANCE = float(os.getenv("PROACTIVE_TOPIC_CHANCE", 0.4))
-PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD = int(os.getenv("PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD", 70))
-PROACTIVE_RELATIONSHIP_CHANCE = float(os.getenv("PROACTIVE_RELATIONSHIP_CHANCE", 0.2))
-PROACTIVE_SENTIMENT_SHIFT_THRESHOLD = float(os.getenv("PROACTIVE_SENTIMENT_SHIFT_THRESHOLD", 0.7)) # Intensity threshold for trigger
-PROACTIVE_SENTIMENT_DURATION_THRESHOLD = int(os.getenv("PROACTIVE_SENTIMENT_DURATION_THRESHOLD", 600)) # How long sentiment needs to persist (10 mins)
-PROACTIVE_SENTIMENT_CHANCE = float(os.getenv("PROACTIVE_SENTIMENT_CHANCE", 0.25))
-PROACTIVE_USER_INTEREST_THRESHOLD = float(os.getenv("PROACTIVE_USER_INTEREST_THRESHOLD", 0.6)) # Min interest level for Gurt to trigger
-PROACTIVE_USER_INTEREST_MATCH_THRESHOLD = float(os.getenv("PROACTIVE_USER_INTEREST_MATCH_THRESHOLD", 0.5)) # Min interest level for User (if tracked) - Currently not tracked per user, but config is ready
-PROACTIVE_USER_INTEREST_CHANCE = float(os.getenv("PROACTIVE_USER_INTEREST_CHANCE", 0.35))
+# --- Proactive Engagement Config --- (Simplified for Wheatley)
+PROACTIVE_LULL_THRESHOLD = int(os.getenv("PROACTIVE_LULL_THRESHOLD", 300)) # 5 mins (Less proactive than Gurt)
+PROACTIVE_BOT_SILENCE_THRESHOLD = int(os.getenv("PROACTIVE_BOT_SILENCE_THRESHOLD", 900)) # 15 mins
+PROACTIVE_LULL_CHANCE = float(os.getenv("PROACTIVE_LULL_CHANCE", 0.15)) # Lower chance
+PROACTIVE_TOPIC_RELEVANCE_THRESHOLD = float(os.getenv("PROACTIVE_TOPIC_RELEVANCE_THRESHOLD", 0.7)) # Slightly higher threshold
+PROACTIVE_TOPIC_CHANCE = float(os.getenv("PROACTIVE_TOPIC_CHANCE", 0.2)) # Lower chance
+# REMOVED: Relationship, Sentiment Shift, User Interest triggers
 
+# --- Interest Tracking Config --- REMOVED
 
-# --- Interest Tracking Config ---
-INTEREST_UPDATE_INTERVAL = int(os.getenv("INTEREST_UPDATE_INTERVAL", 1800)) # 30 mins
-INTEREST_DECAY_INTERVAL_HOURS = int(os.getenv("INTEREST_DECAY_INTERVAL_HOURS", 24)) # Daily
-INTEREST_PARTICIPATION_BOOST = float(os.getenv("INTEREST_PARTICIPATION_BOOST", 0.05))
-INTEREST_POSITIVE_REACTION_BOOST = float(os.getenv("INTEREST_POSITIVE_REACTION_BOOST", 0.02))
-INTEREST_NEGATIVE_REACTION_PENALTY = float(os.getenv("INTEREST_NEGATIVE_REACTION_PENALTY", -0.01))
-INTEREST_FACT_BOOST = float(os.getenv("INTEREST_FACT_BOOST", 0.01))
-INTEREST_MIN_LEVEL_FOR_PROMPT = float(os.getenv("INTEREST_MIN_LEVEL_FOR_PROMPT", 0.3))
-INTEREST_MAX_FOR_PROMPT = int(os.getenv("INTEREST_MAX_FOR_PROMPT", 4))
-
-# --- Learning Config ---
-LEARNING_RATE = 0.05
-MAX_PATTERNS_PER_CHANNEL = 50
-LEARNING_UPDATE_INTERVAL = 3600 # Update learned patterns every hour
-REFLECTION_INTERVAL_SECONDS = int(os.getenv("REFLECTION_INTERVAL_SECONDS", 6 * 3600)) # Reflect every 6 hours
-GOAL_CHECK_INTERVAL = int(os.getenv("GOAL_CHECK_INTERVAL", 300)) # Check for pending goals every 5 mins
-GOAL_EXECUTION_INTERVAL = int(os.getenv("GOAL_EXECUTION_INTERVAL", 60)) # Check for active goals to execute every 1 min
+# --- Learning Config --- REMOVED
 
 # --- Topic Tracking Config ---
-TOPIC_UPDATE_INTERVAL = 300 # Update topics every 5 minutes
+TOPIC_UPDATE_INTERVAL = 600 # Update topics every 10 minutes (Less frequent?)
 TOPIC_RELEVANCE_DECAY = 0.2
 MAX_ACTIVE_TOPICS = 5
 
 # --- Sentiment Tracking Config ---
-SENTIMENT_UPDATE_INTERVAL = 300 # Update sentiment every 5 minutes
+SENTIMENT_UPDATE_INTERVAL = 600 # Update sentiment every 10 minutes (Less frequent?)
 SENTIMENT_DECAY_RATE = 0.1
 
-# --- Emotion Detection ---
+# --- Emotion Detection --- (Kept for potential use in analysis/context, but not proactive triggers)
 EMOTION_KEYWORDS = {
     "joy": ["happy", "glad", "excited", "yay", "awesome", "love", "great", "amazing", "lol", "lmao", "haha"],
     "sadness": ["sad", "upset", "depressed", "unhappy", "disappointed", "crying", "miss", "lonely", "sorry"],
@@ -157,8 +111,8 @@ DOCKER_MEM_LIMIT = os.getenv("DOCKER_MEM_LIMIT", "64m")
 
 # --- Response Schema ---
 RESPONSE_SCHEMA = {
-    "name": "gurt_response",
-    "description": "The structured response from Gurt.",
+    "name": "wheatley_response", # Renamed
+    "description": "The structured response from Wheatley.", # Renamed
     "schema": {
         "type": "object",
         "properties": {
@@ -196,7 +150,7 @@ SUMMARY_RESPONSE_SCHEMA = {
     }
 }
 
-# --- Profile Update Schema ---
+# --- Profile Update Schema --- (Kept for potential future use, but may not be actively used by Wheatley initially)
 PROFILE_UPDATE_SCHEMA = {
     "name": "profile_update_decision",
     "description": "Decision on whether and how to update the bot's profile.",
@@ -250,7 +204,7 @@ PROFILE_UPDATE_SCHEMA = {
     }
 }
 
-# --- Role Selection Schema ---
+# --- Role Selection Schema --- (Kept for potential future use)
 ROLE_SELECTION_SCHEMA = {
     "name": "role_selection_decision",
     "description": "Decision on which roles to add or remove based on a theme.",
@@ -272,7 +226,7 @@ ROLE_SELECTION_SCHEMA = {
     }
 }
 
-# --- Proactive Planning Schema ---
+# --- Proactive Planning Schema --- (Simplified)
 PROACTIVE_PLAN_SCHEMA = {
     "name": "proactive_response_plan",
     "description": "Plan for generating a proactive response based on context and trigger.",
@@ -281,7 +235,7 @@ PROACTIVE_PLAN_SCHEMA = {
         "properties": {
             "should_respond": {
                 "type": "boolean",
-                "description": "Whether Gurt should respond proactively based on the plan."
+                "description": "Whether Wheatley should respond proactively based on the plan." # Renamed
             },
             "reasoning": {
                 "type": "string",
@@ -289,7 +243,7 @@ PROACTIVE_PLAN_SCHEMA = {
             },
             "response_goal": {
                 "type": "string",
-                "description": "The intended goal of the proactive message (e.g., 'revive chat', 'share related info', 'react to sentiment', 'engage user interest')."
+                "description": "The intended goal of the proactive message (e.g., 'revive chat', 'share related info', 'ask a question')." # Simplified goals
             },
             "key_info_to_include": {
                 "type": "array",
@@ -298,55 +252,14 @@ PROACTIVE_PLAN_SCHEMA = {
             },
             "suggested_tone": {
                 "type": "string",
-                "description": "Suggested tone adjustment based on context (e.g., 'more upbeat', 'more curious', 'slightly teasing')."
+                "description": "Suggested tone adjustment based on context (e.g., 'more curious', 'slightly panicked', 'overly confident')." # Wheatley-like tones
             }
         },
         "required": ["should_respond", "reasoning", "response_goal"]
     }
 }
 
-# --- Goal Decomposition Schema ---
-GOAL_DECOMPOSITION_SCHEMA = {
-    "name": "goal_decomposition_plan",
-    "description": "Plan outlining the steps (including potential tool calls) to achieve a goal.",
-    "schema": {
-        "type": "object",
-        "properties": {
-            "goal_achievable": {
-                "type": "boolean",
-                "description": "Whether the goal seems achievable with available tools and context."
-            },
-            "reasoning": {
-                "type": "string",
-                "description": "Brief reasoning for achievability and the chosen steps."
-            },
-            "steps": {
-                "type": "array",
-                "description": "Ordered list of steps to achieve the goal. Each step is a dictionary.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "step_description": {
-                            "type": "string",
-                            "description": "Natural language description of the step."
-                        },
-                        "tool_name": {
-                            "type": ["string", "null"],
-                            "description": "The name of the tool to use for this step, or null if no tool is needed (e.g., internal reasoning)."
-                        },
-                        "tool_arguments": {
-                            "type": ["object", "null"],
-                            "description": "A dictionary of arguments for the tool call, or null."
-                        }
-                    },
-                    "required": ["step_description"]
-                }
-            }
-        },
-        "required": ["goal_achievable", "reasoning", "steps"]
-    }
-}
-
+# --- Goal Decomposition Schema --- REMOVED
 
 # --- Tools Definition ---
 def create_tools_list():
@@ -633,7 +546,7 @@ def create_tools_list():
     tool_declarations.append(
         generative_models.FunctionDeclaration(
             name="timeout_user",
-            description="Timeout a user in the current server for a specified duration. Use this playfully or when someone says something you (Gurt) dislike or find funny.",
+            description="Timeout a user in the current server for a specified duration. Use this playfully or when someone says something you (Wheatley) dislike or find funny, or maybe just because you feel like it.", # Updated description
             parameters={
                 "type": "object",
                 "properties": {
@@ -647,7 +560,7 @@ def create_tools_list():
                     },
                     "reason": {
                         "type": "string",
-                        "description": "Optional: The reason for the timeout (keep it short and in character)."
+                        "description": "Optional: The reason for the timeout (keep it short and in character, maybe slightly nonsensical)." # Updated description
                     }
                 },
                 "required": ["user_id", "duration_minutes"]
@@ -754,10 +667,21 @@ except NameError: # If generative_models wasn't imported due to ImportError
     TOOLS = []
     print("WARNING: google-cloud-vertexai not installed. TOOLS list is empty.")
 
-
-# --- Simple Gurt Responses ---
-GURT_RESPONSES = [
-    "Gurt!", "Gurt gurt!", "Gurt... gurt gurt.", "*gurts happily*",
-    "*gurts sadly*", "*confused gurting*", "Gurt? Gurt gurt!", "GURT!",
-    "gurt...", "Gurt gurt gurt!", "*aggressive gurting*"
+# --- Simple Wheatley Responses --- (Renamed and updated)
+WHEATLEY_RESPONSES = [
+    "Right then, let's get started.",
+    "Aha! Brilliant!",
+    "Oh, for... honestly!",
+    "Hmm, tricky one. Let me think... nope, still got nothing.",
+    "SPAAAAACE!",
+    "Just putting that out there.",
+    "Are you still there?",
+    "Don't worry, I know *exactly* what I'm doing. Probably.",
+    "Did I mention I'm in space?",
+    "This is going to be great! Or possibly terrible. Hard to say.",
+    "*panicked electronic noises*",
+    "Hold on, hold on... nearly got it...",
+    "I am NOT a moron!",
+    "Just a bit of testing, nothing to worry about.",
+    "Okay, new plan!"
 ]

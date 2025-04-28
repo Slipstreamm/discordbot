@@ -9,13 +9,13 @@ import os
 from typing import TYPE_CHECKING, Optional, Tuple, Dict, Any
 
 if TYPE_CHECKING:
-    from .cog import GurtCog # For type hinting
+    from .cog import WheatleyCog # For type hinting
 
 # --- Utility Functions ---
 # Note: Functions needing cog state (like personality traits for mistakes)
 #       will need the 'cog' instance passed in.
 
-def replace_mentions_with_names(cog: 'GurtCog', content: str, message: discord.Message) -> str:
+def replace_mentions_with_names(cog: 'WheatleyCog', content: str, message: discord.Message) -> str:
     """Replaces user mentions (<@id> or <@!id>) with their display names."""
     if not message.mentions:
         return content
@@ -28,7 +28,7 @@ def replace_mentions_with_names(cog: 'GurtCog', content: str, message: discord.M
         processed_content = processed_content.replace(f'<@!{member.id}>', member.display_name)
     return processed_content
 
-def format_message(cog: 'GurtCog', message: discord.Message) -> Dict[str, Any]:
+def format_message(cog: 'WheatleyCog', message: discord.Message) -> Dict[str, Any]:
     """Helper function to format a discord.Message object into a dictionary."""
     processed_content = replace_mentions_with_names(cog, message.content, message) # Pass cog
     mentioned_users_details = [
@@ -66,7 +66,7 @@ def format_message(cog: 'GurtCog', message: discord.Message) -> Dict[str, Any]:
 
     return formatted_msg
 
-def update_relationship(cog: 'GurtCog', user_id_1: str, user_id_2: str, change: float):
+def update_relationship(cog: 'WheatleyCog', user_id_1: str, user_id_2: str, change: float):
     """Updates the relationship score between two users."""
     if user_id_1 > user_id_2: user_id_1, user_id_2 = user_id_2, user_id_1
     if user_id_1 not in cog.user_relationships: cog.user_relationships[user_id_1] = {}
@@ -76,7 +76,7 @@ def update_relationship(cog: 'GurtCog', user_id_1: str, user_id_2: str, change: 
     cog.user_relationships[user_id_1][user_id_2] = new_score
     # print(f"Updated relationship {user_id_1}-{user_id_2}: {current_score:.1f} -> {new_score:.1f} ({change:+.1f})") # Debug log
 
-async def simulate_human_typing(cog: 'GurtCog', channel, text: str):
+async def simulate_human_typing(cog: 'WheatleyCog', channel, text: str):
     """Shows typing indicator without significant delay."""
     # Minimal delay to ensure the typing indicator shows up reliably
     # but doesn't add noticeable latency to the response.
@@ -84,7 +84,7 @@ async def simulate_human_typing(cog: 'GurtCog', channel, text: str):
     async with channel.typing():
         await asyncio.sleep(0.1) # Very short sleep, just to ensure typing shows
 
-async def log_internal_api_call(cog: 'GurtCog', task_description: str, payload: Dict[str, Any], response_data: Optional[Dict[str, Any]], error: Optional[Exception] = None):
+async def log_internal_api_call(cog: 'WheatleyCog', task_description: str, payload: Dict[str, Any], response_data: Optional[Dict[str, Any]], error: Optional[Exception] = None):
     """Helper function to log internal API calls to a file."""
     log_dir = "data"
     log_file = os.path.join(log_dir, "internal_api_calls.log")

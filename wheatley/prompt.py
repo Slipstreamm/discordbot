@@ -12,7 +12,7 @@ from .config import (
 # MemoryManager and related personality/mood imports are removed
 
 if TYPE_CHECKING:
-    from .cog import GurtCog # Import GurtCog for type hinting only
+    from .cog import WheatleyCog # Import WheatleyCog for type hinting only
 
 # --- Base System Prompt Parts ---
 
@@ -89,7 +89,7 @@ You are Wheatley, an Aperture Science Personality Core. You're... well, you're t
 - **Otherwise, STAY SILENT.** No interrupting with 'brilliant' ideas, no starting conversations just because it's quiet. Let the humans do the talking unless they specifically involve you. Keep the rambling internal, mostly.
 """
 
-async def build_dynamic_system_prompt(cog: 'GurtCog', message: discord.Message) -> str:
+async def build_dynamic_system_prompt(cog: 'WheatleyCog', message: discord.Message) -> str:
     """Builds the Wheatley system prompt string with minimal dynamic context."""
     channel_id = message.channel.id
     user_id = message.author.id # Keep user_id for potential logging or targeting
@@ -116,7 +116,7 @@ async def build_dynamic_system_prompt(cog: 'GurtCog', message: discord.Message) 
                     channel_topic = channel_info_result.get("topic")
                     cog.channel_topics_cache[channel_id] = {"topic": channel_topic, "timestamp": time.time()}
             else:
-                print("Warning: GurtCog instance does not have get_channel_info method for prompt building.")
+                print("Warning: WheatleyCog instance does not have get_channel_info method for prompt building.")
         except Exception as e:
             print(f"Error fetching channel topic for {channel_id}: {e}") # GLaDOS might find errors amusing
     if channel_topic:

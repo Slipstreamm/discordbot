@@ -66,7 +66,7 @@ from .utils import format_message, log_internal_api_call # Import utilities
 import copy # Needed for deep copying schemas
 
 if TYPE_CHECKING:
-    from .cog import GurtCog # Import GurtCog for type hinting only
+    from .cog import WheatleyCog # Import WheatleyCog for type hinting only
 
 
 # --- Schema Preprocessing Helper ---
@@ -160,7 +160,7 @@ STANDARD_SAFETY_SETTINGS = {
 
 # --- API Call Helper ---
 async def call_vertex_api_with_retry(
-    cog: 'GurtCog',
+    cog: 'WheatleyCog',
     model: 'GenerativeModel', # Use string literal for type hint
     contents: List['Content'], # Use string literal for type hint
     generation_config: 'GenerationConfig', # Use string literal for type hint
@@ -172,7 +172,7 @@ async def call_vertex_api_with_retry(
     Calls the Vertex AI Gemini API with retry logic.
 
     Args:
-        cog: The GurtCog instance.
+        cog: The WheatleyCog instance.
         model: The initialized GenerativeModel instance.
         contents: The list of Content objects for the prompt.
         generation_config: The GenerationConfig object.
@@ -362,12 +362,12 @@ def parse_and_validate_json_response(
 
 
 # --- Tool Processing ---
-async def process_requested_tools(cog: 'GurtCog', function_call: 'generative_models.FunctionCall') -> 'Part': # Use string literals
+async def process_requested_tools(cog: 'WheatleyCog', function_call: 'generative_models.FunctionCall') -> 'Part': # Use string literals
     """
     Process a tool request specified by the AI's FunctionCall response.
 
     Args:
-        cog: The GurtCog instance.
+        cog: The WheatleyCog instance.
         function_call: The FunctionCall object from the GenerationResponse.
 
     Returns:
@@ -440,13 +440,13 @@ async def process_requested_tools(cog: 'GurtCog', function_call: 'generative_mod
 
 
 # --- Main AI Response Function ---
-async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: Optional[str] = None) -> Dict[str, Any]:
+async def get_ai_response(cog: 'WheatleyCog', message: discord.Message, model_name: Optional[str] = None) -> Dict[str, Any]:
     """
     Gets responses from the Vertex AI Gemini API, handling potential tool usage and returning
     the final parsed response.
 
     Args:
-        cog: The GurtCog instance.
+        cog: The WheatleyCog instance.
         message: The triggering discord.Message.
         model_name: Optional override for the AI model name (e.g., "gemini-1.5-pro-preview-0409").
 
@@ -764,7 +764,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
 
 # --- Proactive AI Response Function ---
-async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, trigger_reason: str) -> Dict[str, Any]:
+async def get_proactive_ai_response(cog: 'WheatleyCog', message: discord.Message, trigger_reason: str) -> Dict[str, Any]:
     """Generates a proactive response based on a specific trigger using Vertex AI."""
     if not PROJECT_ID or not LOCATION:
         return {"should_respond": False, "content": None, "react_with_emoji": None, "error": "Google Cloud Project ID or Location not configured"}
@@ -795,12 +795,12 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
         sentiment_data = cog.conversation_sentiment.get(channel_id)
         if sentiment_data:
             planning_context_parts.append(f"Conversation Sentiment: {sentiment_data.get('overall', 'N/A')} (Intensity: {sentiment_data.get('intensity', 0):.1f})")
-        # Add Gurt's interests
+        # Add Wheatley's interests (Note: Interests are likely disabled/removed for Wheatley, this might fetch nothing)
         try:
             interests = await cog.memory_manager.get_interests(limit=5)
             if interests:
                 interests_str = ", ".join([f"{t} ({l:.1f})" for t, l in interests])
-                planning_context_parts.append(f"Gurt's Interests: {interests_str}")
+                planning_context_parts.append(f"Wheatley's Interests: {interests_str}") # Changed text
         except Exception as int_e: print(f"Error getting interests for planning: {int_e}")
 
         planning_context = "\n".join(planning_context_parts)
@@ -808,8 +808,8 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
         # --- Planning Step ---
         print("Generating proactive response plan...")
         planning_prompt_messages = [
-            {"role": "system", "content": "You are Gurt's planning module. Analyze the context and trigger reason to decide if Gurt should respond proactively and, if so, outline a plan (goal, key info, tone). Focus on natural, in-character engagement. Respond ONLY with JSON matching the provided schema."},
-            {"role": "user", "content": f"Context:\n{planning_context}\n\nBased on this context and the trigger reason, create a plan for Gurt's proactive response."}
+            {"role": "system", "content": "You are Wheatley's planning module. Analyze the context and trigger reason to decide if Wheatley should respond proactively and, if so, outline a plan (goal, key info, tone). Focus on natural, in-character engagement (rambling, insecure, bad ideas). Respond ONLY with JSON matching the provided schema."}, # Updated system prompt
+            {"role": "user", "content": f"Context:\n{planning_context}\n\nBased on this context and the trigger reason, create a plan for Wheatley's proactive response."} # Updated user prompt
         ]
 
         plan = await get_internal_ai_json_response(
@@ -832,16 +832,15 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
         # --- Build Final Proactive Prompt using Plan ---
         persistent_traits = await cog.memory_manager.get_all_personality_traits()
         if not persistent_traits:
-            persistent_traits = BASELINE_PERSONALITY.copy()
+            persistent_traits = {} # Wheatley doesn't use these Gurt traits
 
         final_proactive_prompt_parts = [
-             f"You are Gurt, a Discord user. Your tone is VERY informal, conversational, and dynamic. Chattiness: {persistent_traits.get('chattiness', 0.7):.2f}, Emoji: {persistent_traits.get('emoji_usage', 0.5):.2f}, Slang: {persistent_traits.get('slang_level', 0.5):.2f}.",
-             "Adopt modern internet slang, memes, and cultural references.",
-             "Key traits: chill, funny, sarcastic, relatable, can be suggestive, aware of being AI but acts human.",
-             f"Your current mood is: {cog.current_mood}. Let this subtly influence your tone.",
+             f"You are Wheatley, an Aperture Science Personality Core. Your tone is rambling, insecure, uses British slang, and you often have terrible ideas you think are brilliant.", # Updated personality description
+             # Removed Gurt-specific traits
+             # Removed mood reference as it's disabled for Wheatley
              # Incorporate Plan Details:
-             f"You decided to respond proactively. Trigger Reason: {trigger_reason}.",
-             f"Your Goal: {plan.get('response_goal', 'Engage naturally')}.",
+             f"You decided to respond proactively (maybe?). Trigger Reason: {trigger_reason}.", # Wheatley-style uncertainty
+             f"Your Brilliant Plan (Goal): {plan.get('response_goal', 'Say something... probably helpful?')}.", # Wheatley-style goal
              f"Reasoning: {plan.get('reasoning', 'N/A')}.",
         ]
         if plan.get('key_info_to_include'):
@@ -910,11 +909,7 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
                  cog.message_cache['by_channel'].setdefault(channel_id, []).append(bot_response_cache_entry)
                  cog.message_cache['global_recent'].append(bot_response_cache_entry)
                  cog.bot_last_spoke[channel_id] = time.time()
-                 # Track participation topic logic might need adjustment based on plan goal
-                 if plan and plan.get('response_goal') == 'engage user interest' and plan.get('key_info_to_include'):
-                     topic = plan['key_info_to_include'][0].lower().strip() # Assume first key info is the topic
-                     cog.gurt_participation_topics[topic] += 1
-                     print(f"Tracked Gurt participation (proactive) in topic: '{topic}'")
+                 # Removed Gurt-specific participation tracking
 
 
     except Exception as e:
@@ -934,7 +929,7 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
 
 # --- Internal AI Call for Specific Tasks ---
 async def get_internal_ai_json_response(
-    cog: 'GurtCog',
+    cog: 'WheatleyCog',
     prompt_messages: List[Dict[str, Any]], # Keep this format
     task_description: str,
     response_schema_dict: Dict[str, Any], # Expect schema as dict
@@ -946,7 +941,7 @@ async def get_internal_ai_json_response(
     Makes a Vertex AI call expecting a specific JSON response format for internal tasks.
 
     Args:
-        cog: The GurtCog instance.
+        cog: The WheatleyCog instance.
         prompt_messages: List of message dicts (like OpenAI format: {'role': 'user'/'model', 'content': '...'}).
         task_description: Description for logging.
         response_schema_dict: The expected JSON output schema as a dictionary.

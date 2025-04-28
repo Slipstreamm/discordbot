@@ -13,14 +13,15 @@ from .config import (
     TOPIC_RELEVANCE_DECAY, MAX_ACTIVE_TOPICS, SENTIMENT_DECAY_RATE,
     EMOTION_KEYWORDS, EMOJI_SENTIMENT # Import necessary configs
 )
+# Removed imports for BASELINE_PERSONALITY, REFLECTION_INTERVAL_SECONDS, GOAL related configs
 
 if TYPE_CHECKING:
-    from .cog import GurtCog # For type hinting
+    from .cog import WheatleyCog # Updated type hint
 
 # --- Analysis Functions ---
 # Note: These functions need the 'cog' instance passed to access state like caches, etc.
 
-async def analyze_conversation_patterns(cog: 'GurtCog'):
+async def analyze_conversation_patterns(cog: 'WheatleyCog'): # Updated type hint
     """Analyzes recent conversations to identify patterns and learn from them"""
     print("Analyzing conversation patterns and updating topics...")
     try:
@@ -30,24 +31,24 @@ async def analyze_conversation_patterns(cog: 'GurtCog'):
         for channel_id, messages in cog.message_cache['by_channel'].items():
             if len(messages) < 10: continue
 
-            channel_patterns = extract_conversation_patterns(cog, messages) # Pass cog
-            if channel_patterns:
-                existing_patterns = cog.conversation_patterns[channel_id]
-                combined_patterns = existing_patterns + channel_patterns
-                if len(combined_patterns) > MAX_PATTERNS_PER_CHANNEL:
-                    combined_patterns = combined_patterns[-MAX_PATTERNS_PER_CHANNEL:]
-                cog.conversation_patterns[channel_id] = combined_patterns
+            # Pattern extraction might be less useful without personality/goals, but kept for now
+            # channel_patterns = extract_conversation_patterns(cog, messages) # Pass cog
+            # if channel_patterns:
+            #     existing_patterns = cog.conversation_patterns.setdefault(channel_id, []) # Use setdefault
+            #     combined_patterns = existing_patterns + channel_patterns
+            #     if len(combined_patterns) > MAX_PATTERNS_PER_CHANNEL:
+            #         combined_patterns = combined_patterns[-MAX_PATTERNS_PER_CHANNEL:]
+            #     cog.conversation_patterns[channel_id] = combined_patterns
 
             analyze_conversation_dynamics(cog, channel_id, messages) # Pass cog
 
-        update_user_preferences(cog) # Pass cog
-        # adapt_personality_traits(cog) # Pass cog - Deprecated/Superseded by evolve_personality
+        update_user_preferences(cog) # Pass cog - Note: This might need adjustment as it relies on traits we removed
 
     except Exception as e:
         print(f"Error analyzing conversation patterns: {e}")
         traceback.print_exc()
 
-async def update_conversation_topics(cog: 'GurtCog'):
+async def update_conversation_topics(cog: 'WheatleyCog'): # Updated type hint
     """Updates the active topics for each channel based on recent messages"""
     try:
         for channel_id, messages in cog.message_cache['by_channel'].items():
@@ -88,6 +89,7 @@ async def update_conversation_topics(cog: 'GurtCog'):
                     if len(channel_topics["topic_history"]) > 10:
                         channel_topics["topic_history"] = channel_topics["topic_history"][-10:]
 
+            # User topic interest tracking might be less relevant without proactive interest triggers, but kept for now
             for msg in recent_messages:
                 user_id = msg["author"]["id"]
                 content = msg["content"].lower()
@@ -115,7 +117,7 @@ async def update_conversation_topics(cog: 'GurtCog'):
         print(f"Error updating conversation topics: {e}")
         traceback.print_exc()
 
-def analyze_conversation_dynamics(cog: 'GurtCog', channel_id: int, messages: List[Dict[str, Any]]):
+def analyze_conversation_dynamics(cog: 'WheatleyCog', channel_id: int, messages: List[Dict[str, Any]]): # Updated type hint
     """Analyzes conversation dynamics like response times, message lengths, etc."""
     if len(messages) < 5: return
     try:
@@ -159,8 +161,11 @@ def analyze_conversation_dynamics(cog: 'GurtCog', channel_id: int, messages: Lis
 
     except Exception as e: print(f"Error analyzing conversation dynamics: {e}")
 
-def adapt_to_conversation_dynamics(cog: 'GurtCog', channel_id: int, dynamics: Dict[str, Any]):
+def adapt_to_conversation_dynamics(cog: 'WheatleyCog', channel_id: int, dynamics: Dict[str, Any]): # Updated type hint
     """Adapts bot behavior based on observed conversation dynamics."""
+    # Note: This function previously adapted personality traits.
+    # It might be removed or repurposed for Wheatley if needed.
+    # For now, it calculates factors but doesn't apply them directly to a removed personality system.
     try:
         if dynamics["avg_response_time"] > 0:
             if not hasattr(cog, 'channel_response_timing'): cog.channel_response_timing = {}
@@ -182,8 +187,9 @@ def adapt_to_conversation_dynamics(cog: 'GurtCog', channel_id: int, dynamics: Di
 
     except Exception as e: print(f"Error adapting to conversation dynamics: {e}")
 
-def extract_conversation_patterns(cog: 'GurtCog', messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def extract_conversation_patterns(cog: 'WheatleyCog', messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]: # Updated type hint
     """Extract patterns from a sequence of messages"""
+    # This function might be less useful without personality/goal systems, kept for potential future use.
     patterns = []
     if len(messages) < 5: return patterns
     import datetime # Import here
@@ -207,12 +213,12 @@ def extract_conversation_patterns(cog: 'GurtCog', messages: List[Dict[str, Any]]
 
     return patterns
 
-def identify_conversation_topics(cog: 'GurtCog', messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def identify_conversation_topics(cog: 'WheatleyCog', messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]: # Updated type hint
     """Identify potential topics from conversation messages."""
     if not messages or len(messages) < 3: return []
     all_text = " ".join([msg["content"] for msg in messages])
     stopwords = { # Expanded stopwords
-        "the", "and", "is", "in", "to", "a", "of", "for", "that", "this", "it", "with", "on", "as", "be", "at", "by", "an", "or", "but", "if", "from", "when", "where", "how", "all", "any", "both", "each", "few", "more", "most", "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "can", "will", "just", "should", "now", "also", "like", "even", "because", "way", "who", "what", "yeah", "yes", "no", "nah", "lol", "lmao", "haha", "hmm", "um", "uh", "oh", "ah", "ok", "okay", "dont", "don't", "doesnt", "doesn't", "didnt", "didn't", "cant", "can't", "im", "i'm", "ive", "i've", "youre", "you're", "youve", "you've", "hes", "he's", "shes", "she's", "its", "it's", "were", "we're", "weve", "we've", "theyre", "they're", "theyve", "they've", "thats", "that's", "whats", "what's", "whos", "who's", "gonna", "gotta", "kinda", "sorta", "gurt" # Added gurt
+        "the", "and", "is", "in", "to", "a", "of", "for", "that", "this", "it", "with", "on", "as", "be", "at", "by", "an", "or", "but", "if", "from", "when", "where", "how", "all", "any", "both", "each", "few", "more", "most", "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "can", "will", "just", "should", "now", "also", "like", "even", "because", "way", "who", "what", "yeah", "yes", "no", "nah", "lol", "lmao", "haha", "hmm", "um", "uh", "oh", "ah", "ok", "okay", "dont", "don't", "doesnt", "doesn't", "didnt", "didn't", "cant", "can't", "im", "i'm", "ive", "i've", "youre", "you're", "youve", "you've", "hes", "he's", "shes", "she's", "its", "it's", "were", "we're", "weve", "we've", "theyre", "they're", "theyve", "they've", "thats", "that's", "whats", "what's", "whos", "who's", "gonna", "gotta", "kinda", "sorta", "wheatley" # Added wheatley, removed gurt
     }
 
     def extract_ngrams(text, n_values=[1, 2, 3]):
@@ -278,26 +284,13 @@ def identify_conversation_topics(cog: 'GurtCog', messages: List[Dict[str, Any]])
 
     # Simple sentiment analysis for topics
     positive_words = {"good", "great", "awesome", "amazing", "excellent", "love", "like", "best", "better", "nice", "cool"}
-    sorted_ngrams = sorted(ngram_scores.items(), key=lambda x: x[1], reverse=True)
+    # Removed the second loop that seemed redundant
+    # sorted_ngrams = sorted(ngram_scores.items(), key=lambda x: x[1], reverse=True)
+    # for ngram, score in sorted_ngrams[:15]: ...
 
-    for ngram, score in sorted_ngrams[:15]:
-        if ngram in processed_ngrams: continue
-        related_terms = []
-        for other_ngram, other_score in sorted_ngrams:
-            if other_ngram == ngram or other_ngram in processed_ngrams: continue
-            ngram_words = set(ngram.split()); other_words = set(other_ngram.split())
-            if ngram_words.intersection(other_words):
-                related_terms.append({"term": other_ngram, "score": other_score})
-                processed_ngrams.add(other_ngram)
-                if len(related_terms) >= 5: break
-        processed_ngrams.add(ngram)
-        topic_entry = {"topic": ngram, "score": score, "related_terms": related_terms, "message_count": sum(1 for msg in messages if ngram in msg["content"].lower())}
-        topics.append(topic_entry)
-        if len(topics) >= 5: break
-
-    # Simple sentiment analysis for topics
-    positive_words = {"good", "great", "awesome", "amazing", "excellent", "love", "like", "best", "better", "nice", "cool"}
-    negative_words = {"bad", "terrible", "awful", "worst", "hate", "dislike", "sucks", "stupid", "boring", "annoying"}
+    # Simple sentiment analysis for topics (applied to the already selected topics)
+    positive_words = {"good", "great", "awesome", "amazing", "excellent", "love", "like", "best", "better", "nice", "cool", "happy", "glad"}
+    negative_words = {"bad", "terrible", "awful", "worst", "hate", "dislike", "sucks", "stupid", "boring", "annoying", "sad", "upset", "angry"}
     for topic in topics:
         topic_messages = [msg["content"] for msg in messages if topic["topic"] in msg["content"].lower()]
         topic_text = " ".join(topic_messages).lower()
@@ -309,7 +302,7 @@ def identify_conversation_topics(cog: 'GurtCog', messages: List[Dict[str, Any]])
 
     return topics
 
-def analyze_user_interactions(cog: 'GurtCog', messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def analyze_user_interactions(cog: 'WheatleyCog', messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]: # Updated type hint
     """Analyze interactions between users in the conversation"""
     interactions = []
     response_map = defaultdict(int)
@@ -325,273 +318,37 @@ def analyze_user_interactions(cog: 'GurtCog', messages: List[Dict[str, Any]]) ->
             interactions.append({"responder": responder, "respondee": respondee, "count": count})
     return interactions
 
-def update_user_preferences(cog: 'GurtCog'):
+def update_user_preferences(cog: 'WheatleyCog'): # Updated type hint
     """Update stored user preferences based on observed interactions"""
+    # Note: This function previously updated preferences based on Gurt's personality.
+    # It might be removed or significantly simplified for Wheatley.
+    # Kept for now, but its effect might be minimal without personality traits.
     for user_id, messages in cog.message_cache['by_user'].items():
         if len(messages) < 5: continue
         emoji_count = 0; slang_count = 0; avg_length = 0
         for msg in messages:
             content = msg["content"]
             emoji_count += len(re.findall(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F700-\U0001F77F\U0001F780-\U0001F7FF\U0001F800-\U0001F8FF\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002702-\U000027B0\U000024C2-\U0001F251]', content))
-            slang_words = ["ngl", "icl", "pmo", "ts", "bro", "vro", "bruh", "tuff", "kevin"] # Example slang
+            slang_words = ["ngl", "icl", "pmo", "ts", "bro", "vro", "bruh", "tuff", "kevin", "mate", "chap", "bollocks"] # Added Wheatley-ish slang
             for word in slang_words:
                 if re.search(r'\b' + word + r'\b', content.lower()): slang_count += 1
             avg_length += len(content)
         if messages: avg_length /= len(messages)
 
+        # Ensure user_preferences exists
+        if not hasattr(cog, 'user_preferences'): cog.user_preferences = defaultdict(dict)
+
         user_prefs = cog.user_preferences[user_id]
+        # Apply learning rate cautiously
         if emoji_count > 0: user_prefs["emoji_preference"] = user_prefs.get("emoji_preference", 0.5) * (1 - LEARNING_RATE) + (emoji_count / len(messages)) * LEARNING_RATE
         if slang_count > 0: user_prefs["slang_preference"] = user_prefs.get("slang_preference", 0.5) * (1 - LEARNING_RATE) + (slang_count / len(messages)) * LEARNING_RATE
         user_prefs["length_preference"] = user_prefs.get("length_preference", 50) * (1 - LEARNING_RATE) + avg_length * LEARNING_RATE
 
-# Deprecated/Superseded by evolve_personality
-# def adapt_personality_traits(cog: 'GurtCog'):
-#     """Slightly adapt personality traits based on observed patterns"""
-#     pass # Logic removed as it's handled by evolve_personality now
+# --- Removed evolve_personality function ---
+# --- Removed reflect_on_memories function ---
+# --- Removed decompose_goal_into_steps function ---
 
-async def evolve_personality(cog: 'GurtCog'):
-    """Periodically analyzes recent activity and adjusts persistent personality traits."""
-    print("Starting personality evolution cycle...")
-    try:
-        current_traits = await cog.memory_manager.get_all_personality_traits()
-        if not current_traits: print("Evolution Error: Could not load current traits."); return
-
-        positive_sentiment_score = 0; negative_sentiment_score = 0; sentiment_channels_count = 0
-        for channel_id, sentiment_data in cog.conversation_sentiment.items():
-            if time.time() - cog.channel_activity.get(channel_id, 0) < 3600:
-                if sentiment_data["overall"] == "positive": positive_sentiment_score += sentiment_data["intensity"]
-                elif sentiment_data["overall"] == "negative": negative_sentiment_score += sentiment_data["intensity"]
-                sentiment_channels_count += 1
-        avg_pos_intensity = positive_sentiment_score / sentiment_channels_count if sentiment_channels_count > 0 else 0
-        avg_neg_intensity = negative_sentiment_score / sentiment_channels_count if sentiment_channels_count > 0 else 0
-        print(f"Evolution Analysis: Avg Pos Intensity={avg_pos_intensity:.2f}, Avg Neg Intensity={avg_neg_intensity:.2f}")
-
-        # --- Analyze Tool Usage ---
-        tool_success_rate = {}
-        total_tool_uses = 0
-        successful_tool_uses = 0
-        for tool_name, stats in cog.tool_stats.items():
-            count = stats.get('count', 0)
-            success = stats.get('success', 0)
-            if count > 0:
-                tool_success_rate[tool_name] = success / count
-                total_tool_uses += count
-                successful_tool_uses += success
-        overall_tool_success_rate = successful_tool_uses / total_tool_uses if total_tool_uses > 0 else 0.5 # Default to neutral if no uses
-        print(f"Evolution Analysis: Overall Tool Success Rate={overall_tool_success_rate:.2f} ({successful_tool_uses}/{total_tool_uses})")
-        # Example: Log specific tool rates if needed
-        # print(f"Evolution Analysis: Tool Success Rates: {tool_success_rate}")
-
-        # --- Analyze Response Effectiveness (Reactions) ---
-        positive_reactions = 0
-        negative_reactions = 0
-        total_reacted_messages = len(cog.gurt_message_reactions)
-        for msg_id, reaction_data in cog.gurt_message_reactions.items():
-            positive_reactions += reaction_data.get("positive", 0)
-            negative_reactions += reaction_data.get("negative", 0)
-        reaction_ratio = positive_reactions / (positive_reactions + negative_reactions) if (positive_reactions + negative_reactions) > 0 else 0.5 # Default neutral
-        print(f"Evolution Analysis: Reaction Ratio (Pos/Total)={reaction_ratio:.2f} ({positive_reactions}/{positive_reactions + negative_reactions})")
-
-        # --- Calculate Trait Adjustments ---
-        trait_changes = {}
-        local_learning_rate = 0.02 # Use local variable
-
-        # Optimism (based on sentiment)
-        optimism_target = 0.5 + (avg_pos_intensity - avg_neg_intensity) * 0.5 # Scale sentiment difference to -0.5 to +0.5 range
-        trait_changes['optimism'] = max(0.0, min(1.0, optimism_target)) # Target value directly, learning rate applied later
-
-        # Mischief (based on timeout usage success/reactions)
-        timeout_uses = cog.tool_stats.get("timeout_user", {}).get("count", 0)
-        timeout_success_rate = tool_success_rate.get("timeout_user", 0.5)
-        if timeout_uses > 2: # Only adjust if used a few times
-            # Increase mischief if timeouts are successful and reactions aren't overly negative
-            mischief_target_adjustment = (timeout_success_rate - 0.5) * 0.2 + (reaction_ratio - 0.5) * 0.1
-            current_mischief = current_traits.get('mischief', 0.5)
-            trait_changes['mischief'] = max(0.0, min(1.0, current_mischief + mischief_target_adjustment))
-
-        # Curiosity (based on web search usage)
-        search_uses = cog.tool_stats.get("web_search", {}).get("count", 0)
-        if search_uses > 1: # If search is used
-             current_curiosity = current_traits.get('curiosity', 0.6)
-             # Slightly increase curiosity if search is used, decrease slightly if not? (Needs refinement)
-             trait_changes['curiosity'] = max(0.0, min(1.0, current_curiosity + 0.05)) # Simple boost for now
-
-        # Sarcasm (increase if reactions are positive despite negative sentiment?) - Complex, placeholder
-        # current_sarcasm = current_traits.get('sarcasm_level', 0.3)
-        # if reaction_ratio > 0.6 and avg_neg_intensity > 0.3: # Positive reactions despite negative context?
-        #     trait_changes['sarcasm_level'] = max(0.0, min(1.0, current_sarcasm + 0.05))
-
-        # Verbosity/Chattiness (based on reactions to own messages?) - Needs better tracking
-        # If Gurt's messages get good reactions, maybe increase chattiness/verbosity slightly?
-        # current_chattiness = current_traits.get('chattiness', 0.7)
-        # if reaction_ratio > 0.65 and total_reacted_messages > 5:
-        #     trait_changes['chattiness'] = max(0.1, min(1.0, current_chattiness + 0.03))
-
-
-        # --- Apply Calculated Changes ---
-        updated_count = 0
-        print(f"Calculated Trait Target Changes: {trait_changes}")
-        for key, target_value in trait_changes.items():
-            current_value = current_traits.get(key)
-            if current_value is None: print(f"Evolution Warning: Trait '{key}' not found."); continue
-            try:
-                current_float = float(current_value); target_float = float(target_value)
-                new_value_float = current_float * (1 - local_learning_rate) + target_float * local_learning_rate
-                new_value_clamped = max(0.0, min(1.0, new_value_float)) # Clamp 0-1
-                if abs(new_value_clamped - current_float) > 0.001:
-                    await cog.memory_manager.set_personality_trait(key, new_value_clamped)
-                    print(f"Evolved trait '{key}': {current_float:.3f} -> {new_value_clamped:.3f}")
-                    updated_count += 1
-            except (ValueError, TypeError) as e: print(f"Evolution Error processing trait '{key}': {e}")
-
-        if updated_count > 0: print(f"Personality evolution complete. Updated {updated_count} traits.")
-        else: print("Personality evolution complete. No significant trait changes.")
-
-    except Exception as e: print(f"Error during personality evolution: {e}"); traceback.print_exc()
-
-async def reflect_on_memories(cog: 'GurtCog'):
-    """Periodically reviews memories to synthesize insights or consolidate information."""
-    print("Starting memory reflection cycle...")
-    try:
-        # --- Configuration ---
-        REFLECTION_INTERVAL_HOURS = 6 # How often to reflect
-        FACTS_TO_REVIEW_PER_USER = 15
-        GENERAL_FACTS_TO_REVIEW = 30
-        MIN_FACTS_FOR_REFLECTION = 5
-        SYNTHESIS_MODEL = cog.fallback_model # Use a potentially cheaper model
-        SYNTHESIS_MAX_TOKENS = 200
-
-        # Check if enough time has passed (simple check, could be more robust)
-        # This check might be better placed in the background task itself
-        # For now, assume the background task calls this at the right interval
-
-        # --- User Fact Reflection ---
-        print("Reflecting on user facts...")
-        all_user_ids = await cog.memory_manager.get_all_user_ids_with_facts()
-        users_reflected = 0
-        for user_id in all_user_ids:
-            try:
-                user_facts = await cog.memory_manager.get_user_facts(user_id, limit=FACTS_TO_REVIEW_PER_USER) # Get recent facts
-                if len(user_facts) < MIN_FACTS_FOR_REFLECTION: continue
-
-                user_info = await cog.bot.fetch_user(int(user_id)) # Get user info for name
-                user_name = user_info.display_name if user_info else f"User {user_id}"
-
-                print(f"  - Reflecting on {len(user_facts)} facts for {user_name}...")
-                facts_text = "\n".join([f"- {fact}" for fact in user_facts])
-                reflection_prompt = [
-                    {"role": "system", "content": f"Analyze the following facts about {user_name}. Identify potential patterns, contradictions, or synthesize a concise summary of key traits or interests. Focus on creating 1-2 new, insightful summary facts. Respond ONLY with JSON: {{ \"new_facts\": [\"fact1\", \"fact2\"], \"reasoning\": \"brief explanation\" }} or {{ \"new_facts\": [], \"reasoning\": \"No new insights.\" }}"},
-                    {"role": "user", "content": f"Facts:\n{facts_text}\n\nSynthesize insights:"}
-                ]
-                synthesis_schema = {
-                    "type": "object",
-                    "properties": {
-                        "new_facts": {"type": "array", "items": {"type": "string"}},
-                        "reasoning": {"type": "string"}
-                    }, "required": ["new_facts", "reasoning"]
-                }
-
-                from .api import get_internal_ai_json_response # Local import
-                synthesis_result = await get_internal_ai_json_response(
-                    cog=cog,
-                    prompt_messages=reflection_prompt,
-                    task_description=f"User Fact Reflection ({user_name})",
-                    response_schema_dict=synthesis_schema,
-                    model_name=SYNTHESIS_MODEL,
-                    temperature=0.4,
-                    max_tokens=SYNTHESIS_MAX_TOKENS
-                )
-
-                if synthesis_result and synthesis_result.get("new_facts"):
-                    added_count = 0
-                    for new_fact in synthesis_result["new_facts"]:
-                        if new_fact and len(new_fact) > 5: # Basic validation
-                            add_result = await cog.memory_manager.add_user_fact(user_id, f"[Synthesized] {new_fact}")
-                            if add_result.get("status") == "added": added_count += 1
-                    if added_count > 0:
-                        print(f"  - Added {added_count} synthesized fact(s) for {user_name}. Reasoning: {synthesis_result.get('reasoning')}")
-                        users_reflected += 1
-                # else: print(f"  - No new insights synthesized for {user_name}.") # Optional log
-
-            except Exception as user_reflect_e:
-                print(f"  - Error reflecting on facts for user {user_id}: {user_reflect_e}")
-        print(f"User fact reflection complete. Synthesized facts for {users_reflected} users.")
-
-        # --- General Fact Reflection (Example: Identify related topics) ---
-        # This part is more complex and might require different strategies.
-        # Example: Cluster facts semantically, summarize clusters.
-        print("Reflecting on general facts (Placeholder - More complex)...")
-        # general_facts = await cog.memory_manager.get_general_facts(limit=GENERAL_FACTS_TO_REVIEW)
-        # if len(general_facts) > MIN_FACTS_FOR_REFLECTION:
-        #     # TODO: Implement clustering or summarization logic here
-        #     pass
-        print("General fact reflection cycle finished (Placeholder).")
-
-    except Exception as e:
-        print(f"Error during memory reflection cycle: {e}")
-        traceback.print_exc()
-
-async def decompose_goal_into_steps(cog: 'GurtCog', goal_description: str) -> Optional[Dict[str, Any]]:
-    """Uses an AI call to break down a goal into achievable steps with potential tool usage."""
-    logger.info(f"Decomposing goal: '{goal_description}'")
-    from .config import GOAL_DECOMPOSITION_SCHEMA, TOOLS # Import schema and tools list for context
-    from .api import get_internal_ai_json_response # Local import
-
-    # Provide context about available tools
-    tool_descriptions = "\n".join([f"- {tool.name}: {tool.description}" for tool in TOOLS])
-    system_prompt = (
-        "You are Gurt's planning module. Your task is to break down a high-level goal into a sequence of smaller, "
-        "concrete steps. For each step, determine if one of Gurt's available tools can help achieve it. "
-        "Assess if the overall goal is achievable given the tools and typical Discord bot limitations. "
-        f"Available Tools:\n{tool_descriptions}\n\n"
-        "Respond ONLY with JSON matching the provided schema."
-    )
-    user_prompt = f"Goal: {goal_description}\n\nDecompose this goal into achievable steps:"
-
-    decomposition_prompt_messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
-
-    try:
-        plan = await get_internal_ai_json_response(
-            cog=cog,
-            prompt_messages=decomposition_prompt_messages,
-            task_description=f"Goal Decomposition ({goal_description[:30]}...)",
-            response_schema_dict=GOAL_DECOMPOSITION_SCHEMA['schema'],
-            model_name=cog.fallback_model, # Use fallback model for planning potentially
-            temperature=0.3,
-            max_tokens=1000 # Allow more tokens for potentially complex plans
-        )
-
-        if plan and plan.get("goal_achievable"):
-            logger.info(f"Goal '{goal_description}' decomposed into {len(plan.get('steps', []))} steps.")
-            # Basic validation of steps structure (optional but recommended)
-            if isinstance(plan.get('steps'), list):
-                for i, step in enumerate(plan['steps']):
-                    if not isinstance(step, dict) or 'step_description' not in step:
-                        logger.error(f"Invalid step structure at index {i} in decomposition plan: {step}")
-                        plan['goal_achievable'] = False
-                        plan['reasoning'] += " (Invalid step structure detected)"
-                        plan['steps'] = []
-                        break
-            else:
-                 plan['steps'] = [] # Ensure steps is a list even if validation fails
-
-            return plan
-        elif plan:
-            logger.warning(f"Goal '{goal_description}' deemed not achievable. Reasoning: {plan.get('reasoning')}")
-            return plan # Return the plan indicating it's not achievable
-        else:
-            logger.error(f"Goal decomposition failed for '{goal_description}'. No valid JSON plan returned.")
-            return None
-
-    except Exception as e:
-        logger.error(f"Error during goal decomposition for '{goal_description}': {e}", exc_info=True)
-        return None
-
-
-def analyze_message_sentiment(cog: 'GurtCog', message_content: str) -> Dict[str, Any]:
+def analyze_message_sentiment(cog: 'WheatleyCog', message_content: str) -> Dict[str, Any]: # Updated type hint
     """Analyzes the sentiment of a message using keywords and emojis."""
     content = message_content.lower()
     result = {"sentiment": "neutral", "intensity": 0.5, "emotions": [], "confidence": 0.5}
@@ -637,12 +394,15 @@ def analyze_message_sentiment(cog: 'GurtCog', message_content: str) -> Dict[str,
 
     return result
 
-def update_conversation_sentiment(cog: 'GurtCog', channel_id: int, user_id: str, message_sentiment: Dict[str, Any]):
+def update_conversation_sentiment(cog: 'WheatleyCog', channel_id: int, user_id: str, message_sentiment: Dict[str, Any]): # Updated type hint
     """Updates the conversation sentiment tracking based on a new message's sentiment."""
     channel_sentiment = cog.conversation_sentiment[channel_id]
     now = time.time()
 
-    if now - channel_sentiment["last_update"] > cog.sentiment_update_interval: # Access interval via cog
+    # Ensure sentiment_update_interval exists on cog, default if not
+    sentiment_update_interval = getattr(cog, 'sentiment_update_interval', 300) # Default to 300s if not set
+
+    if now - channel_sentiment["last_update"] > sentiment_update_interval:
         if channel_sentiment["overall"] == "positive": channel_sentiment["intensity"] = max(0.5, channel_sentiment["intensity"] - SENTIMENT_DECAY_RATE)
         elif channel_sentiment["overall"] == "negative": channel_sentiment["intensity"] = max(0.5, channel_sentiment["intensity"] - SENTIMENT_DECAY_RATE)
         channel_sentiment["recent_trend"] = "stable"

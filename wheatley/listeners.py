@@ -15,38 +15,38 @@ from typing import TYPE_CHECKING, Union, Dict, Any, Optional
 # from .analysis import analyze_message_sentiment, update_conversation_sentiment
 
 if TYPE_CHECKING:
-    from .cog import WheatleyCog # For type hinting
+    from .cog import WheatleyCog # Updated type hint
 
 # Note: These listener functions need to be registered within the WheatleyCog class setup.
 # They are defined here for separation but won't work standalone without being
 # attached to the cog instance (e.g., self.bot.add_listener(on_message_listener(self), 'on_message')).
 
-async def on_ready_listener(cog: 'WheatleyCog'):
+async def on_ready_listener(cog: 'WheatleyCog'): # Updated type hint
     """Listener function for on_ready."""
-    print(f'Wheatley Bot is ready! Logged in as {cog.bot.user.name} ({cog.bot.user.id})')
+    print(f'Wheatley Bot is ready! Logged in as {cog.bot.user.name} ({cog.bot.user.id})') # Updated text
     print('------')
 
     # Now that the bot is ready, we can sync commands with Discord
     try:
-        print("WheatleyCog: Syncing commands with Discord...")
+        print("WheatleyCog: Syncing commands with Discord...") # Updated text
         synced = await cog.bot.tree.sync()
-        print(f"WheatleyCog: Synced {len(synced)} command(s)")
+        print(f"WheatleyCog: Synced {len(synced)} command(s)") # Updated text
 
         # List the synced commands
-        wheatley_commands = [cmd.name for cmd in cog.bot.tree.get_commands() if cmd.name.startswith("wheatley")]
-        print(f"WheatleyCog: Available Wheatley commands: {', '.join(wheatley_commands)}")
+        wheatley_commands = [cmd.name for cmd in cog.bot.tree.get_commands() if cmd.name.startswith("wheatley")] # Updated prefix check
+        print(f"WheatleyCog: Available Wheatley commands: {', '.join(wheatley_commands)}") # Updated text
     except Exception as e:
-        print(f"WheatleyCog: Failed to sync commands: {e}")
+        print(f"WheatleyCog: Failed to sync commands: {e}") # Updated text
         import traceback
         traceback.print_exc()
 
-async def on_message_listener(cog: 'WheatleyCog', message: discord.Message):
+async def on_message_listener(cog: 'WheatleyCog', message: discord.Message): # Updated type hint
     """Listener function for on_message."""
     # Import necessary functions dynamically or ensure they are passed/accessible via cog
     from .api import get_ai_response, get_proactive_ai_response
     from .utils import format_message, simulate_human_typing
     from .analysis import analyze_message_sentiment, update_conversation_sentiment, identify_conversation_topics
-    from .config import GURT_RESPONSES # Import simple responses
+    # Removed WHEATLEY_RESPONSES import, can be added back if simple triggers are needed
 
     # Don't respond to our own messages
     if message.author == cog.bot.user:
@@ -84,31 +84,14 @@ async def on_message_listener(cog: 'WheatleyCog', message: discord.Message):
         cog.active_conversations[channel_id]['participants'].add(user_id)
         cog.active_conversations[channel_id]['last_activity'] = time.time()
 
-        # --- Update Relationship Strengths ---
-        if user_id != cog.bot.user.id:
-            message_sentiment_data = analyze_message_sentiment(cog, message.content) # Use analysis function
-            sentiment_score = 0.0
-            if message_sentiment_data["sentiment"] == "positive": sentiment_score = message_sentiment_data["intensity"] * 0.5
-            elif message_sentiment_data["sentiment"] == "negative": sentiment_score = -message_sentiment_data["intensity"] * 0.3
+        # --- Removed Relationship Strength Updates ---
 
-            cog._update_relationship(str(user_id), str(cog.bot.user.id), 1.0 + sentiment_score) # Access cog method
-
-            if formatted_message.get("is_reply") and formatted_message.get("replied_to_author_id"):
-                replied_to_id = formatted_message["replied_to_author_id"]
-                if replied_to_id != str(cog.bot.user.id) and replied_to_id != str(user_id):
-                     cog._update_relationship(str(user_id), replied_to_id, 1.5 + sentiment_score)
-
-            mentioned_ids = [m["id"] for m in formatted_message.get("mentions", [])]
-            for mentioned_id in mentioned_ids:
-                if mentioned_id != str(cog.bot.user.id) and mentioned_id != str(user_id):
-                    cog._update_relationship(str(user_id), mentioned_id, 1.2 + sentiment_score)
-
-        # Analyze message sentiment and update conversation sentiment tracking
+        # Analyze message sentiment and update conversation sentiment tracking (Kept for context)
         if message.content:
             message_sentiment = analyze_message_sentiment(cog, message.content) # Use analysis function
             update_conversation_sentiment(cog, channel_id, str(user_id), message_sentiment) # Use analysis function
 
-        # --- Add message to semantic memory ---
+        # --- Add message to semantic memory (Kept for context) ---
         if message.content and cog.memory_manager.semantic_collection:
             semantic_metadata = {
                 "user_id": str(user_id), "user_name": message.author.name, "display_name": message.author.display_name,
@@ -126,17 +109,10 @@ async def on_message_listener(cog: 'WheatleyCog', message: discord.Message):
         print(f"Error during message caching/tracking/embedding: {e}")
     # --- End Caching & Embedding ---
 
-
-    # Simple response for messages just containing "gurt"
-    if message.content.lower() == "gurt":
-        response = random.choice(GURT_RESPONSES)
-        await message.channel.send(response)
-        return
-
     # Check conditions for potentially responding
     bot_mentioned = cog.bot.user.mentioned_in(message)
     replied_to_bot = message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user
-    gurt_in_message = "wheatley" in message.content.lower()
+    wheatley_in_message = "wheatley" in message.content.lower() # Changed variable name
     now = time.time()
     time_since_last_activity = now - cog.channel_activity.get(channel_id, 0)
     time_since_bot_spoke = now - cog.bot_last_spoke.get(channel_id, 0)
@@ -145,65 +121,50 @@ async def on_message_listener(cog: 'WheatleyCog', message: discord.Message):
     consideration_reason = "Default"
     proactive_trigger_met = False
 
-    if bot_mentioned or replied_to_bot or gurt_in_message:
+    if bot_mentioned or replied_to_bot or wheatley_in_message: # Changed variable name
         should_consider_responding = True
         consideration_reason = "Direct mention/reply/name"
     else:
-        # --- Proactive Engagement Triggers ---
+        # --- Proactive Engagement Triggers (Simplified for Wheatley) ---
         from .config import (PROACTIVE_LULL_THRESHOLD, PROACTIVE_BOT_SILENCE_THRESHOLD, PROACTIVE_LULL_CHANCE,
                              PROACTIVE_TOPIC_RELEVANCE_THRESHOLD, PROACTIVE_TOPIC_CHANCE,
-                             PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD, PROACTIVE_RELATIONSHIP_CHANCE,
-                         # Import new config values
-                             # Import new config values
+                             # Removed Relationship/Interest/Goal proactive configs
                              PROACTIVE_SENTIMENT_SHIFT_THRESHOLD, PROACTIVE_SENTIMENT_DURATION_THRESHOLD,
-                             PROACTIVE_SENTIMENT_CHANCE, PROACTIVE_USER_INTEREST_THRESHOLD,
-                             PROACTIVE_USER_INTEREST_CHANCE)
+                             PROACTIVE_SENTIMENT_CHANCE)
 
-        # 1. Lull Trigger
+        # 1. Lull Trigger (Kept)
         if time_since_last_activity > PROACTIVE_LULL_THRESHOLD and time_since_bot_spoke > PROACTIVE_BOT_SILENCE_THRESHOLD:
-            has_relevant_context = bool(cog.active_topics.get(channel_id, {}).get("topics", [])) or \
-                                   bool(await cog.memory_manager.get_general_facts(limit=1))
+            # Check if there's *any* recent message context to potentially respond to
+            has_relevant_context = bool(cog.message_cache['by_channel'].get(channel_id))
             if has_relevant_context and random.random() < PROACTIVE_LULL_CHANCE:
                 should_consider_responding = True
                 proactive_trigger_met = True
                 consideration_reason = f"Proactive: Lull ({time_since_last_activity:.0f}s idle, bot silent {time_since_bot_spoke:.0f}s)"
 
-        # 2. Topic Relevance Trigger
+        # 2. Topic Relevance Trigger (Kept - uses semantic memory)
         if not proactive_trigger_met and message.content and cog.memory_manager.semantic_collection:
             try:
                 semantic_results = await cog.memory_manager.search_semantic_memory(query_text=message.content, n_results=1)
                 if semantic_results:
-                    similarity_score = 1.0 - semantic_results[0].get('distance', 1.0)
+                    # Distance is often used, lower is better. Convert to similarity if needed.
+                    # Assuming distance is 0 (identical) to 2 (opposite). Similarity = 1 - (distance / 2)
+                    distance = semantic_results[0].get('distance', 2.0) # Default to max distance
+                    similarity_score = max(0.0, 1.0 - (distance / 2.0)) # Calculate similarity
+
                     if similarity_score >= PROACTIVE_TOPIC_RELEVANCE_THRESHOLD and time_since_bot_spoke > 120:
                         if random.random() < PROACTIVE_TOPIC_CHANCE:
                             should_consider_responding = True
                             proactive_trigger_met = True
                             consideration_reason = f"Proactive: Relevant topic (Sim: {similarity_score:.2f})"
                             print(f"Topic relevance trigger met for msg {message.id}. Sim: {similarity_score:.2f}")
-                    else:
-                        print(f"Topic relevance trigger skipped by chance ({PROACTIVE_TOPIC_CHANCE}). Sim: {similarity_score:.2f}")
+                        else:
+                            print(f"Topic relevance trigger skipped by chance ({PROACTIVE_TOPIC_CHANCE}). Sim: {similarity_score:.2f}")
             except Exception as semantic_e:
                 print(f"Error during semantic search for topic trigger: {semantic_e}")
 
-        # 3. Relationship Score Trigger
-        if not proactive_trigger_met:
-            try:
-                user_id_str = str(message.author.id)
-                bot_id_str = str(cog.bot.user.id)
-                key_1, key_2 = (user_id_str, bot_id_str) if user_id_str < bot_id_str else (bot_id_str, user_id_str)
-                relationship_score = cog.user_relationships.get(key_1, {}).get(key_2, 0.0)
-                if relationship_score >= PROACTIVE_RELATIONSHIP_SCORE_THRESHOLD and time_since_bot_spoke > 60:
-                    if random.random() < PROACTIVE_RELATIONSHIP_CHANCE:
-                        should_consider_responding = True
-                        proactive_trigger_met = True
-                        consideration_reason = f"Proactive: High relationship ({relationship_score:.1f})"
-                        print(f"Relationship trigger met for user {user_id_str}. Score: {relationship_score:.1f}")
-                    else:
-                        print(f"Relationship trigger skipped by chance ({PROACTIVE_RELATIONSHIP_CHANCE}). Score: {relationship_score:.1f}")
-            except Exception as rel_e:
-                print(f"Error during relationship trigger check: {rel_e}")
+        # 3. Relationship Score Trigger (REMOVED)
 
-        # 4. Sentiment Shift Trigger
+        # 4. Sentiment Shift Trigger (Kept)
         if not proactive_trigger_met:
             channel_sentiment_data = cog.conversation_sentiment.get(channel_id, {})
             overall_sentiment = channel_sentiment_data.get("overall", "neutral")
@@ -223,85 +184,29 @@ async def on_message_listener(cog: 'WheatleyCog', message: discord.Message):
                 else:
                     print(f"Sentiment Shift trigger skipped by chance ({PROACTIVE_SENTIMENT_CHANCE}). Sentiment: {overall_sentiment}")
 
-        # 5. User Interest Trigger (Based on Gurt's interests mentioned in message)
-        if not proactive_trigger_met and message.content:
-            try:
-                gurt_interests = await cog.memory_manager.get_interests(limit=10, min_level=PROACTIVE_USER_INTEREST_THRESHOLD)
-                if gurt_interests:
-                    message_content_lower = message.content.lower()
-                    mentioned_interest = None
-                    for interest_topic, interest_level in gurt_interests:
-                        # Simple check if interest topic is in message
-                        if re.search(r'\b' + re.escape(interest_topic.lower()) + r'\b', message_content_lower):
-                            mentioned_interest = interest_topic
-                            break # Found a mentioned interest
+        # 5. User Interest Trigger (REMOVED)
+        # 6. Active Goal Relevance Trigger (REMOVED)
 
-                    if mentioned_interest and time_since_bot_spoke > 90:  # Bot hasn't spoken recently
-                        if random.random() < PROACTIVE_USER_INTEREST_CHANCE:
-                            should_consider_responding = True
-                            proactive_trigger_met = True
-                            consideration_reason = f"Proactive: Gurt Interest Mentioned ('{mentioned_interest}')"
-                            print(f"Gurt Interest trigger met for message {message.id}. Interest: '{mentioned_interest}'")
-                        else:
-                            print(f"Gurt Interest trigger skipped by chance ({PROACTIVE_USER_INTEREST_CHANCE}). Interest: '{mentioned_interest}'")
-            except Exception as interest_e:
-                print(f"Error during Gurt Interest trigger check: {interest_e}")
-
-        # 6. Active Goal Relevance Trigger
-        if not proactive_trigger_met and message.content:
-            try:
-                # Fetch 1-2 active goals with highest priority
-                active_goals = await cog.memory_manager.get_goals(status='active', limit=2)
-                if active_goals:
-                    message_content_lower = message.content.lower()
-                    relevant_goal = None
-                    for goal in active_goals:
-                        # Simple check: does message content relate to goal description?
-                        # TODO: Improve this check, maybe use semantic similarity or keyword extraction from goal details
-                        goal_keywords = set(re.findall(r'\b\w{3,}\b', goal.get('description', '').lower())) # Basic keywords from description
-                        message_words = set(re.findall(r'\b\w{3,}\b', message_content_lower))
-                        if len(goal_keywords.intersection(message_words)) > 1: # Require >1 keyword overlap
-                            relevant_goal = goal
-                            break
-
-                    if relevant_goal and time_since_bot_spoke > 120: # Bot hasn't spoken recently
-                        # Use a slightly higher chance for goal-related triggers?
-                        goal_relevance_chance = PROACTIVE_USER_INTEREST_CHANCE * 1.2 # Example: Reuse interest chance slightly boosted
-                        if random.random() < goal_relevance_chance:
-                            should_consider_responding = True
-                            proactive_trigger_met = True
-                            goal_desc_short = relevant_goal.get('description', 'N/A')[:40]
-                            consideration_reason = f"Proactive: Relevant Active Goal ('{goal_desc_short}...')"
-                            print(f"Active Goal trigger met for message {message.id}. Goal ID: {relevant_goal.get('goal_id')}")
-                        else:
-                            print(f"Active Goal trigger skipped by chance ({goal_relevance_chance:.2f}).")
-            except Exception as goal_trigger_e:
-                print(f"Error during Active Goal trigger check: {goal_trigger_e}")
-
-
-        # --- Fallback Contextual Chance ---
-        if not should_consider_responding:  # Check if already decided to respond
-            # Fetch current personality traits for chattiness
-            persistent_traits = await cog.memory_manager.get_all_personality_traits()
-            chattiness = persistent_traits.get('chattiness', 0.7) # Use default if fetch fails
-
-            base_chance = chattiness * 0.5
+        # --- Fallback Contextual Chance (Simplified - No Chattiness Trait) ---
+        if not should_consider_responding:
+            # Base chance can be a fixed value or slightly randomized
+            base_chance = 0.1 # Lower base chance without personality traits
             activity_bonus = 0
-            if time_since_last_activity > 120: activity_bonus += 0.1
-            if time_since_bot_spoke > 300: activity_bonus += 0.1
+            if time_since_last_activity > 120: activity_bonus += 0.05 # Smaller bonus
+            if time_since_bot_spoke > 300: activity_bonus += 0.05 # Smaller bonus
             topic_bonus = 0
             active_channel_topics = cog.active_topics.get(channel_id, {}).get("topics", [])
             if message.content and active_channel_topics:
                 topic_keywords = set(t['topic'].lower() for t in active_channel_topics)
                 message_words = set(re.findall(r'\b\w+\b', message.content.lower()))
-                if topic_keywords.intersection(message_words): topic_bonus += 0.15
+                if topic_keywords.intersection(message_words): topic_bonus += 0.10 # Smaller bonus
             sentiment_modifier = 0
             channel_sentiment_data = cog.conversation_sentiment.get(channel_id, {})
             overall_sentiment = channel_sentiment_data.get("overall", "neutral")
             sentiment_intensity = channel_sentiment_data.get("intensity", 0.5)
-            if overall_sentiment == "negative" and sentiment_intensity > 0.6: sentiment_modifier = -0.1
+            if overall_sentiment == "negative" and sentiment_intensity > 0.6: sentiment_modifier = -0.05 # Smaller penalty
 
-            final_chance = min(max(base_chance + activity_bonus + topic_bonus + sentiment_modifier, 0.05), 0.8)
+            final_chance = min(max(base_chance + activity_bonus + topic_bonus + sentiment_modifier, 0.02), 0.3) # Lower max chance
             if random.random() < final_chance:
                 should_consider_responding = True
                 consideration_reason = f"Contextual chance ({final_chance:.2f})"
@@ -334,7 +239,7 @@ async def on_message_listener(cog: 'WheatleyCog', message: discord.Message):
         if error_msg:
             print(f"Critical Error from AI response function: {error_msg}")
             # NEW LOGIC: Always send a notification if an error occurred here
-            error_notification = f"Oops! Something went wrong while processing that. (`{error_msg[:100]}`)" # Include part of the error
+            error_notification = f"Bollocks! Something went sideways processing that. (`{error_msg[:100]}`)" # Updated text
             try:
                 print('disabled error notification')
                 #await message.channel.send(error_notification)
@@ -354,10 +259,10 @@ async def on_message_listener(cog: 'WheatleyCog', message: discord.Message):
                 response_text = response_data["content"]
                 print(f"Attempting to send {response_label} content...")
                 if len(response_text) > 1900:
-                    filepath = f'gurt_{response_label}_{message.id}.txt'
+                    filepath = f'wheatley_{response_label}_{message.id}.txt' # Changed filename prefix
                     try:
                         with open(filepath, 'w', encoding='utf-8') as f: f.write(response_text)
-                        await message.channel.send(f"{response_label.capitalize()} response too long:", file=discord.File(filepath))
+                        await message.channel.send(f"{response_label.capitalize()} response too long, have a look at this:", file=discord.File(filepath)) # Updated text
                         sent_any_message = True
                         print(f"Sent {response_label} content as file.")
                         return True
@@ -375,14 +280,13 @@ async def on_message_listener(cog: 'WheatleyCog', message: discord.Message):
                         bot_response_cache_entry = format_message(cog, sent_msg)
                         cog.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
                         cog.message_cache['global_recent'].append(bot_response_cache_entry)
-                        # cog.message_cache['replied_to'][channel_id].append(bot_response_cache_entry) # Maybe track replies differently?
                         cog.bot_last_spoke[channel_id] = time.time()
-                        # Track participation topic
-                        identified_topics = identify_conversation_topics(cog, [bot_response_cache_entry])
-                        if identified_topics:
-                            topic = identified_topics[0]['topic'].lower().strip()
-                            cog.gurt_participation_topics[topic] += 1
-                            print(f"Tracked Gurt participation ({response_label}) in topic: '{topic}'")
+                        # Track participation topic - NOTE: Participation tracking might be removed for Wheatley
+                        # identified_topics = identify_conversation_topics(cog, [bot_response_cache_entry])
+                        # if identified_topics:
+                        #     topic = identified_topics[0]['topic'].lower().strip()
+                        #     cog.wheatley_participation_topics[topic] += 1 # Changed attribute name
+                        #     print(f"Tracked Wheatley participation ({response_label}) in topic: '{topic}'") # Changed text
                         print(f"Sent {response_label} content.")
                         return True
                     except Exception as send_e:
@@ -434,11 +338,11 @@ async def on_message_listener(cog: 'WheatleyCog', message: discord.Message):
         import traceback
         traceback.print_exc()
         if bot_mentioned or replied_to_bot: # Check again in case error happened before response handling
-            await message.channel.send(random.choice(["...", "*confused gurting*", "brain broke sorry"]))
+            await message.channel.send(random.choice(["Uh oh.", "What was that?", "Did I break it?", "Bollocks!", "That wasn't supposed to happen."])) # Changed fallback
 
 
 @commands.Cog.listener()
-async def on_reaction_add_listener(cog: 'WheatleyCog', reaction: discord.Reaction, user: Union[discord.Member, discord.User]):
+async def on_reaction_add_listener(cog: 'WheatleyCog', reaction: discord.Reaction, user: Union[discord.Member, discord.User]): # Updated type hint
     """Listener function for on_reaction_add."""
     # Import necessary config/functions if not globally available
     from .config import EMOJI_SENTIMENT
@@ -453,27 +357,29 @@ async def on_reaction_add_listener(cog: 'WheatleyCog', reaction: discord.Reactio
     if emoji_str in EMOJI_SENTIMENT["positive"]: sentiment = "positive"
     elif emoji_str in EMOJI_SENTIMENT["negative"]: sentiment = "negative"
 
-    if sentiment == "positive": cog.gurt_message_reactions[message_id]["positive"] += 1
-    elif sentiment == "negative": cog.gurt_message_reactions[message_id]["negative"] += 1
-    cog.gurt_message_reactions[message_id]["timestamp"] = time.time()
+    if sentiment == "positive": cog.wheatley_message_reactions[message_id]["positive"] += 1 # Changed attribute name
+    elif sentiment == "negative": cog.wheatley_message_reactions[message_id]["negative"] += 1 # Changed attribute name
+    cog.wheatley_message_reactions[message_id]["timestamp"] = time.time() # Changed attribute name
 
-    if not cog.gurt_message_reactions[message_id].get("topic"):
+    # Topic identification for reactions might be less relevant for Wheatley, but kept for now
+    if not cog.wheatley_message_reactions[message_id].get("topic"): # Changed attribute name
         try:
-            gurt_msg_data = next((msg for msg in cog.message_cache['global_recent'] if msg['id'] == message_id), None)
-            if gurt_msg_data and gurt_msg_data['content']:
-                identified_topics = identify_conversation_topics(cog, [gurt_msg_data]) # Pass cog
+            # Changed variable name
+            wheatley_msg_data = next((msg for msg in cog.message_cache['global_recent'] if msg['id'] == message_id), None)
+            if wheatley_msg_data and wheatley_msg_data['content']: # Changed variable name
+                identified_topics = identify_conversation_topics(cog, [wheatley_msg_data]) # Pass cog, changed variable name
                 if identified_topics:
                     topic = identified_topics[0]['topic'].lower().strip()
-                    cog.gurt_message_reactions[message_id]["topic"] = topic
-                    print(f"Reaction added to Gurt msg ({message_id}) on topic '{topic}'. Sentiment: {sentiment}")
-                else: print(f"Reaction added to Gurt msg ({message_id}), topic unknown.")
-            else: print(f"Reaction added, but Gurt msg {message_id} not in cache.")
+                    cog.wheatley_message_reactions[message_id]["topic"] = topic # Changed attribute name
+                    print(f"Reaction added to Wheatley msg ({message_id}) on topic '{topic}'. Sentiment: {sentiment}") # Changed text
+                else: print(f"Reaction added to Wheatley msg ({message_id}), topic unknown.") # Changed text
+            else: print(f"Reaction added, but Wheatley msg {message_id} not in cache.") # Changed text
         except Exception as e: print(f"Error determining topic for reaction on msg {message_id}: {e}")
-    else: print(f"Reaction added to Gurt msg ({message_id}) on known topic '{cog.gurt_message_reactions[message_id]['topic']}'. Sentiment: {sentiment}")
+    else: print(f"Reaction added to Wheatley msg ({message_id}) on known topic '{cog.wheatley_message_reactions[message_id]['topic']}'. Sentiment: {sentiment}") # Changed text, attribute name
 
 
 @commands.Cog.listener()
-async def on_reaction_remove_listener(cog: 'WheatleyCog', reaction: discord.Reaction, user: Union[discord.Member, discord.User]):
+async def on_reaction_remove_listener(cog: 'WheatleyCog', reaction: discord.Reaction, user: Union[discord.Member, discord.User]): # Updated type hint
     """Listener function for on_reaction_remove."""
     from .config import EMOJI_SENTIMENT # Import necessary config
 
@@ -486,7 +392,7 @@ async def on_reaction_remove_listener(cog: 'WheatleyCog', reaction: discord.Reac
     if emoji_str in EMOJI_SENTIMENT["positive"]: sentiment = "positive"
     elif emoji_str in EMOJI_SENTIMENT["negative"]: sentiment = "negative"
 
-    if message_id in cog.gurt_message_reactions:
-        if sentiment == "positive": cog.gurt_message_reactions[message_id]["positive"] = max(0, cog.gurt_message_reactions[message_id]["positive"] - 1)
-        elif sentiment == "negative": cog.gurt_message_reactions[message_id]["negative"] = max(0, cog.gurt_message_reactions[message_id]["negative"] - 1)
-        print(f"Reaction removed from Gurt msg ({message_id}). Sentiment: {sentiment}")
+    if message_id in cog.wheatley_message_reactions: # Changed attribute name
+        if sentiment == "positive": cog.wheatley_message_reactions[message_id]["positive"] = max(0, cog.wheatley_message_reactions[message_id]["positive"] - 1) # Changed attribute name
+        elif sentiment == "negative": cog.wheatley_message_reactions[message_id]["negative"] = max(0, cog.wheatley_message_reactions[message_id]["negative"] - 1) # Changed attribute name
+        print(f"Reaction removed from Wheatley msg ({message_id}). Sentiment: {sentiment}") # Changed text

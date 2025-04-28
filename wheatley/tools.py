@@ -482,7 +482,7 @@ async def timeout_user(cog: commands.Cog, user_id: str, duration_minutes: int, r
         if bot_member.id != guild.owner_id and bot_member.top_role <= member.top_role: return {"error": f"Cannot timeout {member.display_name} (role hierarchy)."}
 
         until = discord.utils.utcnow() + datetime.timedelta(minutes=duration_minutes)
-        timeout_reason = reason or "gurt felt like it"
+        timeout_reason = reason or "wheatley felt like it" # Changed default reason
         await member.timeout(until, reason=timeout_reason)
         print(f"Timed out {member.display_name} ({user_id}) for {duration_minutes} mins. Reason: {timeout_reason}")
         return {"status": "success", "user_timed_out": member.display_name, "user_id": user_id, "duration_minutes": duration_minutes, "reason": timeout_reason}
@@ -508,7 +508,7 @@ async def remove_timeout(cog: commands.Cog, user_id: str, reason: Optional[str] 
         if not bot_member.guild_permissions.moderate_members: return {"error": "I lack permission to remove timeouts."}
         if member.timed_out_until is None: return {"status": "not_timed_out", "user_id": user_id, "user_name": member.display_name}
 
-        timeout_reason = reason or "Gurt decided to be nice."
+        timeout_reason = reason or "Wheatley decided to be nice." # Changed default reason
         await member.timeout(None, reason=timeout_reason) # None removes timeout
         print(f"Removed timeout from {member.display_name} ({user_id}). Reason: {timeout_reason}")
         return {"status": "success", "user_timeout_removed": member.display_name, "user_id": user_id, "reason": timeout_reason}

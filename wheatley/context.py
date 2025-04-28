@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING, Optional, List, Dict, Any
 from .config import CONTEXT_WINDOW_SIZE # Import necessary config
 
 if TYPE_CHECKING:
-    from .cog import GurtCog # For type hinting
+    from .cog import WheatleyCog # For type hinting
 
 # --- Context Gathering Functions ---
 # Note: These functions need the 'cog' instance passed to access state like caches, etc.
 
-def gather_conversation_context(cog: 'GurtCog', channel_id: int, current_message_id: int) -> List[Dict[str, str]]:
+def gather_conversation_context(cog: 'WheatleyCog', channel_id: int, current_message_id: int) -> List[Dict[str, str]]:
     """Gathers and formats conversation history from cache for API context."""
     context_api_messages = []
     if channel_id in cog.message_cache['by_channel']:
@@ -30,7 +30,7 @@ def gather_conversation_context(cog: 'GurtCog', channel_id: int, current_message
             context_api_messages.append({"role": role, "content": content})
     return context_api_messages
 
-async def get_memory_context(cog: 'GurtCog', message: discord.Message) -> Optional[str]:
+async def get_memory_context(cog: 'WheatleyCog', message: discord.Message) -> Optional[str]:
     """Retrieves relevant past interactions and facts to provide memory context."""
     channel_id = message.channel.id
     user_id = str(message.author.id)
@@ -68,7 +68,7 @@ async def get_memory_context(cog: 'GurtCog', message: discord.Message) -> Option
         if bot_replies:
             recent_bot_replies = bot_replies[-3:]
             replies_str = "\n".join([f"- {m['content'][:80]} (at {m['created_at']})" for m in recent_bot_replies])
-            memory_parts.append(f"Your (gurt's) recent replies in this channel:\n{replies_str}")
+            memory_parts.append(f"Your (wheatley's) recent replies in this channel:\n{replies_str}") # Changed text
     except Exception as e: print(f"Error retrieving bot replies for memory context: {e}")
 
     # 4. Retrieve Conversation Summary
