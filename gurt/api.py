@@ -457,19 +457,47 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         if message.attachments:
             print(f"Processing {len(message.attachments)} attachments for message {message.id}")
             for attachment in message.attachments:
-                content_type = attachment.content_type
-                if content_type and content_type.startswith("image/"):
-                    try:
-                        print(f"Downloading image: {attachment.filename} ({content_type})")
-                        image_bytes = await attachment.read()
-                        mime_type = content_type.split(';')[0]
-                        # Vertex AI Part.from_data expects bytes and mime_type
-                        current_message_parts.append(Part.from_data(data=image_bytes, mime_type=mime_type))
-                        print(f"Added image {attachment.filename} to payload parts.")
-                    except discord.HTTPException as e: print(f"Failed to download image {attachment.filename}: {e}")
-                    except Exception as e: print(f"Error processing image {attachment.filename}: {e}")
-                else: print(f"Skipping non-image attachment: {attachment.filename} ({content_type})")
+                mime_type = attachment.content_type
+                file_url = attachment.url
+                filename = attachment.filename
 
+                # Check if MIME type is supported for URI input by Gemini
+                # Expand this list based on Gemini documentation for supported types via URI
+                supported_mime_prefixes = ["image/", "video/", "audio/", "text/plain", "application/pdf"]
+                is_supported = False
+                if mime_type:
+                    for prefix in supported_mime_prefixes:
+                        if mime_type.startswith(prefix):
+                            is_supported = True
+                            break
+                    # Add specific non-prefixed types if needed
+                    # if mime_type in ["application/vnd.google-apps.document", ...]:
+                    #     is_supported = True
+
+                if is_supported and file_url:
+                    try:
+                        # 1. Add text part instructing AI about the file
+                        instruction_text = f"User attached a file: '{filename}' (Type: {mime_type}). Analyze this file from the following URI and incorporate your understanding into your response."
+                        current_message_parts.append(Part.from_text(instruction_text))
+                        print(f"Added text instruction for attachment: {filename}")
+
+                        # 2. Add the URI part
+                        # Ensure mime_type doesn't contain parameters like '; charset=...' if the API doesn't like them
+                        clean_mime_type = mime_type.split(';')[0]
+                        current_message_parts.append(Part.from_uri(uri=file_url, mime_type=clean_mime_type))
+                        print(f"Added URI part for attachment: {filename} ({clean_mime_type}) using URL: {file_url}")
+
+                    except Exception as e:
+                        print(f"Error creating Part for attachment {filename} ({mime_type}): {e}")
+                        # Optionally add a text part indicating the error
+                        current_message_parts.append(Part.from_text(f"(System Note: Failed to process attachment '{filename}' - {e})"))
+                else:
+                    print(f"Skipping unsupported or invalid attachment: {filename} (Type: {mime_type}, URL: {file_url})")
+                    # Optionally inform the AI that an unsupported file was attached
+                    current_message_parts.append(Part.from_text(f"(System Note: User attached an unsupported file '{filename}' of type '{mime_type}' which cannot be processed.)"))
+
+
+        # Ensure there's always *some* content part, even if only text or errors
         if current_message_parts:
             contents.append(Content(role="user", parts=current_message_parts))
         else:

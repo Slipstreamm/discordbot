@@ -28,7 +28,7 @@ from .config import (
 # Assume these helpers will be moved or are accessible via cog
 # We might need to pass 'cog' to these tool functions if they rely on cog state heavily
 # from .utils import format_message # This will be needed by context tools
-from .api import get_internal_ai_json_response # Needed for summary, safety check
+# Removed: from .api import get_internal_ai_json_response # Moved into functions to avoid circular import
 
 # --- Tool Implementations ---
 # Note: Most of these functions will need the 'cog' instance passed to them
@@ -243,6 +243,7 @@ async def get_user_interaction_history(cog: commands.Cog, user_id_1: str, limit:
 async def get_conversation_summary(cog: commands.Cog, channel_id: str = None, message_limit: int = 25) -> Dict[str, Any]:
     """Generates and returns a summary of the recent conversation in a channel using an LLM call."""
     from .config import SUMMARY_RESPONSE_SCHEMA, DEFAULT_MODEL # Import schema and model
+    from .api import get_internal_ai_json_response # Import here
     try:
         target_channel_id_str = channel_id or (str(cog.current_channel.id) if cog.current_channel else None)
         if not target_channel_id_str: return {"error": "No channel context"}
@@ -561,7 +562,7 @@ def parse_mem_limit(mem_limit_str: str) -> Optional[int]:
 
 async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, Any]:
     """Uses a secondary AI call to check if a command is potentially harmful."""
-    # from .api import get_internal_ai_json_response # Already imported at top level
+    from .api import get_internal_ai_json_response # Import here
     print(f"Performing AI safety check for command: '{command}' using model {SAFETY_CHECK_MODEL}")
     safety_schema = {
         "type": "object",
