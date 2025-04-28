@@ -756,34 +756,6 @@ async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any
         if client:
             await client.close()
 
-
-# --- Tool Mapping ---
-# This dictionary maps tool names (used in the AI prompt) to their implementation functions.
-TOOL_MAPPING = {
-    "get_recent_messages": get_recent_messages,
-    "search_user_messages": search_user_messages,
-    "search_messages_by_content": search_messages_by_content,
-    "get_channel_info": get_channel_info,
-    "get_conversation_context": get_conversation_context,
-    "get_thread_context": get_thread_context,
-    "get_user_interaction_history": get_user_interaction_history,
-    "get_conversation_summary": get_conversation_summary,
-    "get_message_context": get_message_context,
-    "web_search": web_search,
-    # Point memory tools to the methods on the MemoryManager instance (accessed via cog)
-    "remember_user_fact": lambda cog, **kwargs: cog.memory_manager.add_user_fact(**kwargs),
-    "get_user_facts": lambda cog, **kwargs: cog.memory_manager.get_user_facts(**kwargs),
-    "remember_general_fact": lambda cog, **kwargs: cog.memory_manager.add_general_fact(**kwargs),
-    "get_general_facts": lambda cog, **kwargs: cog.memory_manager.get_general_facts(**kwargs),
-    "timeout_user": timeout_user,
-    "calculate": calculate,
-    "run_python_code": run_python_code,
-    "create_poll": create_poll,
-    "run_terminal_command": run_terminal_command,
-    "remove_timeout": remove_timeout,
-    "extract_web_content": extract_web_content
-}
-
 async def extract_web_content(cog: commands.Cog, urls: Union[str, List[str]], extract_depth: str = "basic", include_images: bool = False) -> Dict[str, Any]:
     """Extract content from URLs using Tavily API"""
     if not hasattr(cog, 'tavily_client') or not cog.tavily_client:
@@ -815,3 +787,30 @@ async def extract_web_content(cog: commands.Cog, urls: Union[str, List[str]], ex
         error_message = f"Error during Tavily extract for '{urls}': {str(e)}"
         print(error_message)
         return {"error": error_message, "timestamp": datetime.datetime.now().isoformat()}
+
+# --- Tool Mapping ---
+# This dictionary maps tool names (used in the AI prompt) to their implementation functions.
+TOOL_MAPPING = {
+    "get_recent_messages": get_recent_messages,
+    "search_user_messages": search_user_messages,
+    "search_messages_by_content": search_messages_by_content,
+    "get_channel_info": get_channel_info,
+    "get_conversation_context": get_conversation_context,
+    "get_thread_context": get_thread_context,
+    "get_user_interaction_history": get_user_interaction_history,
+    "get_conversation_summary": get_conversation_summary,
+    "get_message_context": get_message_context,
+    "web_search": web_search,
+    # Point memory tools to the methods on the MemoryManager instance (accessed via cog)
+    "remember_user_fact": lambda cog, **kwargs: cog.memory_manager.add_user_fact(**kwargs),
+    "get_user_facts": lambda cog, **kwargs: cog.memory_manager.get_user_facts(**kwargs),
+    "remember_general_fact": lambda cog, **kwargs: cog.memory_manager.add_general_fact(**kwargs),
+    "get_general_facts": lambda cog, **kwargs: cog.memory_manager.get_general_facts(**kwargs),
+    "timeout_user": timeout_user,
+    "calculate": calculate,
+    "run_python_code": run_python_code,
+    "create_poll": create_poll,
+    "run_terminal_command": run_terminal_command,
+    "remove_timeout": remove_timeout,
+    "extract_web_content": extract_web_content
+}
