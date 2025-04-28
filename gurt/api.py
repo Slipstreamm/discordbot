@@ -65,6 +65,30 @@ from .utils import format_message, log_internal_api_call # Import utilities
 if TYPE_CHECKING:
     from .cog import GurtCog # Import GurtCog for type hinting only
 
+
+# --- Helper Function to Safely Extract Text ---
+def _get_response_text(response: Optional['GenerationResponse']) -> Optional[str]:
+    """Safely extracts the text content from the first text part of a GenerationResponse."""
+    if not response or not response.candidates:
+        return None
+    try:
+        # Iterate through parts to find the first text part
+        for part in response.candidates[0].content.parts:
+            # Check if the part has a 'text' attribute and it's not empty
+            if hasattr(part, 'text') and part.text:
+                return part.text
+        # If no text part is found (e.g., only function call or empty text parts)
+        return None
+    except (AttributeError, IndexError) as e:
+        # Handle cases where structure is unexpected or parts list is empty
+        print(f"Error accessing response parts: {type(e).__name__}: {e}")
+        return None
+    except Exception as e:
+        # Catch unexpected errors during access
+        print(f"Unexpected error extracting text from response part: {e}")
+        return None
+
+
 # --- Initialize Vertex AI ---
 try:
     vertexai.init(project=PROJECT_ID, location=LOCATION)
@@ -543,7 +567,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
              raise Exception("Initial API call returned no response or candidates.")
 
         # --- Attempt to parse initial response (might be placeholder or final if no tool call) ---
-        initial_response_text = initial_response.text
+        initial_response_text = _get_response_text(initial_response) # Use helper
         # Use relaxed validation? For now, try standard schema. Might fail if it's just a tool call trigger.
         initial_parsed_data = parse_and_validate_json_response(
             initial_response_text, RESPONSE_SCHEMA['schema'], "initial response check"
@@ -596,7 +620,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             if not final_response_obj or not final_response_obj.candidates:
                  raise Exception("Follow-up API call returned no response or candidates.")
 
-            final_response_text = final_response_obj.text
+            final_response_text = _get_response_text(final_response_obj) # Use helper
             final_parsed_data = parse_and_validate_json_response(
                 final_response_text, RESPONSE_SCHEMA['schema'], "final response after tools"
             )
@@ -618,7 +642,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                     request_desc=f"Re-prompt validation failure for message {message.id}"
                 )
                 if retry_response_obj and retry_response_obj.candidates:
-                    final_response_text = retry_response_obj.text
+                    final_response_text = _get_response_text(retry_response_obj) # Use helper
                     final_parsed_data = parse_and_validate_json_response(
                         final_response_text, RESPONSE_SCHEMA['schema'], "re-prompted final response"
                     )
@@ -731,7 +755,7 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
             raise Exception("Proactive API call returned no response or candidates.")
 
         # --- Parse and Validate Response ---
-        final_response_text = response_obj.text
+        final_response_text = _get_response_text(response_obj) # Use helper
         final_parsed_data = parse_and_validate_json_response(
             final_response_text, RESPONSE_SCHEMA['schema'], f"proactive response ({trigger_reason})"
         )
@@ -877,7 +901,7 @@ async def get_internal_ai_json_response(
             raise Exception("Internal API call returned no response or candidates.")
 
         # --- Parse and Validate ---
-        final_response_text = response_obj.text
+        final_response_text = _get_response_text(response_obj) # Use helper
         final_parsed_data = parse_and_validate_json_response(
             final_response_text, response_schema_dict, f"internal task ({task_description})"
         )
