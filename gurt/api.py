@@ -676,43 +676,77 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 # Append tool response to history
                 contents.append(Content(role="function", parts=[tool_response_part]))
 
-                # Continue to the next loop iteration to see if AI calls another tool
+                # Add an explicit instruction for the AI to proceed after the tool call
+                contents.append(Content(role="user", parts=[Part.from_text(
+                    "(System Note: The requested tool action has been performed based on the function response above. "
+                    "Please now generate the final JSON response for the user, acknowledging the action if appropriate.)"
+                )]))
+                print("Added system note instructing AI to generate final response.")
+
+                 # Continue to the next loop iteration to see if AI calls another tool or generates the final response
             else:
-                # No function call found in the response parts
+                # No function call found in the response parts - AI likely provided the final response directly
                 print("No further tool call requested by AI. Exiting loop.")
                 break # Exit loop
 
         # --- After the loop ---
+        # Check if a critical API error occurred *during* the loop
         if error_message:
-            # An error occurred within the loop or initial API call
-            print(f"Exited tool loop due to error: {error_message}")
-            # Fallback logic might be needed here depending on the error
+            print(f"Exited tool loop due to API error: {error_message}")
             if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
-                 fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
-
+                fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+        # Check if the loop hit the max iteration limit
         elif tool_calls_made >= max_tool_calls:
-            error_message = f"Reached maximum tool call limit ({max_tool_calls}). Aborting further processing."
+            error_message = f"Reached maximum tool call limit ({max_tool_calls}). Attempting to generate final response based on gathered context."
             print(error_message)
-            # Potentially add a fallback response here too
-            fallback_response = {"should_respond": True, "content": "Sorry, that got a bit complicated for me.", "react_with_emoji": "🤯"}
+            # Proceed to attempt final JSON generation even if limit was hit
+            # The 'last_response_obj' should hold the response from the last (limited) iteration
+            if last_response_obj:
+                # Attempt to parse JSON from the last response (less likely if limit hit)
+                last_response_text_limit = _get_response_text(last_response_obj)
+                if last_response_text_limit:
+                    print("Attempting to parse final JSON from the last loop response (limit hit)...")
+                    final_parsed_data = parse_and_validate_json_response(
+                        last_response_text_limit, RESPONSE_SCHEMA['schema'], "final response (from last loop iteration - limit hit)"
+                    )
 
+                # If parsing failed, make the dedicated final call
+                if final_parsed_data is None:
+                    print("Making dedicated final API call after hitting tool limit...")
+                    # (Final call logic is duplicated below, consider refactoring later)
+                    model_final_json = GenerativeModel(model_name or DEFAULT_MODEL, system_instruction=final_system_prompt)
+                    processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
+                    generation_config_final_json = GenerationConfig(temperature=0.75, max_output_tokens=10000, response_mime_type="application/json", response_schema=processed_response_schema)
+                    # Append the last AI response before the final call
+                    if last_response_obj and last_response_obj.candidates: contents.append(last_response_obj.candidates[0].content)
+
+                    final_json_response_obj = await call_vertex_api_with_retry(cog=cog, model=model_final_json, contents=contents, generation_config=generation_config_final_json, safety_settings=STANDARD_SAFETY_SETTINGS, request_desc=f"Final JSON Generation (limit hit) for message {message.id}")
+
+                    if not final_json_response_obj or not final_json_response_obj.candidates: error_message += " | Final API call failed."
+                    else:
+                        final_response_text = _get_response_text(final_json_response_obj)
+                        final_parsed_data = parse_and_validate_json_response(final_response_text, RESPONSE_SCHEMA['schema'], "final response (dedicated call - limit hit)")
+                        if final_parsed_data is None: error_message += " | Failed to parse/validate final dedicated JSON."
+                        else: print("Successfully parsed final JSON response (after limit hit).")
+            else:
+                # Should not happen if limit was hit, but handle defensively
+                error_message += " | No last response object available after hitting limit."
+                fallback_response = {"should_respond": True, "content": "Sorry, that got too complicated.", "react_with_emoji": "🤯"}
+
+
+        # Loop finished naturally (AI stopped calling tools)
         elif last_response_obj:
-            # Loop finished naturally (AI didn't request more tools) or after the last successful tool call.
-            # Now, make the FINAL call to get the structured JSON response.
-
-            # Check if the *last* response from the loop *already* contained the final text answer
-            # (This can happen if the AI decides to respond directly after the last tool call)
+            # The last response object *should* contain the final answer or be parseable
             last_response_text = _get_response_text(last_response_obj)
             if last_response_text:
-                 print("Attempting to parse final JSON from the last loop response...")
-                 # Try parsing this text first
-                 final_parsed_data = parse_and_validate_json_response(
-                     last_response_text, RESPONSE_SCHEMA['schema'], "final response (from last loop iteration)"
-                 )
+                print("Attempting to parse final JSON from the last natural loop response...")
+                final_parsed_data = parse_and_validate_json_response(
+                    last_response_text, RESPONSE_SCHEMA['schema'], "final response (from last natural loop iteration)"
+                )
 
-            # If the last loop response didn't contain valid JSON, make a dedicated final call
+            # If parsing the last natural response failed, make the dedicated final call
             if final_parsed_data is None:
-                print("Last loop response did not contain valid final JSON. Making dedicated final API call...")
+                print("Last natural loop response did not contain valid final JSON. Making dedicated final API call...")
 
                 # Initialize a NEW model instance WITHOUT tools for the final call
                 # This seems necessary for reliable JSON schema enforcement with Vertex AI currently
@@ -733,7 +767,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
                 # Append the last AI response (which didn't have a tool call) to history before the final call
                 if last_response_obj and last_response_obj.candidates:
-                     contents.append(last_response_obj.candidates[0].content)
+                    contents.append(last_response_obj.candidates[0].content)
 
                 final_json_response_obj = await call_vertex_api_with_retry(
                     cog=cog,
@@ -760,11 +794,11 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                         # Optional: Add re-prompt logic here if needed, similar to the old single-tool path
                         # For simplicity now, just report the error.
                         if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
-                             fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+                            fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
 
             # If parsing succeeded (either from last loop or dedicated call)
             elif final_parsed_data:
-                 print("Successfully parsed final JSON response.")
+                print("Successfully parsed final JSON response.")
 
 
         else:
@@ -775,7 +809,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 error_message = "Tool loop completed without a final response object."
                 print(error_message)
             if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
-                 fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+                fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
 
 
     except Exception as e:
@@ -786,7 +820,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         final_parsed_data = None # Ensure final data is None on error
         # Add fallback if applicable
         if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
-             fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+            fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
 
 
     # Return dictionary structure remains the same, but initial_response is removed
