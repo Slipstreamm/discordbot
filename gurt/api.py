@@ -11,92 +11,126 @@ import jsonschema # For manual JSON validation
 from .tools import get_conversation_summary
 
 # Google Generative AI Imports (using Vertex AI backend)
-try:
-    from google import genai
-    from google.generativeai import types
-    # Explicitly import necessary types for clarity and potential dummy definitions
-    from google.generativeai.types import GenerationResponse, FunctionCall, Part, Content, Tool, FunctionDeclaration, SafetySetting, HarmCategory, FinishReason, ToolConfig, GenerateContentResponse
-    from google.api_core import exceptions as google_exceptions # Keep for retry logic if applicable
-    # GCSClient might still be needed if image uploads via GCS are implemented elsewhere
-    # from google.cloud.storage import Client as GCSClient
-except ImportError:
-    print("WARNING: google-generativeai or google-api-core not installed. API calls will fail.")
-    # Define dummy classes/exceptions if library isn't installed
-    genai = None # Indicate genai module is missing
-    types = None # Indicate types module is missing
-    class DummyGenerationResponse:
-        def __init__(self):
-            self.candidates = []
-            self.text = None # Add basic text attribute for compatibility
-    class DummyFunctionCall:
-        def __init__(self):
-            self.name = None
-            self.args = None
-    class DummyPart:
-        @staticmethod
-        def from_text(text): return None
-        @staticmethod
-        def from_data(data, mime_type): return None
-        @staticmethod
-        def from_uri(uri, mime_type): return None
-        @staticmethod
-        def from_function_response(name, response): return None
-        @staticmethod
-        def from_function_call(function_call): return None # Add this
-    class DummyContent:
-        def __init__(self, role=None, parts=None):
-            self.role = role
-            self.parts = parts or []
-    class DummyTool:
-        def __init__(self, function_declarations=None): pass
-    class DummyFunctionDeclaration:
-        def __init__(self, name, description, parameters): pass
-    class DummySafetySetting:
-        def __init__(self, category, threshold): pass
-    class DummyHarmCategory:
-        HARM_CATEGORY_HATE_SPEECH = "HARM_CATEGORY_HATE_SPEECH"
-        HARM_CATEGORY_DANGEROUS_CONTENT = "HARM_CATEGORY_DANGEROUS_CONTENT"
-        HARM_CATEGORY_SEXUALLY_EXPLICIT = "HARM_CATEGORY_SEXUALLY_EXPLICIT"
-        HARM_CATEGORY_HARASSMENT = "HARM_CATEGORY_HARASSMENT"
-    class DummyFinishReason:
-        STOP = "STOP"
-        MAX_TOKENS = "MAX_TOKENS"
-        SAFETY = "SAFETY"
-        RECITATION = "RECITATION"
-        OTHER = "OTHER"
-        FUNCTION_CALL = "FUNCTION_CALL" # Add this
-    class DummyToolConfig:
-         class FunctionCallingConfig:
-             class Mode:
-                 ANY = "ANY"
-                 NONE = "NONE"
-                 AUTO = "AUTO"
-         def __init__(self, function_calling_config=None): pass
-    class DummyGenerateContentResponse: # For non-streaming response type hint
-        def __init__(self):
-            self.candidates = []
-            self.text = None
+# try:
+from google import genai
+from google.generativeai import types
+# Explicitly import necessary types for clarity and potential dummy definitions
+from google.generativeai.types import GenerationResponse, FunctionCall, Part, Content, Tool, FunctionDeclaration, SafetySetting, HarmCategory, FinishReason, ToolConfig, GenerateContentResponse
+from google.api_core import exceptions as google_exceptions # Keep for retry logic if applicable
+# except ImportError:
+#     print("WARNING: google-generativeai or google-api-core not installed. API calls will fail.")
+#     # Define dummy classes/exceptions if library isn't installed
+#     genai = None # Indicate genai module is missing
+#     # types = None # REMOVE THIS LINE - Define dummy types object below
 
-    # Assign dummy types
-    GenerationResponse = DummyGenerationResponse
-    FunctionCall = DummyFunctionCall
-    Part = DummyPart
-    Content = DummyContent
-    Tool = DummyTool
-    FunctionDeclaration = DummyFunctionDeclaration
-    SafetySetting = DummySafetySetting
-    HarmCategory = DummyHarmCategory
-    FinishReason = DummyFinishReason
-    ToolConfig = DummyToolConfig
-    GenerateContentResponse = DummyGenerateContentResponse
+#     # Define dummy classes first
+#     class DummyGenerationResponse:
+#         def __init__(self):
+#             self.candidates = []
+#             self.text = None # Add basic text attribute for compatibility
+#     class DummyFunctionCall:
+#         def __init__(self):
+#             self.name = None
+#             self.args = None
+#     class DummyPart:
+#         @staticmethod
+#         def from_text(text): return None
+#         @staticmethod
+#         def from_data(data, mime_type): return None
+#         @staticmethod
+#         def from_uri(uri, mime_type): return None
+#         @staticmethod
+#         def from_function_response(name, response): return None
+#         @staticmethod
+#         def from_function_call(function_call): return None # Add this
+#     class DummyContent:
+#         def __init__(self, role=None, parts=None):
+#             self.role = role
+#             self.parts = parts or []
+#     class DummyTool:
+#         def __init__(self, function_declarations=None): pass
+#     class DummyFunctionDeclaration:
+#         def __init__(self, name, description, parameters): pass
+#     class DummySafetySetting:
+#         def __init__(self, category, threshold): pass
+#     class DummyHarmCategory:
+#         HARM_CATEGORY_HATE_SPEECH = "HARM_CATEGORY_HATE_SPEECH"
+#         HARM_CATEGORY_DANGEROUS_CONTENT = "HARM_CATEGORY_DANGEROUS_CONTENT"
+#         HARM_CATEGORY_SEXUALLY_EXPLICIT = "HARM_CATEGORY_SEXUALLY_EXPLICIT"
+#         HARM_CATEGORY_HARASSMENT = "HARM_CATEGORY_HARASSMENT"
+#     class DummyFinishReason:
+#         STOP = "STOP"
+#         MAX_TOKENS = "MAX_TOKENS"
+#         SAFETY = "SAFETY"
+#         RECITATION = "RECITATION"
+#         OTHER = "OTHER"
+#         FUNCTION_CALL = "FUNCTION_CALL" # Add this
+#     class DummyToolConfig:
+#          class FunctionCallingConfig:
+#              class Mode:
+#                  ANY = "ANY"
+#                  NONE = "NONE"
+#                  AUTO = "AUTO"
+#          def __init__(self, function_calling_config=None): pass
+#     class DummyGenerateContentResponse: # For non-streaming response type hint
+#         def __init__(self):
+#             self.candidates = []
+#             self.text = None
+#     # Define a dummy GenerateContentConfig class
+#     class DummyGenerateContentConfig:
+#         def __init__(self, temperature=None, top_p=None, max_output_tokens=None, response_mime_type=None, response_schema=None, stop_sequences=None, candidate_count=None):
+#             self.temperature = temperature
+#             self.top_p = top_p
+#             self.max_output_tokens = max_output_tokens
+#             self.response_mime_type = response_mime_type
+#             self.response_schema = response_schema
+#             self.stop_sequences = stop_sequences
+#             self.candidate_count = candidate_count
+#     # Define a dummy FunctionResponse class
+#     class DummyFunctionResponse:
+#          def __init__(self, name, response):
+#              self.name = name
+#              self.response = response
 
-    class DummyGoogleExceptions:
-        ResourceExhausted = type('ResourceExhausted', (Exception,), {})
-        InternalServerError = type('InternalServerError', (Exception,), {})
-        ServiceUnavailable = type('ServiceUnavailable', (Exception,), {})
-        InvalidArgument = type('InvalidArgument', (Exception,), {})
-        GoogleAPICallError = type('GoogleAPICallError', (Exception,), {}) # Generic fallback
-    google_exceptions = DummyGoogleExceptions()
+#     # Create a dummy 'types' object and assign dummy classes to its attributes
+#     class DummyTypes:
+#         def __init__(self):
+#             self.GenerationResponse = DummyGenerationResponse
+#             self.FunctionCall = DummyFunctionCall
+#             self.Part = DummyPart
+#             self.Content = DummyContent
+#             self.Tool = DummyTool
+#             self.FunctionDeclaration = DummyFunctionDeclaration
+#             self.SafetySetting = DummySafetySetting
+#             self.HarmCategory = DummyHarmCategory
+#             self.FinishReason = DummyFinishReason
+#             self.ToolConfig = DummyToolConfig
+#             self.GenerateContentResponse = DummyGenerateContentResponse
+#             self.GenerateContentConfig = DummyGenerateContentConfig # Assign dummy config
+#             self.FunctionResponse = DummyFunctionResponse # Assign dummy function response
+
+#     types = DummyTypes() # Assign the dummy object to 'types'
+
+#     # Assign dummy types to global scope for direct imports if needed
+#     GenerationResponse = DummyGenerationResponse
+#     FunctionCall = DummyFunctionCall
+#     Part = DummyPart
+#     Content = DummyContent
+#     Tool = DummyTool
+#     FunctionDeclaration = DummyFunctionDeclaration
+#     SafetySetting = DummySafetySetting
+#     HarmCategory = DummyHarmCategory
+#     FinishReason = DummyFinishReason
+#     ToolConfig = DummyToolConfig
+#     GenerateContentResponse = DummyGenerateContentResponse
+
+#     class DummyGoogleExceptions:
+#         ResourceExhausted = type('ResourceExhausted', (Exception,), {})
+#         InternalServerError = type('InternalServerError', (Exception,), {})
+#         ServiceUnavailable = type('ServiceUnavailable', (Exception,), {})
+#         InvalidArgument = type('InvalidArgument', (Exception,), {})
+#         GoogleAPICallError = type('GoogleAPICallError', (Exception,), {}) # Generic fallback
+#     google_exceptions = DummyGoogleExceptions()
 
 
 # Relative imports for components within the 'gurt' package
