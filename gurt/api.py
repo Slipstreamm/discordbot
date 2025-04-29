@@ -441,6 +441,21 @@ async def process_requested_tools(cog: 'GurtCog', function_call: 'generative_mod
     return Part.from_function_response(name=function_name, response=tool_result_content)
 
 
+# --- Helper to find function call in parts ---
+def find_function_call_in_parts(parts: Optional[List['Part']]) -> Optional['generative_models.FunctionCall']:
+    """Finds the first valid FunctionCall object within a list of Parts."""
+    if not parts:
+        return None
+    for part in parts:
+        if hasattr(part, 'function_call') and part.function_call:
+            # Check if the function_call object itself is not None
+            if part.function_call.name and isinstance(part.function_call.name, str): # Basic validation
+                 return part.function_call
+            else:
+                 print(f"Warning: Found part with 'function_call' attribute, but it was invalid or None: {part.function_call}")
+    return None
+
+
 # --- Main AI Response Function ---
 async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -463,10 +478,13 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
     channel_id = message.channel.id
     user_id = message.author.id
-    initial_parsed_data = None # Added to store initial parsed result
+    # initial_parsed_data is no longer needed with the loop structure
     final_parsed_data = None
     error_message = None
-    fallback_response = None
+    fallback_response = None # Keep fallback for critical initial failures
+    max_tool_calls = 5 # Maximum number of sequential tool calls allowed
+    tool_calls_made = 0
+    last_response_obj = None # Store the last response object from the loop
 
     try:
         # --- Build Prompt Components ---
@@ -474,18 +492,8 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         conversation_context_messages = gather_conversation_context(cog, channel_id, message.id) # Pass cog
         memory_context = await get_memory_context(cog, message) # Pass cog
 
-        # --- Initialize Model ---
-        # Tools are passed during model initialization in Vertex AI SDK
-        # Combine tool declarations into a Tool object
-        vertex_tool = Tool(function_declarations=TOOLS) if TOOLS else None
-
-        model = GenerativeModel(
-            model_name or DEFAULT_MODEL,
-            system_instruction=final_system_prompt,
-            tools=[vertex_tool] if vertex_tool else None
-        )
-
         # --- Prepare Message History (Contents) ---
+        # Contents will be built progressively within the loop
         contents: List[Content] = []
 
         # Add memory context if available
@@ -593,183 +601,199 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             contents.append(Content(role="user", parts=current_message_parts))
         else:
             print("Warning: No content parts generated for user message.")
-            contents.append(Content(role="user", parts=[Part.from_text("")]))
+            contents.append(Content(role="user", parts=[Part.from_text("")])) # Ensure content list isn't empty
 
+        # --- Initialize Model WITH Tools for the Loop ---
+        vertex_tool = Tool(function_declarations=TOOLS) if TOOLS else None
+        model_with_tools = GenerativeModel(
+            model_name or DEFAULT_MODEL,
+            system_instruction=final_system_prompt,
+            tools=[vertex_tool] if vertex_tool else None
+        )
 
-        # --- First API Call (Check for Tool Use) ---
-        print("Making initial API call to check for tool use...")
-        # Configure the initial call to force *any* tool use
+        # --- Config for checking tool calls within the loop ---
+        # No schema enforcement needed here, just checking for function calls
+        generation_config_tool_check = GenerationConfig(
+            temperature=0.75, # Or desired temp for tool reasoning
+            max_output_tokens=10000 # Allow ample tokens for reasoning + function call
+        )
+        # Force *any* tool use if the model deems it necessary
         tool_config_any = ToolConfig(
             function_calling_config=ToolConfig.FunctionCallingConfig(
                 mode=ToolConfig.FunctionCallingConfig.Mode.ANY
             )
-        )
-        # Define the generation config without tool_config initially
-        generation_config_initial = GenerationConfig(
-            temperature=0.75,
-            max_output_tokens=10000 # Adjust as needed
-            # No response schema needed for the initial call, just checking for function calls
-        )
+        ) if vertex_tool else None # Only set tool_config if tools exist
 
-        initial_response = await call_vertex_api_with_retry(
-            cog=cog,
-            model=model,
-            contents=contents,
-            generation_config=generation_config_initial,
-            safety_settings=STANDARD_SAFETY_SETTINGS,
-            request_desc=f"Initial response check for message {message.id}",
-            tool_config=tool_config_any # Pass ToolConfig directly here
-        )
+        # --- Tool Execution Loop ---
+        while tool_calls_made < max_tool_calls:
+            print(f"Making API call (Loop Iteration {tool_calls_made + 1}/{max_tool_calls})...")
 
-        # --- Log Raw Request and Response ---
-        try:
-            # Log the request payload (contents)
-            request_payload_log = [{"role": c.role, "parts": [str(p) for p in c.parts]} for c in contents] # Convert parts to string for logging
-            print(f"--- Raw API Request (Initial Call) ---\n{json.dumps(request_payload_log, indent=2)}\n------------------------------------")
-            # Log the raw response object
-            print(f"--- Raw API Response (Initial Call) ---\n{initial_response}\n-----------------------------------")
-        except Exception as log_e:
-            print(f"Error logging raw request/response: {log_e}")
-        # --- End Logging ---
+            # --- Log Request Payload for this iteration ---
+            try:
+                request_payload_log = [{"role": c.role, "parts": [str(p) for p in c.parts]} for c in contents]
+                print(f"--- Raw API Request (Loop {tool_calls_made + 1}) ---\n{json.dumps(request_payload_log, indent=2)}\n------------------------------------")
+            except Exception as log_e:
+                print(f"Error logging raw request/response: {log_e}")
+            # --- End Logging ---
 
-        if not initial_response or not initial_response.candidates:
-             raise Exception("Initial API call returned no response or candidates.")
-
-        # --- Check for Tool Call FIRST ---
-        candidate = initial_response.candidates[0]
-        finish_reason = getattr(candidate, 'finish_reason', None)
-        function_call = None
-        function_call_part_content = None # Store the AI's request message content
-
-        # Check primarily for the *presence* of a function call part,
-        # as finish_reason might be STOP even with a function call.
-        if hasattr(candidate, 'content') and candidate.content.parts:
-            for part in candidate.content.parts:
-                if hasattr(part, 'function_call'):
-                    function_call = part.function_call # Assign the value
-                    # Add check to ensure function_call is not None before proceeding
-                    if function_call:
-                        # Store the whole content containing the call to add to history later
-                        function_call_part_content = candidate.content
-                        print(f"AI requested tool (found function_call part): {function_call.name}")
-                        break # Found a valid function call part
-                    else:
-                        # Log if the attribute exists but is None (unexpected case)
-                        print("Warning: Found part with 'function_call' attribute, but its value was None.")
-
-        # --- Process Tool Call or Handle Direct Response ---
-        if function_call and function_call_part_content:
-            # --- Tool Call Path ---
-            initial_parsed_data = None # No initial JSON expected if tool is called
-
-            # Process the tool request
-            tool_response_part = await process_requested_tools(cog, function_call)
-
-            # Append the AI's request and the tool's response to the history
-            contents.append(candidate.content) # Add the AI's function call request message
-            contents.append(Content(role="function", parts=[tool_response_part])) # Add the function response part
-
-            # --- Second API Call (Get Final Response After Tool) ---
-            print("Making follow-up API call with tool results...")
-
-            # Initialize a NEW model instance WITHOUT tools for the follow-up call
-            # This prevents the InvalidArgument error when specifying response schema
-            model_final = GenerativeModel(
-                model_name or DEFAULT_MODEL, # Use the same model name
-                system_instruction=final_system_prompt # Keep the same system prompt
-                # Omit the 'tools' parameter here
-            )
-
-            # Preprocess the schema before passing it to GenerationConfig
-            processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
-            generation_config_final = GenerationConfig(
-                temperature=0.75, # Keep original temperature for final response
-                max_output_tokens=10000, # Keep original max tokens
-                response_mime_type="application/json",
-                response_schema=processed_response_schema # Use preprocessed schema
-            )
-
-            final_response_obj = await call_vertex_api_with_retry( # Renamed variable for clarity
+            current_response_obj = await call_vertex_api_with_retry(
                 cog=cog,
-                model=model_final, # Use the new model instance WITHOUT tools
-                contents=contents, # History now includes tool call/response
-                generation_config=generation_config_final,
+                model=model_with_tools, # Use model *with* tools enabled
+                contents=contents,
+                generation_config=generation_config_tool_check,
                 safety_settings=STANDARD_SAFETY_SETTINGS,
-                request_desc=f"Follow-up response for message {message.id} after tool execution"
+                request_desc=f"Tool Check {tool_calls_made + 1} for message {message.id}",
+                tool_config=tool_config_any # Pass tool config to allow function calls
             )
+            last_response_obj = current_response_obj # Store the latest response
 
-            if not final_response_obj or not final_response_obj.candidates:
-                 raise Exception("Follow-up API call returned no response or candidates.")
+            # --- Log Raw Response for this iteration ---
+            try:
+                print(f"--- Raw API Response (Loop {tool_calls_made + 1}) ---\n{current_response_obj}\n-----------------------------------")
+            except Exception as log_e:
+                print(f"Error logging raw request/response: {log_e}")
+            # --- End Logging ---
 
-            final_response_text = _get_response_text(final_response_obj) # Use helper
-            final_parsed_data = parse_and_validate_json_response(
-                final_response_text, RESPONSE_SCHEMA['schema'], "final response after tools"
-            )
+            if not current_response_obj or not current_response_obj.candidates:
+                error_message = f"API call in tool loop (Iteration {tool_calls_made + 1}) failed to return candidates."
+                print(error_message)
+                break # Exit loop on critical API failure
 
-            # Handle validation failure - Re-prompt loop (simplified example)
+            candidate = current_response_obj.candidates[0]
+            # Use the helper function to find a valid function call
+            function_call = find_function_call_in_parts(candidate.content.parts)
+
+            if function_call:
+                tool_calls_made += 1
+                print(f"AI requested tool: {function_call.name} (Call {tool_calls_made}/{max_tool_calls})")
+
+                # Append AI's request message (containing the function call) to history
+                contents.append(candidate.content)
+
+                # Execute the requested tool
+                tool_response_part = await process_requested_tools(cog, function_call)
+
+                # Append tool response to history
+                contents.append(Content(role="function", parts=[tool_response_part]))
+
+                # Continue to the next loop iteration to see if AI calls another tool
+            else:
+                # No function call found in the response parts
+                print("No further tool call requested by AI. Exiting loop.")
+                break # Exit loop
+
+        # --- After the loop ---
+        if error_message:
+            # An error occurred within the loop or initial API call
+            print(f"Exited tool loop due to error: {error_message}")
+            # Fallback logic might be needed here depending on the error
+            if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
+                 fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+
+        elif tool_calls_made >= max_tool_calls:
+            error_message = f"Reached maximum tool call limit ({max_tool_calls}). Aborting further processing."
+            print(error_message)
+            # Potentially add a fallback response here too
+            fallback_response = {"should_respond": True, "content": "Sorry, that got a bit complicated for me.", "react_with_emoji": "🤯"}
+
+        elif last_response_obj:
+            # Loop finished naturally (AI didn't request more tools) or after the last successful tool call.
+            # Now, make the FINAL call to get the structured JSON response.
+
+            # Check if the *last* response from the loop *already* contained the final text answer
+            # (This can happen if the AI decides to respond directly after the last tool call)
+            last_response_text = _get_response_text(last_response_obj)
+            if last_response_text:
+                 print("Attempting to parse final JSON from the last loop response...")
+                 # Try parsing this text first
+                 final_parsed_data = parse_and_validate_json_response(
+                     last_response_text, RESPONSE_SCHEMA['schema'], "final response (from last loop iteration)"
+                 )
+
+            # If the last loop response didn't contain valid JSON, make a dedicated final call
             if final_parsed_data is None:
-                print("Warning: Final response failed validation. Attempting re-prompt (basic)...")
-                # Construct a basic re-prompt message
-                contents.append(final_response_obj.candidates[0].content) # Add the invalid response
-                contents.append(Content(role="user", parts=[Part.from_text(
-                    "Your previous JSON response was invalid or did not match the required schema. "
-                    f"Please provide the response again, strictly adhering to this schema:\n{json.dumps(RESPONSE_SCHEMA['schema'], indent=2)}"
-                )]))
+                print("Last loop response did not contain valid final JSON. Making dedicated final API call...")
 
-                # Retry the final call
-                retry_response_obj = await call_vertex_api_with_retry(
-                    cog=cog, model=model, contents=contents,
-                    generation_config=generation_config_final, safety_settings=STANDARD_SAFETY_SETTINGS,
-                    request_desc=f"Re-prompt validation failure for message {message.id}"
+                # Initialize a NEW model instance WITHOUT tools for the final call
+                # This seems necessary for reliable JSON schema enforcement with Vertex AI currently
+                model_final_json = GenerativeModel(
+                    model_name or DEFAULT_MODEL,
+                    system_instruction=final_system_prompt
+                    # Omit 'tools' parameter
                 )
-                if retry_response_obj and retry_response_obj.candidates:
-                    final_response_text = _get_response_text(retry_response_obj) # Use helper
-                    final_parsed_data = parse_and_validate_json_response(
-                        final_response_text, RESPONSE_SCHEMA['schema'], "re-prompted final response"
-                    )
-                    if final_parsed_data is None:
-                         print("Critical Error: Re-prompted response still failed validation.")
-                         error_message = "Failed to get valid JSON response after re-prompting."
+
+                # Preprocess the schema before passing it to GenerationConfig
+                processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
+                generation_config_final_json = GenerationConfig(
+                    temperature=0.75, # Or desired final temp
+                    max_output_tokens=10000, # Or desired final max tokens
+                    response_mime_type="application/json",
+                    response_schema=processed_response_schema # Use preprocessed schema
+                )
+
+                # Append the last AI response (which didn't have a tool call) to history before the final call
+                if last_response_obj and last_response_obj.candidates:
+                     contents.append(last_response_obj.candidates[0].content)
+
+                final_json_response_obj = await call_vertex_api_with_retry(
+                    cog=cog,
+                    model=model_final_json, # Use model WITHOUT tools
+                    contents=contents, # Use history accumulated from the loop
+                    generation_config=generation_config_final_json,
+                    safety_settings=STANDARD_SAFETY_SETTINGS,
+                    request_desc=f"Final JSON Generation for message {message.id}"
+                    # No tool_config needed here
+                )
+
+                if not final_json_response_obj or not final_json_response_obj.candidates:
+                    error_message = "Final API call for JSON generation returned no response or candidates."
+                    print(error_message)
                 else:
-                 error_message = "Failed to get response after re-prompting."
-            # final_parsed_data is now set (or None if failed) after tool use and potential re-prompt
+                    final_response_text = _get_response_text(final_json_response_obj) # Use helper
+                    final_parsed_data = parse_and_validate_json_response(
+                        final_response_text, RESPONSE_SCHEMA['schema'], "final response (dedicated call)"
+                    )
+
+                    if final_parsed_data is None:
+                        print("Critical Error: Final dedicated JSON response failed validation.")
+                        error_message = "Failed to parse/validate final AI JSON response after dedicated call."
+                        # Optional: Add re-prompt logic here if needed, similar to the old single-tool path
+                        # For simplicity now, just report the error.
+                        if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
+                             fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+
+            # If parsing succeeded (either from last loop or dedicated call)
+            elif final_parsed_data:
+                 print("Successfully parsed final JSON response.")
+
 
         else:
-            # --- No Tool Call Path ---
-            print("No tool call requested by AI. Processing initial response as final.")
-            # Attempt to parse the initial response text directly.
-            initial_response_text = _get_response_text(initial_response) # Use helper
-            # Validate against the final schema because this IS the final response.
-            final_parsed_data = parse_and_validate_json_response(
-                initial_response_text, RESPONSE_SCHEMA['schema'], "final response (no tools)"
-            )
-            initial_parsed_data = final_parsed_data # Keep initial_parsed_data consistent for return dict
-
-            if final_parsed_data is None:
-                 # This means the initial response failed validation.
-                 print("Critical Error: Initial response failed validation (no tools).")
-                 error_message = "Failed to parse/validate initial AI JSON response."
-                 # Create a basic fallback if the bot was mentioned
-                 replied_to_bot = message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user
-                 if cog.bot.user.mentioned_in(message) or replied_to_bot:
-                     fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
-            # initial_parsed_data is not used in this path, only final_parsed_data matters
+            # This case should ideally not be reached if the loop logic is correct,
+            # but handles scenarios where the loop exits without a last_response_obj
+            # (e.g., initial API call failed before loop even started).
+            if not error_message: # Avoid overwriting a more specific error
+                error_message = "Tool loop completed without a final response object."
+                print(error_message)
+            if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
+                 fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
 
 
     except Exception as e:
-        error_message = f"Error in get_ai_response main loop for message {message.id}: {type(e).__name__}: {str(e)}"
+        error_message = f"Error in get_ai_response main logic for message {message.id}: {type(e).__name__}: {str(e)}"
         print(error_message)
         import traceback
         traceback.print_exc()
-        # Ensure both are None on critical error
-        initial_parsed_data = None
-        final_parsed_data = None
+        final_parsed_data = None # Ensure final data is None on error
+        # Add fallback if applicable
+        if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
+             fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
 
+
+    # Return dictionary structure remains the same, but initial_response is removed
     return {
-        "initial_response": initial_parsed_data, # Return parsed initial data
-        "final_response": final_parsed_data,    # Return parsed final data
-        "error": error_message,
-        "fallback_initial": fallback_response
+        "final_response": final_parsed_data,    # Parsed final data (or None)
+        "error": error_message,                 # Error message (or None)
+        "fallback_initial": fallback_response   # Fallback for critical failures
     }
 
 

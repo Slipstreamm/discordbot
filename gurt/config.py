@@ -79,7 +79,7 @@ STATS_PUSH_INTERVAL = 30 # Push every 30 seconds
 
 # --- Context & Caching ---
 CHANNEL_TOPIC_CACHE_TTL = 600 # seconds (10 minutes)
-CONTEXT_WINDOW_SIZE = 200  # Number of messages to include in context
+CONTEXT_WINDOW_SIZE = 150  # Number of messages to include in context
 CONTEXT_EXPIRY_TIME = 3600  # Time in seconds before context is considered stale (1 hour)
 MAX_CONTEXT_TOKENS = 8000  # Maximum number of tokens to include in context (Note: Not actively enforced yet)
 SUMMARY_CACHE_TTL = 900 # seconds (15 minutes) for conversation summary cache
