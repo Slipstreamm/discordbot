@@ -685,41 +685,61 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 break # Exit loop on critical API failure
 
             candidate = current_response_obj.candidates[0]
-            # Use the helper function to find a valid function call
-            function_call = find_function_call_in_parts(candidate.content.parts)
 
-            if function_call:
-                # Check if the AI signaled completion with no_operation
-                if function_call.name == "no_operation":
-                    print("AI called no_operation, signaling completion of tool sequence.")
-                    # Append the no_operation call itself for context, but don't execute it as a real tool
-                    contents.append(candidate.content)
+            # --- Find ALL function calls in the candidate's parts ---
+            function_calls_found = []
+            if candidate.content and candidate.content.parts:
+                for part in candidate.content.parts:
+                    if hasattr(part, 'function_call') and part.function_call and part.function_call.name:
+                        function_calls_found.append(part.function_call)
+
+            if function_calls_found:
+                # Check if the *only* call is no_operation
+                if len(function_calls_found) == 1 and function_calls_found[0].name == "no_operation":
+                    print("AI called only no_operation, signaling completion.")
+                    contents.append(candidate.content) # Append the model's turn (with the no_op call)
                     # Add the dummy function response for no_operation
                     contents.append(Content(role="function", parts=[Part.from_function_response(
                         name="no_operation",
                         response={"status": "success", "message": "No operation performed."}
                     )]))
-                    # Update last_response_obj to include this final step before breaking
-                    last_response_obj = current_response_obj # Or maybe construct a new one? Let's stick with this for now.
-                    break # Exit the loop, ready for final JSON generation
+                    last_response_obj = current_response_obj
+                    break # Exit loop
 
-                # If it's a different tool, proceed with execution
-                tool_calls_made += 1
-                print(f"AI requested tool: {function_call.name} (Call {tool_calls_made}/{max_tool_calls})")
+                # Process multiple function calls if present (or a single non-no_op call)
+                tool_calls_made += 1 # Increment once per model turn that requests tools
+                print(f"AI requested {len(function_calls_found)} tool(s): {[fc.name for fc in function_calls_found]} (Turn {tool_calls_made}/{max_tool_calls})")
 
-                # Append AI's request message (containing the function call) to history
+                # Append the entire model response content (containing all function calls)
                 contents.append(candidate.content)
 
-                # Execute the requested tool
-                tool_response_part = await process_requested_tools(cog, function_call)
+                # --- Execute all requested tools and gather responses ---
+                function_response_parts = []
+                for func_call in function_calls_found:
+                     # Skip executing no_operation if it's mixed with other calls
+                     if func_call.name == "no_operation":
+                         print("Skipping execution for 'no_operation' call mixed with others.")
+                         # Add the dummy response part for it
+                         response_part = Part.from_function_response(
+                             name="no_operation",
+                             response={"status": "success", "message": "No operation performed."}
+                         )
+                     else:
+                         # Execute the actual tool
+                         response_part = await process_requested_tools(cog, func_call)
+                     function_response_parts.append(response_part)
 
-                # Append tool response to history
-                contents.append(Content(role="function", parts=[tool_response_part]))
-                # Continue the loop to check if the AI wants to call *another* tool
-                # The next iteration will use model_with_tools again.
+                # Append a single function role turn containing ALL response parts
+                if function_response_parts:
+                    contents.append(Content(role="function", parts=function_response_parts))
+                else:
+                     print("Warning: Function calls found, but no response parts generated.")
+
+                # Continue the loop to see if the AI needs more tools after these results
             else:
-                # No function call found in the current response using model_with_tools
-                print("No further tool call requested by AI. Exiting loop.")
+                # No function calls found in this response
+                print("No tool calls requested by AI in this turn. Exiting loop.")
+                # The last_response_obj already holds the model's final (non-tool) response
                 break # Exit loop
 
         # --- After the loop ---
