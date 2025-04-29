@@ -1219,10 +1219,10 @@ async def get_internal_ai_json_response(
              final_response_text = _get_response_text(response_obj) # Store raw text
              # --- Add detailed logging for raw response text ---
              print(f"--- Raw AI Safety Check Response Text ---") # Keep consistent log message
-             print(final_response_text)
-             print(f"--- End Raw response_obj.text ---")
+             print(response_obj)
+             print(f"--- End Raw AI Safety Check Response Text ---") # Keep consistent log message
              # --- End detailed logging ---
-             print(f"Parsing ({task_description}): Using response_obj.text for JSON.")
+             print(f"Parsing ({task_description}): Using AI Safety Check Response Text for JSON.")
 
              final_parsed_data = parse_and_validate_json_response(
                  final_response_text, response_schema_dict, f"internal task ({task_description})"
