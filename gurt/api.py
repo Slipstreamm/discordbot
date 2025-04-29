@@ -13,6 +13,7 @@ from .tools import get_conversation_summary
 # Google Generative AI Imports (using Vertex AI backend)
 # try:
 from google import genai
+from google.cloud.aiplatform.generative_models import SafetySetting, HarmCategory
 from google.generativeai import types
 from google.api_core import exceptions as google_exceptions # Keep for retry logic if applicable
 # except ImportError:
