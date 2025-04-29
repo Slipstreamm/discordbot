@@ -1185,6 +1185,13 @@ async def create_new_tool(cog: commands.Cog, tool_name: str, description: str, p
         "generated_declaration_params": declaration_params_str
     }
 
+async def no_operation(cog: commands.Cog) -> Dict[str, Any]:
+    """
+    Does absolutely nothing. Used when a tool call is forced but no action is needed.
+    """
+    print("Executing no_operation tool.")
+    return {"status": "success", "message": "No operation performed."}
+
 
 # --- Tool Mapping ---
 # This dictionary maps tool names (used in the AI prompt) to their implementation functions.
@@ -1214,5 +1221,6 @@ TOOL_MAPPING = {
     "read_file_content": read_file_content,
     "create_new_tool": create_new_tool, # Added the meta-tool
     "execute_internal_command": execute_internal_command, # Added internal command execution
-    "get_user_id": get_user_id # Added user ID lookup tool
+    "get_user_id": get_user_id, # Added user ID lookup tool
+    "no_operation": no_operation # Added no-op tool
 }

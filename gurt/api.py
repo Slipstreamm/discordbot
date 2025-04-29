@@ -166,7 +166,8 @@ async def call_vertex_api_with_retry(
     generation_config: 'GenerationConfig', # Use string literal for type hint
     safety_settings: Optional[Dict[Any, Any]], # Use Any for broader compatibility
     request_desc: str,
-    stream: bool = False
+    stream: bool = False,
+    tool_choice: Optional[str] = None # Add tool_choice parameter
 ) -> Union['GenerationResponse', AsyncIterable['GenerationResponse'], None]: # Use string literals
     """
     Calls the Vertex AI Gemini API with retry logic.
@@ -198,7 +199,8 @@ async def call_vertex_api_with_retry(
                 contents=contents,
                 generation_config=generation_config,
                 safety_settings=safety_settings or STANDARD_SAFETY_SETTINGS,
-                stream=stream
+                stream=stream,
+                tool_choice=tool_choice # Pass tool_choice here
             )
 
             # --- Success Logging ---
@@ -608,7 +610,8 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             contents=contents,
             generation_config=generation_config_initial,
             safety_settings=STANDARD_SAFETY_SETTINGS,
-            request_desc=f"Initial response check for message {message.id}"
+            request_desc=f"Initial response check for message {message.id}",
+            tool_choice="any" # Force a tool call
         )
 
         # --- Log Raw Request and Response ---

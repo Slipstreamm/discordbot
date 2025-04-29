@@ -837,6 +837,19 @@ def create_tools_list():
             }
         )
     )
+
+    # --- no_operation ---
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="no_operation",
+            description="Does absolutely nothing. Used when a tool call is forced but no action is needed.",
+            parameters={
+                "type": "object",
+                "properties": {}, # No parameters
+                "required": []
+            }
+        )
+    )
     return tool_declarations
 
 # Initialize TOOLS list, handling potential ImportError if library not installed
