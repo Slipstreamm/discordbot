@@ -15,7 +15,7 @@ from .tools import get_conversation_summary
 from google import genai
 from google.generativeai import types
 # Explicitly import necessary types for clarity and potential dummy definitions
-from google.generativeai.types import GenerationResponse, FunctionCall, Part, Content, Tool, FunctionDeclaration, SafetySetting, HarmCategory, FinishReason, ToolConfig, GenerateContentResponse
+from google.generativeai.types import FunctionCall, Part, Content, Tool, SafetySetting, HarmCategory, FinishReason, ToolConfig, GenerateContentResponse
 from google.api_core import exceptions as google_exceptions # Keep for retry logic if applicable
 # except ImportError:
 #     print("WARNING: google-generativeai or google-api-core not installed. API calls will fail.")
