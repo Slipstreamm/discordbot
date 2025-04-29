@@ -5,6 +5,7 @@ import traceback
 import os
 import json
 import aiohttp
+import discord # Added import
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any # Added Any
 
@@ -442,10 +443,94 @@ async def background_processing_task(cog: 'GurtCog'):
                         if log_result.get("status") != "logged":
                             print(f"  - Warning: Failed to log autonomous action attempt to memory: {log_result.get('error')}")
                     except Exception as log_e:
+                            print(f"  - Warning: Failed to log autonomous action attempt to memory: {log_result.get('error')}")
+                    except Exception as log_e:
                         print(f"  - Error logging autonomous action attempt to memory: {log_e}")
                         traceback.print_exc()
 
-                    # 7. Report Action (Optional)
+                    # 6.5 Decide Follow-up Action based on Result
+                    if selected_tool_name and tool_result: # Only consider follow-up if an action was successfully attempted
+                        print(f"  - Considering follow-up action based on result of {selected_tool_name}...")
+                        follow_up_tool_name = None
+                        follow_up_tool_args = None
+                        follow_up_reasoning = "No follow-up action decided."
+
+                        try:
+                            follow_up_schema = {
+                                "type": "object",
+                                "properties": {
+                                    "should_follow_up": {"type": "boolean", "description": "Whether Gurt should perform a follow-up action based on the previous action's result."},
+                                    "reasoning": {"type": "string", "description": "Brief reasoning for the follow-up decision."},
+                                    "follow_up_tool_name": {"type": ["string", "null"], "description": "If following up, the name of the tool to use (e.g., 'send_discord_message', 'remember_general_fact'). Null otherwise."},
+                                    "follow_up_arguments": {"type": ["object", "null"], "description": "If following up, arguments for the follow-up tool. Null otherwise."}
+                                },
+                                "required": ["should_follow_up", "reasoning"]
+                            }
+                            follow_up_system_prompt = (
+                                "You are Gurt. You just performed an autonomous action and got a result. "
+                                "Decide if you should take a follow-up action based on this result. "
+                                "Consider if the result is interesting, surprising, useful, or warrants a comment. "
+                                "You could send a message about it, remember something from it, or do nothing. "
+                                "Available tools for follow-up: send_discord_message, remember_general_fact, remember_user_fact, no_operation. " # Limit follow-up tools
+                                "Respond ONLY with the JSON decision."
+                            )
+                            follow_up_user_prompt = (
+                                f"Previous Action: {selected_tool_name}\n"
+                                f"Arguments: {json.dumps(tool_args)}\n"
+                                f"Result Summary: {result_summary}\n\n"
+                                "Should Gurt perform a follow-up action based on this result? If so, which tool and arguments?"
+                            )
+
+                            print("    - Asking LLM for follow-up action decision...")
+                            follow_up_decision_data, _ = await get_internal_ai_json_response(
+                                cog=cog,
+                                prompt_messages=[{"role": "system", "content": follow_up_system_prompt}, {"role": "user", "content": follow_up_user_prompt}],
+                                task_description="Autonomous Follow-up Action Decision",
+                                response_schema_dict=follow_up_schema,
+                                model_name=cog.default_model,
+                                temperature=0.5
+                            )
+
+                            if follow_up_decision_data and follow_up_decision_data.get("should_follow_up"):
+                                follow_up_tool_name = follow_up_decision_data.get("follow_up_tool_name")
+                                follow_up_tool_args = follow_up_decision_data.get("follow_up_arguments")
+                                follow_up_reasoning = follow_up_decision_data.get("reasoning", "LLM decided to follow up.")
+                                print(f"    - LLM decided to follow up: Tool='{follow_up_tool_name}', Args={follow_up_tool_args}, Reason='{follow_up_reasoning}'")
+
+                                if not follow_up_tool_name or follow_up_tool_name not in TOOL_MAPPING:
+                                    print(f"    - Error: LLM chose invalid follow-up tool '{follow_up_tool_name}'. Aborting follow-up.")
+                                    follow_up_tool_name = None
+                                elif not isinstance(follow_up_tool_args, dict) and follow_up_tool_args is not None:
+                                    print(f"    - Warning: LLM provided invalid follow-up args '{follow_up_tool_args}'. Using {{}}.")
+                                    follow_up_tool_args = {}
+                                elif follow_up_tool_args is None:
+                                     follow_up_tool_args = {}
+
+                            else:
+                                follow_up_reasoning = follow_up_decision_data.get("reasoning", "LLM decided not to follow up or failed.") if follow_up_decision_data else "LLM follow-up decision failed."
+                                print(f"    - LLM decided not to follow up. Reason: {follow_up_reasoning}")
+
+                        except Exception as follow_up_llm_e:
+                            print(f"    - Error during LLM decision phase for follow-up action: {follow_up_llm_e}")
+                            traceback.print_exc()
+
+                        # Execute Follow-up Action
+                        if follow_up_tool_name and follow_up_tool_args is not None:
+                            follow_up_tool_func = TOOL_MAPPING.get(follow_up_tool_name)
+                            if follow_up_tool_func:
+                                print(f"    - Executing follow-up action: {follow_up_tool_name}(cog, **{follow_up_tool_args})")
+                                try:
+                                    follow_up_result = await follow_up_tool_func(cog, **follow_up_tool_args)
+                                    follow_up_result_summary = _create_result_summary(follow_up_result)
+                                    print(f"    - Follow-up action '{follow_up_tool_name}' completed. Result: {follow_up_result_summary}")
+                                    # Optionally log this follow-up action as well? Could get noisy.
+                                except Exception as follow_up_exec_e:
+                                    print(f"    - Error executing follow-up action '{follow_up_tool_name}': {follow_up_exec_e}")
+                                    traceback.print_exc()
+                            else:
+                                 print(f"    - Error: Follow-up tool '{follow_up_tool_name}' function not found.")
+
+                    # 7. Report Initial Action (Optional)
                     if AUTONOMOUS_ACTION_REPORT_CHANNEL_ID and selected_tool_name: # Only report if an action was attempted
                         try:
                             report_channel_id = int(AUTONOMOUS_ACTION_REPORT_CHANNEL_ID) # Ensure it's an int
