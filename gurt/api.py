@@ -218,15 +218,17 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         # --- 1. Build System Prompt ---
         # This now includes dynamic context like mood, facts, etc.
         system_prompt_text = await build_dynamic_system_prompt(cog, message)
-        # Create a LangChain prompt template using a mix of explicit types and tuples
+        # Create a LangChain prompt template
+        # LangchainAgent default prompt includes placeholders for chat_history and agent_scratchpad
+        # We just need to provide the system message part.
+        # Note: The exact structure might depend on the agent type used by LangchainAgent.
+        # Assuming a standard structure:
         prompt_template = ChatPromptTemplate.from_messages([
-            SystemMessage(content=system_prompt_text),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}"), # Use tuple format for user input
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
+            ("system", system_prompt_text),
+            MessagesPlaceholder(variable_name="chat_history"), # Standard placeholder
+            ("user", "{input}"), # User input placeholder
+            MessagesPlaceholder(variable_name="agent_scratchpad"), # Tool execution placeholder
         ])
-        # Removed the explicit validation check as it was causing issues
-
 
         # --- 2. Prepare Tools ---
         # Wrap tools from TOOL_MAPPING to include the 'cog' instance
