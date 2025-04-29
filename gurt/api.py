@@ -1,3 +1,15 @@
+import ssl
+import certifi
+
+def patch_ssl_certifi():
+    # Monkey patch the global SSL context to always use certifi bundle
+    ssl._create_default_https_context = ssl.create_default_context
+    ssl.create_default_context = lambda *args, **kwargs: ssl._create_default_https_context(
+        cafile=certifi.where(), *args, **kwargs
+    )
+
+patch_ssl_certifi()
+
 import discord
 import aiohttp
 import asyncio
@@ -9,8 +21,6 @@ import datetime
 from typing import TYPE_CHECKING, Optional, List, Dict, Any, Union, AsyncIterable, Tuple # Import Tuple
 import jsonschema # For manual JSON validation
 from .tools import get_conversation_summary
-import certifi
-import httpx
 
 # Google Generative AI Imports (using Vertex AI backend)
 # try:
@@ -263,10 +273,6 @@ def _get_response_text(response: Optional[types.GenerateContentResponse]) -> Opt
 # --- Initialize Google Generative AI Client for Vertex AI ---
 # No explicit genai.configure(api_key=...) needed when using Vertex AI backend
 try:
-    # Step 1: Patch certs into httpx
-    custom_httpx_client = httpx.AsyncClient(
-        transport=httpx.AsyncHTTPTransport(verify=certifi.where())
-    )
 
     # Step 2: Initialize GenAI Client
     genai_client = genai.Client(
@@ -275,8 +281,6 @@ try:
         location=LOCATION,
     )
 
-    # Step 3: Inject the fixed httpx client
-    genai_client._api_client._httpx_client = custom_httpx_client
 
     print(f"Google GenAI Client initialized for Vertex AI project '{PROJECT_ID}' in location '{LOCATION}'.")
 except NameError:
