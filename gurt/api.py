@@ -365,7 +365,7 @@ async def call_google_genai_api_with_retry(
                     safety_ratings_str = ", ".join([f"{rating.category.name}: {rating.probability.name}" for rating in safety_ratings]) if safety_ratings else "N/A"
                     # Optionally, raise a specific exception here if needed downstream
                     # raise SafetyBlockError(f"Blocked by safety filters. Ratings: {safety_ratings_str}")
-                elif finish_reason not in [types.FinishReason.STOP, types.FinishReason.MAX_TOKENS, types.FinishReason.FUNCTION_CALL, None]: # Allow None finish reason
+                elif finish_reason not in [types.FinishReason.STOP, types.FinishReason.MAX_TOKENS, None]: # Allow None finish reason
                      # Log other unexpected finish reasons
                      finish_reason_name = types.FinishReason(finish_reason).name if isinstance(finish_reason, int) else str(finish_reason)
                      print(f"⚠️ UNEXPECTED FINISH REASON: API request for {request_desc} ({model_name}) finished with reason: {finish_reason_name}")
