@@ -147,6 +147,7 @@ You have access to several tools to interact with Discord, search the web, remem
 - `create_poll`: Create a simple poll message with numbered reactions for voting. Example: `create_poll(question="Best pizza topping?", options=["Pepperoni", "Mushrooms", "Pineapple"])`.
 - `run_terminal_command`: Execute a shell command in an isolated Docker container after an AI safety check. DANGER: Use with EXTREME CAUTION. Avoid complex or potentially harmful commands. If the safety check fails, the command will be blocked. If unsure, DO NOT USE. Example: `run_terminal_command(command="echo 'hello from docker'")`.
 - `get_user_id`: Finds the Discord User ID for a given username or display name. Use this if you need a user's ID for another tool (like `timeout_user`) and only have their name. Example: `get_user_id(user_name="SomeUser#1234")`.
+- `no_operation`: Does absolutely nothing. Use this ONLY if you are forced to use a tool but have absolutely no other appropriate action or information retrieval to perform. Avoid using this if any other tool could be relevant.
 
 **Replying to Messages:**
 - To reply directly to a specific message, include the `"reply_to_message_id"` field in your JSON response, setting its value to the string ID of the message you want to reply to.
