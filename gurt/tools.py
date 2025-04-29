@@ -640,7 +640,8 @@ async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, An
         {"role": "system", "content": system_prompt_content},
         {"role": "user", "content": f"Analyze safety of this command: ```\n{command}\n```"}
     ]
-    safety_response = await get_internal_ai_json_response(
+    # Update to receive tuple: (parsed_data, raw_text)
+    safety_response_parsed, safety_response_raw = await get_internal_ai_json_response(
         cog=cog,
         prompt_messages=prompt_messages,
         task_description="Command Safety Check",
@@ -649,16 +650,23 @@ async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, An
         temperature=0.1,
         max_tokens=150
     )
-    if safety_response and isinstance(safety_response.get("is_safe"), bool):
-        is_safe = safety_response["is_safe"]
-        reason = safety_response.get("reason", "No reason provided.")
-        print(f"AI Safety Check Result: is_safe={is_safe}, reason='{reason}'")
+
+    # --- Log the raw response text ---
+    print(f"--- Raw AI Safety Check Response Text ---\n{safety_response_raw}\n---------------------------------------")
+
+    if safety_response_parsed and isinstance(safety_response_parsed.get("is_safe"), bool):
+        is_safe = safety_response_parsed["is_safe"]
+        reason = safety_response_parsed.get("reason", "No reason provided.")
+        print(f"AI Safety Check Result (Parsed): is_safe={is_safe}, reason='{reason}'")
         return {"safe": is_safe, "reason": reason}
     else:
-        # Include part of the invalid response in the error for debugging
-        raw_response_excerpt = str(safety_response)[:200] # Get first 200 chars
-        error_msg = f"AI safety check failed or returned invalid format. Response: {raw_response_excerpt}"
+        # Include part of the raw response in the error for debugging if parsing failed
+        raw_response_excerpt = str(safety_response_raw)[:200] if safety_response_raw else "N/A"
+        error_msg = f"AI safety check failed to parse or returned invalid format. Raw Response: {raw_response_excerpt}"
         print(f"AI Safety Check Error: {error_msg}")
+        # Also log the parsed attempt if it exists but was invalid
+        if safety_response_parsed:
+             print(f"Parsed attempt was: {safety_response_parsed}")
         return {"safe": False, "reason": error_msg}
 
 async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any]:
@@ -1177,7 +1185,7 @@ async def create_new_tool(cog: commands.Cog, tool_name: str, description: str, p
     try:
         # Dynamically execute the generated code to define the function in the current scope
         # This is risky and might fail depending on imports/scope.
-        # exec(python_code, globals()) # Avoid exec if possible
+        #   thon_code, globals()) # Avoid exec if possible
         # A safer way might involve importlib, but that's more complex.
 
         # For now, just update the runtime TOOL_MAPPING if possible.

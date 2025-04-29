@@ -1033,7 +1033,7 @@ async def get_internal_ai_json_response(
     model_name: Optional[str] = None,
     temperature: float = 0.7,
     max_tokens: int = 5000,
-) -> Optional[Dict[str, Any]]: # Keep return type hint simple
+) -> Optional[Tuple[Optional[Dict[str, Any]], Optional[str]]]: # Return tuple: (parsed_data, raw_text)
     """
     Makes a Vertex AI call expecting a specific JSON response format for internal tasks.
 
@@ -1047,13 +1047,16 @@ async def get_internal_ai_json_response(
         max_tokens: Max output tokens.
 
     Returns:
-        The parsed and validated JSON dictionary if successful, None otherwise.
+        A tuple containing:
+        - The parsed and validated JSON dictionary if successful, None otherwise.
+        - The raw text response received from the API, or None if the call failed before getting text.
     """
     if not PROJECT_ID or not LOCATION:
         print(f"Error in get_internal_ai_json_response ({task_description}): GCP Project/Location not set.")
-        return None
+        return None, None # Return tuple
 
-    final_parsed_data = None
+    final_parsed_data: Optional[Dict[str, Any]] = None
+    final_response_text: Optional[str] = None
     error_occurred = None
     request_payload_for_logging = {} # For logging
 
@@ -1195,26 +1198,36 @@ async def get_internal_ai_json_response(
             request_desc=task_description
         )
 
-        if not response_obj or not response_obj.candidates:
-            raise Exception("Internal API call returned no response or candidates.")
+        if not response_obj:
+             # This case might happen if call_vertex_api_with_retry itself fails critically
+             raise Exception("Internal API call failed to return a response object.")
+        if not response_obj.candidates:
+             # Handle cases where the response object exists but has no candidates (e.g., safety block)
+             print(f"Warning: Internal API call for {task_description} returned no candidates. Response: {response_obj}")
+             # Attempt to get text even without candidates, though it's unlikely
+             final_response_text = getattr(response_obj, 'text', None)
+             # No valid data to parse
+             final_parsed_data = None
+             # We might still have the raw text if the API provided it despite blocking
+        else:
+             # --- Parse and Validate ---
+             # This function always expects JSON, so directly use response_obj.text
+             final_response_text = response_obj.text # Store raw text
+             # --- Add detailed logging for raw response text ---
+             print(f"--- Raw response_obj.text for {task_description} ---")
+             print(final_response_text)
+             print(f"--- End Raw response_obj.text ---")
+             # --- End detailed logging ---
+             print(f"Parsing ({task_description}): Using response_obj.text for JSON.")
 
-        # --- Parse and Validate ---
-        # This function always expects JSON, so directly use response_obj.text
-        final_response_text = response_obj.text
-        # --- Add detailed logging for raw response text ---
-        print(f"--- Raw response_obj.text for {task_description} ---")
-        print(final_response_text)
-        print(f"--- End Raw response_obj.text ---")
-        # --- End detailed logging ---
-        print(f"Parsing ({task_description}): Using response_obj.text for JSON.")
+             final_parsed_data = parse_and_validate_json_response(
+                 final_response_text, response_schema_dict, f"internal task ({task_description})"
+             )
 
-        final_parsed_data = parse_and_validate_json_response(
-            final_response_text, response_schema_dict, f"internal task ({task_description})"
-        )
-
-        if final_parsed_data is None:
-            print(f"Warning: Internal task '{task_description}' failed JSON validation.")
-            # No re-prompting for internal tasks, just return None
+             if final_parsed_data is None:
+                 print(f"Warning: Internal task '{task_description}' failed JSON validation.")
+                 # No re-prompting for internal tasks, just return None (parsed data is None)
+                 # Keep final_response_text as it is for returning
 
     except Exception as e:
         print(f"Error in get_internal_ai_json_response ({task_description}): {type(e).__name__}: {e}")
@@ -1222,12 +1235,14 @@ async def get_internal_ai_json_response(
         import traceback
         traceback.print_exc()
         final_parsed_data = None
+        # final_response_text might be None or contain partial/error text depending on when exception occurred
     finally:
         # Log the call
         try:
-            # Pass the simplified payload for logging
+            # Pass the simplified payload and the *parsed* data for logging
             await log_internal_api_call(cog, task_description, request_payload_for_logging, final_parsed_data, error_occurred)
         except Exception as log_e:
             print(f"Error logging internal API call: {log_e}")
 
-    return final_parsed_data
+    # Return both parsed data and raw text
+    return final_parsed_data, final_response_text
