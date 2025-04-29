@@ -923,6 +923,34 @@ def create_tools_list():
         )
     )
 
+    # --- extract_web_content ---
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="extract_web_content",
+            description="Extracts the main textual content and optionally images from one or more web page URLs using the Tavily API.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "urls": {
+                        "type": "array",
+                        "description": "A single URL string or a list of URL strings to extract content from.",
+                        "items": {"type": "string"}
+                    },
+                    "extract_depth": {
+                        "type": "string",
+                        "description": "The depth of extraction ('basic' or 'advanced'). 'basic' is faster and cheaper, 'advanced' is better for complex/dynamic pages like LinkedIn. Defaults to 'basic'.",
+                        "enum": ["basic", "advanced"]
+                    },
+                    "include_images": {
+                        "type": "boolean",
+                        "description": "Whether to include images found on the page in the result. Defaults to false."
+                    }
+                },
+                "required": ["urls"]
+            }
+        )
+    )
+
     return tool_declarations
 
 # Initialize TOOLS list, handling potential ImportError if library not installed
