@@ -16,7 +16,7 @@ try:
     from vertexai import generative_models
     from vertexai.generative_models import (
         GenerativeModel, GenerationConfig, Part, Content, Tool, FunctionDeclaration,
-        GenerationResponse, FinishReason
+        GenerationResponse, FinishReason, ToolConfig # Import ToolConfig
     )
     from google.api_core import exceptions as google_exceptions
     from google.cloud.storage import Client as GCSClient # For potential image uploads
@@ -166,8 +166,7 @@ async def call_vertex_api_with_retry(
     generation_config: 'GenerationConfig', # Use string literal for type hint
     safety_settings: Optional[Dict[Any, Any]], # Use Any for broader compatibility
     request_desc: str,
-    stream: bool = False,
-    tool_choice: Optional[str] = None # Add tool_choice parameter
+    stream: bool = False
 ) -> Union['GenerationResponse', AsyncIterable['GenerationResponse'], None]: # Use string literals
     """
     Calls the Vertex AI Gemini API with retry logic.
@@ -199,8 +198,7 @@ async def call_vertex_api_with_retry(
                 contents=contents,
                 generation_config=generation_config,
                 safety_settings=safety_settings or STANDARD_SAFETY_SETTINGS,
-                stream=stream,
-                tool_choice=tool_choice # Pass tool_choice here
+                stream=stream
             )
 
             # --- Success Logging ---
@@ -598,9 +596,16 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
         # --- First API Call (Check for Tool Use) ---
         print("Making initial API call to check for tool use...")
+        # Configure the initial call to force *any* tool use
+        tool_config_any = ToolConfig(
+            function_calling_config=ToolConfig.FunctionCallingConfig(
+                mode=ToolConfig.FunctionCallingConfig.Mode.ANY
+            )
+        )
         generation_config_initial = GenerationConfig(
             temperature=0.75,
             max_output_tokens=10000, # Adjust as needed
+            tool_config=tool_config_any # Use ToolConfig here
             # No response schema needed for the initial call, just checking for function calls
         )
 
@@ -610,8 +615,8 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             contents=contents,
             generation_config=generation_config_initial,
             safety_settings=STANDARD_SAFETY_SETTINGS,
-            request_desc=f"Initial response check for message {message.id}",
-            tool_choice="any" # Force a tool call
+            request_desc=f"Initial response check for message {message.id}"
+            # Removed incorrect tool_choice="any" here
         )
 
         # --- Log Raw Request and Response ---
