@@ -2,11 +2,14 @@ import ssl
 import certifi
 
 def patch_ssl_certifi():
-    # Monkey patch the global SSL context to always use certifi bundle
-    ssl._create_default_https_context = ssl.create_default_context
-    ssl.create_default_context = lambda *args, **kwargs: ssl._create_default_https_context(
-        cafile=certifi.where(), *args, **kwargs
-    )
+    original_create_default_context = ssl.create_default_context
+
+    def custom_ssl_context(*args, **kwargs):
+        # Only set cafile if it's not already passed
+        kwargs.setdefault("cafile", certifi.where())
+        return original_create_default_context(*args, **kwargs)
+
+    ssl.create_default_context = custom_ssl_context
 
 patch_ssl_certifi()
 
@@ -273,14 +276,11 @@ def _get_response_text(response: Optional[types.GenerateContentResponse]) -> Opt
 # --- Initialize Google Generative AI Client for Vertex AI ---
 # No explicit genai.configure(api_key=...) needed when using Vertex AI backend
 try:
-
-    # Step 2: Initialize GenAI Client
     genai_client = genai.Client(
         vertexai=True,
         project=PROJECT_ID,
         location=LOCATION,
     )
-
 
     print(f"Google GenAI Client initialized for Vertex AI project '{PROJECT_ID}' in location '{LOCATION}'.")
 except NameError:
