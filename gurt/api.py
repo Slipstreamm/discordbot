@@ -1215,10 +1215,10 @@ async def get_internal_ai_json_response(
              # We might still have the raw text if the API provided it despite blocking
         else:
              # --- Parse and Validate ---
-             # This function always expects JSON, so directly use response_obj.text
-             final_response_text = response_obj.text # Store raw text
+             # Use the helper function to safely extract text, even from structured parts
+             final_response_text = _get_response_text(response_obj) # Store raw text
              # --- Add detailed logging for raw response text ---
-             print(f"--- Raw response_obj.text for {task_description} ---")
+             print(f"--- Raw AI Safety Check Response Text ---") # Keep consistent log message
              print(final_response_text)
              print(f"--- End Raw response_obj.text ---")
              # --- End detailed logging ---
