@@ -1052,6 +1052,24 @@ async def get_internal_ai_json_response(
         )
 
         # Prepare payload for logging (approximate)
+        # Convert GenerationConfig to a serializable dict first
+        generation_config_log = {}
+        # Use isinstance with the actual type if available, otherwise check attribute existence
+        _GenerationConfigType = globals().get('GenerationConfig', object) # Get actual or dummy type
+        if isinstance(generation_config, _GenerationConfigType) and hasattr(generation_config, 'temperature'):
+             generation_config_log = {
+                 "temperature": getattr(generation_config, 'temperature', None),
+                 "max_output_tokens": getattr(generation_config, 'max_output_tokens', None),
+                 "response_mime_type": getattr(generation_config, 'response_mime_type', None),
+                 # Represent the schema as a string for simplicity in logs
+                 "response_schema": str(getattr(generation_config, 'response_schema', None))
+             }
+        elif isinstance(generation_config, dict): # Handle if it's already a dict (fallback)
+             generation_config_log = generation_config # Use as is if already a dict
+        else:
+             print(f"Warning: Unexpected type for generation_config in logging: {type(generation_config)}")
+             generation_config_log = str(generation_config) # Fallback to string representation
+
         request_payload_for_logging = {
             "model": model._model_name,
             "system_instruction": system_instruction,
@@ -1059,8 +1077,8 @@ async def get_internal_ai_json_response(
                  {"role": c.role, "parts": [p.text if hasattr(p,'text') else str(type(p)) for p in c.parts]}
                  for c in contents
              ],
-             # Use the original generation_config dict directly for logging
-             "generation_config": generation_config # It's already a dict
+             # Use the serializable dict version for logging
+             "generation_config": generation_config_log
          }
 
         # --- Add detailed logging for raw request ---
