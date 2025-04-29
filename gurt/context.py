@@ -30,6 +30,8 @@ def gather_conversation_context(cog: 'GurtCog', channel_id: int, current_message
             content_parts = []
             author_name = msg_data['author']['display_name']
 
+            message_id = msg_data['id'] # Get the message ID
+
             # Add reply prefix if applicable
             if msg_data.get("is_reply"):
                 reply_author = msg_data.get('replied_to_author_name', 'Unknown User')
@@ -38,9 +40,9 @@ def gather_conversation_context(cog: 'GurtCog', channel_id: int, current_message
                 reply_snippet_short = '...' # Default if snippet is None or not a string
                 if isinstance(reply_snippet, str):
                     reply_snippet_short = (reply_snippet[:25] + '...') if len(reply_snippet) > 28 else reply_snippet
-                content_parts.append(f"{author_name} (replying to {reply_author} '{reply_snippet_short}'):")
+                content_parts.append(f"{author_name} (ID: {message_id}) (replying to {reply_author} '{reply_snippet_short}'):") # Add ID here
             else:
-                content_parts.append(f"{author_name}:")
+                content_parts.append(f"{author_name} (ID: {message_id}):") # Add ID here
 
             # Add main message content
             if msg_data.get('content'):
