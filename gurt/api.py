@@ -338,7 +338,7 @@ async def call_google_genai_api_with_retry(
             print(f"Sending API request for {request_desc} using {model_name} (Attempt {attempt + 1}/{API_RETRY_ATTEMPTS + 1})...")
 
             # Use the non-streaming async call
-            response = await genai_client.models.generate_content_async(
+            response = await genai_client.models.generate_content(
                 contents=contents,
                 generation_config=generation_config,
                 safety_settings=safety_settings or STANDARD_SAFETY_SETTINGS,
