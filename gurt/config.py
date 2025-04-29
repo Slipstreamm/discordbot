@@ -33,7 +33,7 @@ TAVILY_DEFAULT_MAX_RESULTS = int(os.getenv("TAVILY_DEFAULT_MAX_RESULTS", 5))
 TAVILY_DISABLE_ADVANCED = os.getenv("TAVILY_DISABLE_ADVANCED", "false").lower() == "true" # For cost control
 
 # --- Model Configuration ---
-DEFAULT_MODEL = os.getenv("GURT_DEFAULT_MODEL", "projects/gurting/locations/us-central1/models/6677946543460319232")
+DEFAULT_MODEL = os.getenv("GURT_DEFAULT_MODEL", "projects/gurting/locations/us-central1/models/670687799292198912")
 FALLBACK_MODEL = os.getenv("GURT_FALLBACK_MODEL", "gemini-2.5-flash-preview-04-17")
 SAFETY_CHECK_MODEL = os.getenv("GURT_SAFETY_CHECK_MODEL", "gemini-2.5-flash-preview-04-17") # Use a Vertex AI model for safety checks
 
