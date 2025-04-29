@@ -777,9 +777,26 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             contents.append(types.Content(role="user", parts=[types.Part(text="")])) # Ensure content list isn't empty
 
         # --- Prepare Tools ---
-        # Convert FunctionDeclarations from config.py (TOOLS) into a Tool object
-        # Assuming TOOLS is a list of FunctionDeclaration objects
-        vertex_tool = types.Tool(function_declarations=TOOLS) if TOOLS else None
+        # Preprocess tool parameter schemas before creating the Tool object
+        preprocessed_declarations = []
+        if TOOLS:
+            for decl in TOOLS:
+                # Create a new FunctionDeclaration with preprocessed parameters
+                # Ensure decl.parameters is a dict before preprocessing
+                preprocessed_params = _preprocess_schema_for_vertex(decl.parameters) if isinstance(decl.parameters, dict) else decl.parameters
+                preprocessed_declarations.append(
+                    types.FunctionDeclaration(
+                        name=decl.name,
+                        description=decl.description,
+                        parameters=preprocessed_params # Use the preprocessed schema
+                    )
+                )
+            print(f"Preprocessed {len(preprocessed_declarations)} tool declarations for Vertex AI compatibility.")
+        else:
+            print("No tools found in config (TOOLS list is empty or None).")
+
+        # Create the Tool object using the preprocessed declarations
+        vertex_tool = types.Tool(function_declarations=preprocessed_declarations) if preprocessed_declarations else None
         tools_list = [vertex_tool] if vertex_tool else None
 
         # --- Prepare Generation Config ---
