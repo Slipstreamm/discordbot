@@ -290,7 +290,7 @@ STANDARD_SAFETY_SETTINGS = [
 async def call_google_genai_api_with_retry(
     cog: 'GurtCog',
     model_name: str, # Pass model name string instead of model object
-    contents: List[types.types.Content], # Use types.Content type from google.generativeai.types
+    contents: List[types.Content], # Use types.Content type from google.generativeai.types
     generation_config: types.GenerateContentConfig, # Use specific type
     safety_settings: Optional[List[types.SafetySetting]], # Use specific type
     request_desc: str,
@@ -527,7 +527,7 @@ def parse_and_validate_json_response(
 
 # --- Tool Processing ---
 # Updated to use google.generativeai types
-async def process_requested_tools(cog: 'GurtCog', function_call: types.FunctionCall) -> types.types.Part:
+async def process_requested_tools(cog: 'GurtCog', function_call: types.FunctionCall) -> types.Part:
     """
     Process a tool request specified by the AI's FunctionCall response.
 
@@ -601,12 +601,12 @@ async def process_requested_tools(cog: 'GurtCog', function_call: types.FunctionC
         tool_result_content = {"error": error_message}
 
     # Return the result formatted as a types.Part for the API using the correct type
-    return types.types.Part(function_response=types.FunctionResponse(name=function_name, response=tool_result_content))
+    return types.Part(function_response=types.FunctionResponse(name=function_name, response=tool_result_content))
 
 
 # --- Helper to find function call in parts ---
 # Updated to use google.generativeai types
-def find_function_call_in_parts(parts: Optional[List[types.types.Part]]) -> Optional[types.FunctionCall]:
+def find_function_call_in_parts(parts: Optional[List[types.Part]]) -> Optional[types.FunctionCall]:
     """Finds the first valid FunctionCall object within a list of Parts."""
     if not parts:
         return None
