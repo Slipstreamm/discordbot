@@ -340,7 +340,7 @@ async def call_google_genai_api_with_retry(
             # Use the non-streaming async call
             response = await genai_client.models.generate_content(
                 contents=contents,
-                generation_config=generation_config,
+                config=generation_config,
                 safety_settings=safety_settings or STANDARD_SAFETY_SETTINGS,
                 tools=tools,
                 tool_config=tool_config,
