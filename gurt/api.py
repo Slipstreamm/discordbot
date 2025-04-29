@@ -151,11 +151,12 @@ except Exception as e:
 # Use actual types if import succeeded, otherwise fallback to Any
 _HarmCategory = getattr(generative_models, 'HarmCategory', Any)
 _HarmBlockThreshold = getattr(generative_models, 'HarmBlockThreshold', Any)
+# To disable blocking, set all thresholds to BLOCK_NONE (or equivalent).
 STANDARD_SAFETY_SETTINGS = {
-    getattr(_HarmCategory, 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_HATE_SPEECH'): getattr(_HarmBlockThreshold, 'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE'),
-    getattr(_HarmCategory, 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_DANGEROUS_CONTENT'): getattr(_HarmBlockThreshold, 'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE'),
-    getattr(_HarmCategory, 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_SEXUALLY_EXPLICIT'): getattr(_HarmBlockThreshold, 'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE'),
-    getattr(_HarmCategory, 'HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HARASSMENT'): getattr(_HarmBlockThreshold, 'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE'),
+    getattr(_HarmCategory, 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_HATE_SPEECH'): getattr(_HarmBlockThreshold, 'BLOCK_NONE', 'BLOCK_NONE'),
+    getattr(_HarmCategory, 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_DANGEROUS_CONTENT'): getattr(_HarmBlockThreshold, 'BLOCK_NONE', 'BLOCK_NONE'),
+    getattr(_HarmCategory, 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_SEXUALLY_EXPLICIT'): getattr(_HarmBlockThreshold, 'BLOCK_NONE', 'BLOCK_NONE'),
+    getattr(_HarmCategory, 'HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HARASSMENT'): getattr(_HarmBlockThreshold, 'BLOCK_NONE', 'BLOCK_NONE'),
 }
 
 # --- API Call Helper ---
@@ -203,7 +204,23 @@ async def call_vertex_api_with_retry(
                 tool_config=tool_config # Pass tool_config here
             )
 
-            # --- Success Logging ---
+            # --- Check Finish Reason (Safety) ---
+            # This check is primarily for non-streaming responses where a single finish_reason is available.
+            if not stream and response and response.candidates:
+                candidate = response.candidates[0]
+                # Ensure FinishReason is accessible (it should be if vertexai imported correctly)
+                _FinishReason = globals().get('FinishReason')
+                if _FinishReason and candidate.finish_reason == _FinishReason.SAFETY:
+                    safety_ratings_str = ", ".join([f"{rating.category}: {rating.probability.name}" for rating in candidate.safety_ratings]) if candidate.safety_ratings else "N/A"
+                    print(f"⚠️ SAFETY BLOCK: API request for {request_desc} ({model_name}) was blocked by safety filters. Finish Reason: SAFETY. Ratings: [{safety_ratings_str}]")
+                    # Optionally, raise a specific exception here if needed downstream
+                    # raise SafetyBlockError(f"Blocked by safety filters. Ratings: {safety_ratings_str}")
+                elif _FinishReason and candidate.finish_reason != _FinishReason.STOP and candidate.finish_reason != _FinishReason.MAX_TOKENS and candidate.finish_reason != _FinishReason.FUNCTION_CALL:
+                     # Log other unexpected finish reasons
+                     print(f"⚠️ UNEXPECTED FINISH REASON: API request for {request_desc} ({model_name}) finished with reason: {candidate.finish_reason.name}")
+
+
+            # --- Success Logging (Proceed even if safety blocked, but log occurred) ---
             elapsed_time = time.monotonic() - start_time
             # Ensure model_name exists in stats before incrementing
             if model_name not in cog.api_stats:

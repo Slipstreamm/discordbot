@@ -620,12 +620,25 @@ async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, An
         "type": "object",
         "properties": {
             "is_safe": {"type": "boolean", "description": "True if safe for restricted container, False otherwise."},
-            "reason": {"type": "string", "description": "Brief explanation."}
+            "reason": {"type": "string", "description": "Brief explanation why the command is safe or unsafe."}
         }, "required": ["is_safe", "reason"]
     }
+    # Enhanced system prompt with more examples of safe commands
+    system_prompt_content = (
+        f"Analyze shell command safety for execution in an isolated, network-disabled Docker container ({DOCKER_EXEC_IMAGE}) "
+        f"with CPU ({DOCKER_CPU_LIMIT} core) and Memory ({DOCKER_MEM_LIMIT}) limits. "
+        "Focus on preventing: data destruction (outside container's ephemeral storage), resource exhaustion (fork bombs, crypto mining), "
+        "container escape vulnerabilities, network attacks (network is disabled), sensitive environment variable leakage (assume only safe vars are mounted). "
+        "Commands that only read system info, list files, print text, or manipulate text are generally SAFE. "
+        "Examples of SAFE commands: whoami, id, uname, hostname, pwd, ls, echo, cat, grep, sed, awk, date, time, env, df, du, ps, top, htop, find (read-only), file. "
+        "Examples of UNSAFE commands: rm, mkfs, shutdown, reboot, poweroff, wget, curl, apt, yum, apk, pip install, npm install, git clone (network disabled, but still potentially risky), "
+        "any command trying to modify system files outside /tmp or /home, fork bombs like ':(){ :|:& };:', commands enabling network access. "
+        "Be cautious with file writing/modification commands if not clearly limited to temporary directories. "
+        "Respond ONLY with the raw JSON object matching the provided schema."
+    )
     prompt_messages = [
-        {"role": "system", "content": f"Analyze shell command safety for execution in isolated, network-disabled Docker ({DOCKER_EXEC_IMAGE}) with CPU/Mem limits. Focus on data destruction, resource exhaustion, container escape, network attacks (disabled), env var leaks. Simple echo/ls/pwd safe. rm/mkfs/shutdown/wget/curl/install/fork bombs unsafe. Respond ONLY with JSON matching the provided schema."},
-        {"role": "user", "content": f"Analyze safety: ```{command}```"}
+        {"role": "system", "content": system_prompt_content},
+        {"role": "user", "content": f"Analyze safety of this command: ```\n{command}\n```"}
     ]
     safety_response = await get_internal_ai_json_response(
         cog=cog,
@@ -642,8 +655,10 @@ async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, An
         print(f"AI Safety Check Result: is_safe={is_safe}, reason='{reason}'")
         return {"safe": is_safe, "reason": reason}
     else:
-        error_msg = "AI safety check failed or returned invalid format."
-        print(f"AI Safety Check Error: Response was {safety_response}")
+        # Include part of the invalid response in the error for debugging
+        raw_response_excerpt = str(safety_response)[:200] # Get first 200 chars
+        error_msg = f"AI safety check failed or returned invalid format. Response: {raw_response_excerpt}"
+        print(f"AI Safety Check Error: {error_msg}")
         return {"safe": False, "reason": error_msg}
 
 async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any]:
