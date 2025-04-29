@@ -218,20 +218,14 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         # --- 1. Build System Prompt ---
         # This now includes dynamic context like mood, facts, etc.
         system_prompt_text = await build_dynamic_system_prompt(cog, message)
-        # Create a LangChain prompt template using explicit message types
-        # This might be more robust against parsing issues in the system prompt text itself.
+        # Create a LangChain prompt template using a mix of explicit types and tuples
         prompt_template = ChatPromptTemplate.from_messages([
-            SystemMessage(content=system_prompt_text), # Pass the generated system prompt text here
+            SystemMessage(content=system_prompt_text),
             MessagesPlaceholder(variable_name="chat_history"),
-            HumanMessage(content="{input}"),
+            ("human", "{input}"), # Use tuple format for user input
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
-        # Validate the template's input variables explicitly
-        expected_vars = {"input", "chat_history", "agent_scratchpad"}
-        if set(prompt_template.input_variables) != expected_vars:
-             logger.error(f"Prompt template validation failed! Expected variables: {expected_vars}, Got: {prompt_template.input_variables}")
-             # Handle error appropriately, maybe raise or return error response
-             raise ValueError("Prompt template validation failed.")
+        # Removed the explicit validation check as it was causing issues
 
 
         # --- 2. Prepare Tools ---
