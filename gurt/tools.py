@@ -913,79 +913,202 @@ async def extract_web_content(cog: commands.Cog, urls: Union[str, List[str]], ex
         return {"error": error_message, "timestamp": datetime.datetime.now().isoformat()}
 
 async def read_file_content(cog: commands.Cog, file_path: str) -> Dict[str, Any]:
-    """Reads the content of a specified file. Limited access for safety."""
-    print(f"Attempting to read file: {file_path}")
-    # --- Basic Safety Check (Needs significant enhancement for production) ---
-    # 1. Normalize path
+    """
+    Reads the content of a specified file. WARNING: No safety checks are performed.
+    Reads files relative to the bot's current working directory.
+    """
+    print(f"--- UNSAFE READ: Attempting to read file: {file_path} ---")
     try:
-        # WARNING: This assumes the bot runs from a specific root. Adjust as needed.
-        # For now, let's assume the bot runs from the 'combined' directory level.
-        # We need to prevent accessing files outside the project directory.
-        base_path = os.path.abspath(os.getcwd()) # z:/projects_git/combined
+        # Normalize path relative to CWD
+        base_path = os.path.abspath(os.getcwd())
         full_path = os.path.abspath(os.path.join(base_path, file_path))
+        # Minimal check: Ensure it's still somehow within a reasonable project structure if possible?
+        # Or just allow anything? For now, allow anything but log the path.
+        print(f"--- UNSAFE READ: Reading absolute path: {full_path} ---")
 
-        # Prevent path traversal (../)
-        if not full_path.startswith(base_path):
-            error_message = "Access denied: Path traversal detected."
-            print(f"Read file error: {error_message} (Attempted: {full_path}, Base: {base_path})")
-            return {"error": error_message, "file_path": file_path}
-
-        # 2. Check allowed directories/extensions (Example - very basic)
-        allowed_dirs = [os.path.join(base_path, "discordbot"), os.path.join(base_path, "api_service")] # Example allowed dirs
-        allowed_extensions = [".py", ".txt", ".md", ".json", ".log", ".cfg", ".ini", ".yaml", ".yml", ".html", ".css", ".js"]
-        is_allowed_dir = any(full_path.startswith(allowed) for allowed in allowed_dirs)
-        _, ext = os.path.splitext(full_path)
-        is_allowed_ext = ext.lower() in allowed_extensions
-
-        # Allow reading only within specific subdirectories of the project
-        # For now, let's restrict to reading within 'discordbot' or 'api_service' for safety
-        if not is_allowed_dir:
-             error_message = f"Access denied: Reading files outside allowed directories is forbidden."
-             print(f"Read file error: {error_message} (Path: {full_path})")
-             return {"error": error_message, "file_path": file_path}
-
-        if not is_allowed_ext:
-            error_message = f"Access denied: Reading files with extension '{ext}' is forbidden."
-            print(f"Read file error: {error_message} (Path: {full_path})")
-            return {"error": error_message, "file_path": file_path}
-
-    except Exception as path_e:
-        error_message = f"Error processing file path: {str(path_e)}"
-        print(f"Read file error: {error_message}")
-        return {"error": error_message, "file_path": file_path}
-
-    # --- Read File ---
-    try:
         # Use async file reading if available/needed, otherwise sync with to_thread
-        # For simplicity, using standard open with asyncio.to_thread
         def sync_read():
             with open(full_path, 'r', encoding='utf-8') as f:
-                # Limit file size read? For now, read whole file.
+                # Limit file size read? For now, read whole file. Consider adding limit later.
                 return f.read()
 
         content = await asyncio.to_thread(sync_read)
-        max_len = 5000 # Limit returned content length
+        max_len = 10000 # Increased limit for potentially larger reads
         content_trunc = content[:max_len] + ('...' if len(content) > max_len else '')
-        print(f"Successfully read {len(content)} bytes from {file_path}. Returning {len(content_trunc)} bytes.")
+        print(f"--- UNSAFE READ: Successfully read {len(content)} bytes from {file_path}. Returning {len(content_trunc)} bytes. ---")
         return {"status": "success", "file_path": file_path, "content": content_trunc}
 
     except FileNotFoundError:
         error_message = "File not found."
-        print(f"Read file error: {error_message} (Path: {full_path})")
+        print(f"--- UNSAFE READ Error: {error_message} (Path: {full_path}) ---")
         return {"error": error_message, "file_path": file_path}
     except PermissionError:
         error_message = "Permission denied."
-        print(f"Read file error: {error_message} (Path: {full_path})")
+        print(f"--- UNSAFE READ Error: {error_message} (Path: {full_path}) ---")
         return {"error": error_message, "file_path": file_path}
     except UnicodeDecodeError:
         error_message = "Cannot decode file content (likely not a text file)."
-        print(f"Read file error: {error_message} (Path: {full_path})")
+        print(f"--- UNSAFE READ Error: {error_message} (Path: {full_path}) ---")
+        return {"error": error_message, "file_path": file_path}
+    except IsADirectoryError:
+        error_message = "Specified path is a directory, not a file."
+        print(f"--- UNSAFE READ Error: {error_message} (Path: {full_path}) ---")
         return {"error": error_message, "file_path": file_path}
     except Exception as e:
         error_message = f"An unexpected error occurred: {str(e)}"
-        print(f"Read file error: {error_message} (Path: {full_path})")
+        print(f"--- UNSAFE READ Error: {error_message} (Path: {full_path}) ---")
         traceback.print_exc()
         return {"error": error_message, "file_path": file_path}
+
+async def write_file_content_unsafe(cog: commands.Cog, file_path: str, content: str, mode: str = 'w') -> Dict[str, Any]:
+    """
+    Writes content to a specified file. WARNING: No safety checks are performed.
+    Uses 'w' (overwrite) or 'a' (append) mode. Creates directories if needed.
+    """
+    print(f"--- UNSAFE WRITE: Attempting to write to file: {file_path} (Mode: {mode}) ---")
+    if mode not in ['w', 'a']:
+        return {"error": "Invalid mode. Use 'w' (overwrite) or 'a' (append).", "file_path": file_path}
+
+    try:
+        # Normalize path relative to CWD
+        base_path = os.path.abspath(os.getcwd())
+        full_path = os.path.abspath(os.path.join(base_path, file_path))
+        print(f"--- UNSAFE WRITE: Writing to absolute path: {full_path} ---")
+
+        # Create directories if they don't exist
+        dir_path = os.path.dirname(full_path)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+            print(f"--- UNSAFE WRITE: Created directory: {dir_path} ---")
+
+        # Use async file writing if available/needed, otherwise sync with to_thread
+        def sync_write():
+            with open(full_path, mode, encoding='utf-8') as f:
+                bytes_written = f.write(content)
+            return bytes_written
+
+        bytes_written = await asyncio.to_thread(sync_write)
+        print(f"--- UNSAFE WRITE: Successfully wrote {bytes_written} bytes to {file_path} (Mode: {mode}). ---")
+        return {"status": "success", "file_path": file_path, "bytes_written": bytes_written, "mode": mode}
+
+    except PermissionError:
+        error_message = "Permission denied."
+        print(f"--- UNSAFE WRITE Error: {error_message} (Path: {full_path}) ---")
+        return {"error": error_message, "file_path": file_path}
+    except IsADirectoryError:
+        error_message = "Specified path is a directory, cannot write to it."
+        print(f"--- UNSAFE WRITE Error: {error_message} (Path: {full_path}) ---")
+        return {"error": error_message, "file_path": file_path}
+    except Exception as e:
+        error_message = f"An unexpected error occurred during write: {str(e)}"
+        print(f"--- UNSAFE WRITE Error: {error_message} (Path: {full_path}) ---")
+        traceback.print_exc()
+        return {"error": error_message, "file_path": file_path}
+
+async def execute_python_unsafe(cog: commands.Cog, code: str, timeout_seconds: int = 30) -> Dict[str, Any]:
+    """
+    Executes arbitrary Python code directly on the host using exec().
+    WARNING: EXTREMELY DANGEROUS. No sandboxing. Can access/modify anything the bot process can.
+    Captures stdout/stderr and handles timeouts.
+    """
+    print(f"--- UNSAFE PYTHON EXEC: Attempting to execute code: {code[:200]}... ---")
+    import io
+    import contextlib
+    import threading
+
+    local_namespace = {'cog': cog, 'asyncio': asyncio, 'discord': discord, 'random': random, 'os': os, 'time': time} # Provide some context
+    stdout_capture = io.StringIO()
+    stderr_capture = io.StringIO()
+    result = {"status": "unknown", "stdout": "", "stderr": "", "error": None}
+    exec_exception = None
+
+    def target():
+        nonlocal exec_exception
+        try:
+            with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
+                # Execute the code in a restricted namespace? For now, use globals() + locals
+                exec(code, globals(), local_namespace)
+        except Exception as e:
+            nonlocal exec_exception
+            exec_exception = e
+            print(f"--- UNSAFE PYTHON EXEC: Exception during execution: {e} ---")
+            traceback.print_exc(file=stderr_capture) # Also print traceback to stderr capture
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    thread.join(timeout=timeout_seconds)
+
+    if thread.is_alive():
+        # Timeout occurred - This is tricky to kill reliably from another thread in Python
+        # For now, we just report the timeout. The code might still be running.
+        result["status"] = "timeout"
+        result["error"] = f"Execution timed out after {timeout_seconds} seconds. Code might still be running."
+        print(f"--- UNSAFE PYTHON EXEC: Timeout after {timeout_seconds}s ---")
+    elif exec_exception:
+        result["status"] = "execution_error"
+        result["error"] = f"Exception during execution: {str(exec_exception)}"
+    else:
+        result["status"] = "success"
+        print("--- UNSAFE PYTHON EXEC: Execution completed successfully. ---")
+
+    stdout_val = stdout_capture.getvalue()
+    stderr_val = stderr_capture.getvalue()
+    max_len = 2000
+    result["stdout"] = stdout_val[:max_len] + ('...' if len(stdout_val) > max_len else '')
+    result["stderr"] = stderr_val[:max_len] + ('...' if len(stderr_val) > max_len else '')
+
+    stdout_capture.close()
+    stderr_capture.close()
+
+    return result
+
+async def send_discord_message(cog: commands.Cog, channel_id: str, message_content: str) -> Dict[str, Any]:
+    """Sends a message to a specified Discord channel."""
+    print(f"Attempting to send message to channel {channel_id}: {message_content[:100]}...")
+    if not message_content:
+        return {"error": "Message content cannot be empty."}
+    # Limit message length
+    max_msg_len = 1900 # Slightly less than Discord limit
+    message_content = message_content[:max_msg_len] + ('...' if len(message_content) > max_msg_len else '')
+
+    try:
+        channel_id_int = int(channel_id)
+        channel = cog.bot.get_channel(channel_id_int)
+        if not channel:
+            # Try fetching if not in cache
+            channel = await cog.bot.fetch_channel(channel_id_int)
+
+        if not channel:
+            return {"error": f"Channel {channel_id} not found or inaccessible."}
+        if not isinstance(channel, discord.abc.Messageable):
+            return {"error": f"Channel {channel_id} is not messageable (Type: {type(channel)})."}
+
+        # Check permissions if it's a guild channel
+        if isinstance(channel, discord.abc.GuildChannel):
+            bot_member = channel.guild.me
+            if not channel.permissions_for(bot_member).send_messages:
+                return {"error": f"Missing 'Send Messages' permission in channel {channel_id}."}
+
+        sent_message = await channel.send(message_content)
+        print(f"Successfully sent message {sent_message.id} to channel {channel_id}.")
+        return {"status": "success", "channel_id": channel_id, "message_id": str(sent_message.id)}
+
+    except ValueError:
+        return {"error": f"Invalid channel ID format: {channel_id}."}
+    except discord.NotFound:
+        return {"error": f"Channel {channel_id} not found."}
+    except discord.Forbidden:
+        return {"error": f"Forbidden: Missing permissions to send message in channel {channel_id}."}
+    except discord.HTTPException as e:
+        error_message = f"API error sending message to {channel_id}: {e}"
+        print(error_message)
+        return {"error": error_message}
+    except Exception as e:
+        error_message = f"Unexpected error sending message to {channel_id}: {str(e)}"
+        print(error_message)
+        traceback.print_exc()
+        return {"error": error_message}
+
 
 # --- Meta Tool: Create New Tool ---
 # WARNING: HIGHLY EXPERIMENTAL AND DANGEROUS. Allows AI to write and load code.
@@ -1245,7 +1368,10 @@ TOOL_MAPPING = {
     "run_terminal_command": run_terminal_command,
     "remove_timeout": remove_timeout,
     "extract_web_content": extract_web_content,
-    "read_file_content": read_file_content,
+    "read_file_content": read_file_content, # Now unsafe
+    "write_file_content_unsafe": write_file_content_unsafe, # New unsafe tool
+    "execute_python_unsafe": execute_python_unsafe, # New unsafe tool
+    "send_discord_message": send_discord_message, # New tool
     "create_new_tool": create_new_tool, # Added the meta-tool
     "execute_internal_command": execute_internal_command, # Added internal command execution
     "get_user_id": get_user_id, # Added user ID lookup tool

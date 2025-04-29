@@ -6,7 +6,7 @@ import os
 import json
 import aiohttp
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any # Added Any
 
 # Relative imports
 from .config import (
@@ -18,7 +18,9 @@ from .config import (
     BASELINE_PERSONALITY, # For default traits
     REFLECTION_INTERVAL_SECONDS, # Import reflection interval
     # Internal Action Config
-    INTERNAL_ACTION_INTERVAL_SECONDS, INTERNAL_ACTION_PROBABILITY
+    INTERNAL_ACTION_INTERVAL_SECONDS, INTERNAL_ACTION_PROBABILITY,
+    # Add this:
+    AUTONOMOUS_ACTION_REPORT_CHANNEL_ID
 )
 # Assuming analysis functions are moved
 from .analysis import (
@@ -26,6 +28,8 @@ from .analysis import (
     reflect_on_memories, decompose_goal_into_steps, # Import goal decomposition
     proactively_create_goals # Import placeholder for proactive goal creation
 )
+# Import for LLM calls
+from .api import get_internal_ai_json_response
 
 if TYPE_CHECKING:
     from .cog import GurtCog # For type hinting
@@ -292,65 +296,187 @@ async def background_processing_task(cog: 'GurtCog'):
                     traceback.print_exc()
                     cog.last_proactive_goal_check = now # Update timestamp even on error
 
-            # --- Random Internal Action (Runs periodically based on probability) ---
+            # --- LLM-Driven Autonomous Action (Runs periodically based on probability) ---
             if now - cog.last_internal_action_check > INTERNAL_ACTION_INTERVAL_SECONDS:
                 if random.random() < INTERNAL_ACTION_PROBABILITY:
-                    print("Considering random internal action...")
-                    # --- Select Action ---
-                    # For now, only use get_general_facts
-                    selected_tool_name = "get_general_facts"
-                    tool_func = TOOL_MAPPING.get(selected_tool_name)
-                    tool_args = {"query": None, "limit": 5} # Example: Get 5 recent general facts
+                    print("--- Considering Autonomous Action ---")
+                    action_decision = None
+                    selected_tool_name = None
+                    tool_args = None
+                    tool_result = None
+                    result_summary = "No action taken."
+                    action_reasoning = "Probability met, but LLM decided against action or failed."
 
-                    if tool_func:
-                        print(f"  - Attempting internal action: {selected_tool_name} with args: {tool_args}")
-                        tool_result = None
-                        tool_error = None
+                    try:
+                        # 1. Gather Context for LLM
+                        context_summary = "Gurt is considering an autonomous action.\n"
+                        context_summary += f"Current Mood: {cog.current_mood}\n"
+                        # Add recent messages summary (optional, could be large)
+                        # recent_msgs = list(cog.message_cache['global_recent'])[-10:] # Last 10 global msgs
+                        # context_summary += f"Recent Messages (sample):\n" + json.dumps(recent_msgs, indent=2)[:500] + "...\n"
+                        # Add active goals
+                        active_goals = await cog.memory_manager.get_goals(status='active', limit=3)
+                        if active_goals:
+                            context_summary += f"Active Goals:\n" + json.dumps(active_goals, indent=2)[:500] + "...\n"
+                        # Add recent internal action logs
+                        recent_actions = await cog.memory_manager.get_internal_action_logs(limit=5)
+                        if recent_actions:
+                            context_summary += f"Recent Internal Actions:\n" + json.dumps(recent_actions, indent=2)[:500] + "...\n"
+                        # Add key personality traits
+                        traits = await cog.memory_manager.get_all_personality_traits()
+                        if traits:
+                             context_summary += f"Personality Snippet: { {k: round(v, 2) for k, v in traits.items() if k in ['mischief', 'curiosity', 'chattiness']} }\n"
+
+                        # 2. Define LLM Prompt and Schema
+                        action_decision_schema = {
+                            "type": "object",
+                            "properties": {
+                                "should_act": {"type": "boolean", "description": "Whether Gurt should perform an autonomous action now."},
+                                "reasoning": {"type": "string", "description": "Brief reasoning for the decision (why act or not act). Consider current goals, mood, recent activity, and potential usefulness."},
+                                "action_tool_name": {"type": ["string", "null"], "description": "If acting, the name of the tool to use. Choose from available tools, prioritizing non-disruptive or informative actions unless a specific goal or high mischief suggests otherwise. Null if not acting."},
+                                "action_arguments": {"type": ["object", "null"], "description": "If acting, a dictionary of arguments for the chosen tool. Null if not acting."}
+                            },
+                            "required": ["should_act", "reasoning"]
+                        }
+                        # Filter available tools - exclude highly dangerous/disruptive ones unless explicitly needed?
+                        # For now, let the LLM choose from all, but guide it in the prompt.
+                        available_tools_desc = "\n".join([f"- {name}" for name in TOOL_MAPPING.keys() if name not in ["create_new_tool"]]) # Exclude meta-tool for safety
+
+                        system_prompt = (
+                            "You are Gurt, deciding whether to perform an autonomous background action. "
+                            "Consider your current mood, active goals, recent conversations/actions, and personality. "
+                            "Prioritize actions that might be interesting, helpful for goals, or align with your personality (e.g., mischief, curiosity). "
+                            "Avoid actions that are overly disruptive, spammy, or redundant if similar actions were taken recently. "
+                            "If choosing to act, select an appropriate tool and provide valid arguments. "
+                            f"Available tools for autonomous actions:\n{available_tools_desc}\n"
+                            "Respond ONLY with the JSON decision."
+                        )
+                        user_prompt = f"Current Context:\n{context_summary}\n\nBased on this, should Gurt perform an autonomous action now? If so, which tool and arguments?"
+
+                        # 3. Call LLM for Decision
+                        print("  - Asking LLM for autonomous action decision...")
+                        decision_data, _ = await get_internal_ai_json_response(
+                            cog=cog,
+                            prompt_messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                            task_description="Autonomous Action Decision",
+                            response_schema_dict=action_decision_schema,
+                            model_name=cog.default_model, # Use default model
+                            temperature=0.6 # Allow some creativity
+                        )
+
+                        # 4. Process LLM Decision
+                        if decision_data and decision_data.get("should_act"):
+                            action_decision = decision_data
+                            selected_tool_name = action_decision.get("action_tool_name")
+                            tool_args = action_decision.get("action_arguments")
+                            action_reasoning = action_decision.get("reasoning", "LLM decided to act.")
+                            print(f"  - LLM decided to act: Tool='{selected_tool_name}', Args={tool_args}, Reason='{action_reasoning}'")
+
+                            if not selected_tool_name or selected_tool_name not in TOOL_MAPPING:
+                                print(f"  - Error: LLM chose invalid or missing tool '{selected_tool_name}'. Aborting action.")
+                                result_summary = f"Error: LLM chose invalid tool '{selected_tool_name}'."
+                                selected_tool_name = None # Prevent execution
+                            elif not isinstance(tool_args, dict) and tool_args is not None:
+                                print(f"  - Warning: LLM provided non-dict arguments '{tool_args}'. Attempting with empty args.")
+                                result_summary = f"Warning: LLM provided invalid args '{tool_args}'. Used {{}}."
+                                tool_args = {} # Default to empty dict if invalid but not None
+                            elif tool_args is None:
+                                tool_args = {} # Ensure it's a dict for execution
+
+                        else:
+                            action_reasoning = decision_data.get("reasoning", "LLM decided not to act or failed.") if decision_data else "LLM decision failed."
+                            print(f"  - LLM decided not to act. Reason: {action_reasoning}")
+                            result_summary = f"No action taken. Reason: {action_reasoning}"
+
+                    except Exception as llm_e:
+                        print(f"  - Error during LLM decision phase for autonomous action: {llm_e}")
+                        traceback.print_exc()
+                        result_summary = f"Error during LLM decision: {llm_e}"
+                        action_reasoning = f"LLM decision phase failed: {llm_e}"
+
+                    # 5. Execute Action (if decided)
+                    if selected_tool_name and tool_args is not None: # Ensure args is at least {}
+                        tool_func = TOOL_MAPPING.get(selected_tool_name)
+                        if tool_func:
+                            print(f"  - Executing autonomous action: {selected_tool_name}(cog, **{tool_args})")
+                            try:
+                                start_time = time.monotonic()
+                                tool_result = await tool_func(cog, **tool_args)
+                                end_time = time.monotonic()
+                                exec_time = end_time - start_time
+
+                                result_summary = _create_result_summary(tool_result) # Use helper
+                                print(f"  - Autonomous action '{selected_tool_name}' completed in {exec_time:.3f}s. Result: {result_summary}")
+
+                                # Update tool stats
+                                if selected_tool_name in cog.tool_stats:
+                                     cog.tool_stats[selected_tool_name]["count"] += 1
+                                     cog.tool_stats[selected_tool_name]["total_time"] += exec_time
+                                     if isinstance(tool_result, dict) and "error" in tool_result:
+                                         cog.tool_stats[selected_tool_name]["failure"] += 1
+                                     else:
+                                         cog.tool_stats[selected_tool_name]["success"] += 1
+
+                            except Exception as exec_e:
+                                error_msg = f"Exception during autonomous execution of '{selected_tool_name}': {str(exec_e)}"
+                                print(f"  - Error: {error_msg}")
+                                traceback.print_exc()
+                                result_summary = f"Execution Exception: {error_msg}"
+                                # Update tool stats for failure
+                                if selected_tool_name in cog.tool_stats:
+                                     cog.tool_stats[selected_tool_name]["count"] += 1
+                                     cog.tool_stats[selected_tool_name]["failure"] += 1
+                        else:
+                            # Should have been caught earlier, but double-check
+                            print(f"  - Error: Tool '{selected_tool_name}' function not found in mapping during execution phase.")
+                            result_summary = f"Error: Tool function for '{selected_tool_name}' not found."
+
+                    # 6. Log Action (always log the attempt/decision)
+                    try:
+                        log_result = await cog.memory_manager.add_internal_action_log(
+                            tool_name=selected_tool_name or "None", # Log 'None' if no tool was chosen
+                            arguments=tool_args if selected_tool_name else None,
+                            reasoning=action_reasoning,
+                            result_summary=result_summary
+                        )
+                        if log_result.get("status") != "logged":
+                            print(f"  - Warning: Failed to log autonomous action attempt to memory: {log_result.get('error')}")
+                    except Exception as log_e:
+                        print(f"  - Error logging autonomous action attempt to memory: {log_e}")
+                        traceback.print_exc()
+
+                    # 7. Report Action (Optional)
+                    if AUTONOMOUS_ACTION_REPORT_CHANNEL_ID and selected_tool_name: # Only report if an action was attempted
                         try:
-                            start_time = time.monotonic()
-                            # Execute the tool function directly
-                            tool_result = await tool_func(cog, **tool_args)
-                            end_time = time.monotonic()
-                            exec_time = end_time - start_time
-
-                            if isinstance(tool_result, dict) and "error" in tool_result:
-                                tool_error = tool_result["error"]
-                                result_summary = f"Error: {tool_error}"
-                                print(f"  - Internal action '{selected_tool_name}' reported error: {tool_error}")
+                            report_channel_id = int(AUTONOMOUS_ACTION_REPORT_CHANNEL_ID) # Ensure it's an int
+                            channel = cog.bot.get_channel(report_channel_id)
+                            if channel and isinstance(channel, discord.TextChannel):
+                                report_content = (
+                                    f"⚙️ Gurt autonomously executed **{selected_tool_name}**.\n"
+                                    f"**Reasoning:** {action_reasoning}\n"
+                                    f"**Args:** `{json.dumps(tool_args)}`\n"
+                                    f"**Result:** `{result_summary}`"
+                                )
+                                # Discord message limit is 2000 chars
+                                if len(report_content) > 2000:
+                                    report_content = report_content[:1997] + "..."
+                                await channel.send(report_content)
+                                print(f"  - Reported autonomous action to channel {report_channel_id}.")
+                            elif channel:
+                                print(f"  - Error: Report channel {report_channel_id} is not a TextChannel.")
                             else:
-                                # Create a concise summary of the result
-                                if isinstance(tool_result, dict) and "facts" in tool_result:
-                                    fact_count = tool_result.get("count", len(tool_result.get("facts", [])))
-                                    result_summary = f"Success: Retrieved {fact_count} general facts."
-                                    # Optionally include first fact if available
-                                    if fact_count > 0 and tool_result.get("facts"):
-                                        first_fact = str(tool_result["facts"][0])[:100] # Truncate first fact
-                                        result_summary += f" First: '{first_fact}...'"
-                                else:
-                                    result_summary = f"Success: Result type {type(tool_result)}. {str(tool_result)[:200]}" # Generic success summary
-                                print(f"  - Internal action '{selected_tool_name}' completed successfully in {exec_time:.3f}s.")
-
-                        except Exception as exec_e:
-                            tool_error = f"Exception during internal execution: {str(exec_e)}"
-                            result_summary = f"Exception: {tool_error}"
-                            print(f"  - Internal action '{selected_tool_name}' raised exception: {exec_e}")
+                                print(f"  - Error: Could not find report channel with ID {report_channel_id}.")
+                        except ValueError:
+                             print(f"  - Error: Invalid AUTONOMOUS_ACTION_REPORT_CHANNEL_ID: '{AUTONOMOUS_ACTION_REPORT_CHANNEL_ID}'. Must be an integer.")
+                        except discord.Forbidden:
+                            print(f"  - Error: Bot lacks permissions to send messages in report channel {report_channel_id}.")
+                        except Exception as report_e:
+                            print(f"  - Error reporting autonomous action to Discord: {report_e}")
                             traceback.print_exc()
 
-                        # --- Log Action to Memory ---
-                        try:
-                            log_result = await cog.memory_manager.add_internal_action_log(
-                                tool_name=selected_tool_name,
-                                arguments=tool_args,
-                                result_summary=result_summary
-                            )
-                            if log_result.get("status") != "logged":
-                                print(f"  - Warning: Failed to log internal action to memory: {log_result.get('error')}")
-                        except Exception as log_e:
-                            print(f"  - Error logging internal action to memory: {log_e}")
-                            traceback.print_exc()
-                    else:
-                        print(f"  - Error: Selected internal tool '{selected_tool_name}' not found in TOOL_MAPPING.")
-                # Update check timestamp regardless of whether an action was performed
+                    print("--- Autonomous Action Cycle Complete ---")
+
+                # Update check timestamp regardless of whether probability was met or action occurred
                 cog.last_internal_action_check = now
 
     except asyncio.CancelledError:
@@ -359,6 +485,37 @@ async def background_processing_task(cog: 'GurtCog'):
         print(f"Error in background processing task: {e}")
         traceback.print_exc()
         await asyncio.sleep(300) # Wait 5 minutes before retrying after an error
+
+# --- Helper for Summarizing Tool Results ---
+def _create_result_summary(tool_result: Any, max_len: int = 200) -> str:
+    """Creates a concise summary string from a tool result dictionary or other type."""
+    if isinstance(tool_result, dict):
+        if "error" in tool_result:
+            return f"Error: {str(tool_result['error'])[:max_len]}"
+        elif "status" in tool_result:
+            summary = f"Status: {tool_result['status']}"
+            if "stdout" in tool_result and tool_result["stdout"]:
+                summary += f", stdout: {tool_result['stdout'][:max_len//2]}"
+            if "stderr" in tool_result and tool_result["stderr"]:
+                summary += f", stderr: {tool_result['stderr'][:max_len//2]}"
+            if "content" in tool_result:
+                 summary += f", content: {tool_result['content'][:max_len//2]}..."
+            if "bytes_written" in tool_result:
+                 summary += f", bytes: {tool_result['bytes_written']}"
+            if "message_id" in tool_result:
+                 summary += f", msg_id: {tool_result['message_id']}"
+            # Add other common keys as needed
+            return summary[:max_len]
+        else:
+            # Generic dict summary
+            return f"Dict Result: {str(tool_result)[:max_len]}"
+    elif isinstance(tool_result, str):
+        return f"String Result: {tool_result[:max_len]}"
+    elif tool_result is None:
+        return "Result: None"
+    else:
+        return f"Result Type {type(tool_result)}: {str(tool_result)[:max_len]}"
+
 
 # --- Automatic Mood Change Logic ---
 

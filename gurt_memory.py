@@ -229,9 +229,21 @@ class MemoryManager:
                     timestamp REAL DEFAULT (unixepoch('now')),
                     tool_name TEXT NOT NULL,
                     arguments_json TEXT, -- Store arguments as JSON string
+                    reasoning TEXT, -- Added: Reasoning behind the action
                     result_summary TEXT -- Store a summary of the result or error message
                 );
             """)
+            # Check if reasoning column exists
+            try:
+                cursor = await db.execute("PRAGMA table_info(internal_actions)")
+                columns = await cursor.fetchall()
+                column_names = [column[1] for column in columns]
+                if 'reasoning' not in column_names:
+                    logger.info("Adding reasoning column to internal_actions table")
+                    await db.execute("ALTER TABLE internal_actions ADD COLUMN reasoning TEXT")
+            except Exception as e:
+                logger.error(f"Error checking/adding reasoning column to internal_actions: {e}", exc_info=True)
+
             await db.execute("CREATE INDEX IF NOT EXISTS idx_internal_actions_timestamp ON internal_actions (timestamp);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_internal_actions_tool_name ON internal_actions (tool_name);")
             logger.info("Internal Actions Log table created/verified.")
@@ -1021,25 +1033,26 @@ class MemoryManager:
 
     # --- Internal Action Log Methods ---
 
-    async def add_internal_action_log(self, tool_name: str, arguments: Optional[Dict[str, Any]], result_summary: str) -> Dict[str, Any]:
-        """Logs the execution of an internal background action."""
+    async def add_internal_action_log(self, tool_name: str, arguments: Optional[Dict[str, Any]], result_summary: str, reasoning: Optional[str] = None) -> Dict[str, Any]:
+        """Logs the execution of an internal background action, including reasoning."""
         if not tool_name:
             return {"error": "Tool name is required for logging internal action."}
-        logger.info(f"Logging internal action: Tool='{tool_name}', Args={arguments}, Result='{result_summary[:100]}...'")
+        logger.info(f"Logging internal action: Tool='{tool_name}', Args={arguments}, Reason='{reasoning}', Result='{result_summary[:100]}...'")
         args_json = json.dumps(arguments) if arguments else None
-        # Truncate result summary if too long for DB
-        max_summary_len = 1000
-        truncated_summary = result_summary[:max_summary_len] + ('...' if len(result_summary) > max_summary_len else '')
+        # Truncate result summary and reasoning if too long for DB
+        max_len = 1000
+        truncated_summary = result_summary[:max_len] + ('...' if len(result_summary) > max_len else '')
+        truncated_reasoning = reasoning[:max_len] + ('...' if reasoning and len(reasoning) > max_len else '') if reasoning else None
 
         try:
             async with self.db_lock:
                 async with aiosqlite.connect(self.db_path) as db:
                     cursor = await db.execute(
                         """
-                        INSERT INTO internal_actions (tool_name, arguments_json, result_summary, timestamp)
-                        VALUES (?, ?, ?, unixepoch('now'))
+                        INSERT INTO internal_actions (tool_name, arguments_json, reasoning, result_summary, timestamp)
+                        VALUES (?, ?, ?, ?, unixepoch('now'))
                         """,
-                        (tool_name, args_json, truncated_summary)
+                        (tool_name, args_json, truncated_reasoning, truncated_summary)
                     )
                     await db.commit()
                     action_id = cursor.lastrowid
@@ -1048,3 +1061,33 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"Error logging internal action '{tool_name}': {e}", exc_info=True)
             return {"error": f"Database error logging internal action: {str(e)}"}
+
+    async def get_internal_action_logs(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Retrieves the most recent internal action logs."""
+        logger.info(f"Retrieving last {limit} internal action logs.")
+        logs = []
+        try:
+            rows = await self._db_fetchall(
+                """
+                SELECT action_id, timestamp, tool_name, arguments_json, reasoning, result_summary
+                FROM internal_actions
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (limit,)
+            )
+            for row in rows:
+                arguments = json.loads(row[3]) if row[3] else None
+                logs.append({
+                    "action_id": row[0],
+                    "timestamp": row[1],
+                    "tool_name": row[2],
+                    "arguments": arguments,
+                    "reasoning": row[4],
+                    "result_summary": row[5]
+                })
+            logger.info(f"Retrieved {len(logs)} internal action logs.")
+            return logs
+        except Exception as e:
+            logger.error(f"Error retrieving internal action logs: {e}", exc_info=True)
+            return []

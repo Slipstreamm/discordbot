@@ -128,6 +128,7 @@ PROACTIVE_GOAL_CHECK_INTERVAL = int(os.getenv("PROACTIVE_GOAL_CHECK_INTERVAL", 9
 # --- Internal Random Action Config ---
 INTERNAL_ACTION_INTERVAL_SECONDS = int(os.getenv("INTERNAL_ACTION_INTERVAL_SECONDS", 600)) # How often to *consider* a random action (10 mins)
 INTERNAL_ACTION_PROBABILITY = float(os.getenv("INTERNAL_ACTION_PROBABILITY", 0.1)) # Chance of performing an action each interval (10%)
+AUTONOMOUS_ACTION_REPORT_CHANNEL_ID = os.getenv("GURT_AUTONOMOUS_ACTION_REPORT_CHANNEL_ID", 1366840485355982869) # Optional channel ID to report autonomous actions
 
 # --- Topic Tracking Config ---
 TOPIC_UPDATE_INTERVAL = 300 # Update topics every 5 minutes
@@ -757,7 +758,7 @@ def create_tools_list():
     tool_declarations.append(
         generative_models.FunctionDeclaration(
             name="read_file_content",
-            description="Reads the content of a specified file within the project directory. Useful for understanding code, configuration, or logs.",
+            description="Reads the content of a specified file. WARNING: No safety checks are performed. Reads files relative to the bot's current working directory.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -850,6 +851,78 @@ def create_tools_list():
             }
         )
     )
+
+    # --- write_file_content_unsafe ---
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="write_file_content_unsafe",
+            description="Writes content to a specified file. WARNING: No safety checks are performed. Uses 'w' (overwrite) or 'a' (append) mode. Creates directories if needed.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The relative path to the file to write to."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content to write to the file."
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "The write mode: 'w' for overwrite (default), 'a' for append.",
+                        "enum": ["w", "a"]
+                    }
+                },
+                "required": ["file_path", "content"]
+            }
+        )
+    )
+
+    # --- execute_python_unsafe ---
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="execute_python_unsafe",
+            description="Executes arbitrary Python code directly on the host using exec(). WARNING: EXTREMELY DANGEROUS. No sandboxing.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "The Python code string to execute."
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Optional timeout in seconds (default 30)."
+                    }
+                },
+                "required": ["code"]
+            }
+        )
+    )
+
+    # --- send_discord_message ---
+    tool_declarations.append(
+        generative_models.FunctionDeclaration(
+            name="send_discord_message",
+            description="Sends a message to a specified Discord channel ID.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "channel_id": {
+                        "type": "string",
+                        "description": "The ID of the Discord channel to send the message to."
+                    },
+                    "message_content": {
+                        "type": "string",
+                        "description": "The text content of the message to send."
+                    }
+                },
+                "required": ["channel_id", "message_content"]
+            }
+        )
+    )
+
     return tool_declarations
 
 # Initialize TOOLS list, handling potential ImportError if library not installed
