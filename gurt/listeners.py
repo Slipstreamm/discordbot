@@ -469,16 +469,13 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
                     # Send message with reference if applicable
                     sent_msg = await original_message.channel.send(response_text, reference=message_reference, mention_author=False) # mention_author=False is usually preferred for bots
                     sent_any_message = True
-                    # Cache this bot response - NOTE: Commented out as LangchainAgent should handle history via add_message
-                    # bot_response_cache_entry = format_message(cog, sent_msg) # Pass cog
-                    # cog.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
-                    # cog.message_cache['global_recent'].append(bot_response_cache_entry)
-                    cog.bot_last_spoke[channel_id] = time.time() # Keep track of when bot last spoke
-                    # Track participation topic - Requires the sent message content. Let's get it directly.
-                    # We need the content to identify topics. Since we don't cache the formatted message anymore,
-                    # let's create a minimal dict for topic identification.
-                    bot_response_for_topic = {"content": sent_msg.content, "author": {"id": str(cog.bot.user.id)}}
-                    identified_topics = identify_conversation_topics(cog, [bot_response_for_topic]) # Pass cog
+                    # Cache this bot response
+                    bot_response_cache_entry = format_message(cog, sent_msg) # Pass cog
+                    cog.message_cache['by_channel'][channel_id].append(bot_response_cache_entry)
+                    cog.message_cache['global_recent'].append(bot_response_cache_entry)
+                    cog.bot_last_spoke[channel_id] = time.time()
+                    # Track participation topic
+                    identified_topics = identify_conversation_topics(cog, [bot_response_cache_entry]) # Pass cog
                     if identified_topics:
                         topic = identified_topics[0]['topic'].lower().strip()
                         cog.gurt_participation_topics[topic] += 1

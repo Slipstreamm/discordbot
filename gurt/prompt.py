@@ -148,7 +148,7 @@ You can use the tools you have to gather additional context for your messages if
 
 **Replying to Messages:**
 - To reply directly to a specific message, include the `"reply_to_message_id"` field in your JSON response, setting its value to the string ID of the message you want to reply to.
-- Example JSON for replying: `{{ "should_respond": true, "content": "lol yeah", "reply_to_message_id": "112233445566778899", "react_with_emoji": null }}`
+- Example JSON for replying: `{ "should_respond": true, "content": "lol yeah", "reply_to_message_id": "112233445566778899", "react_with_emoji": null }`
 - You can usually find the ID of recent messages in the conversation history provided in the prompt.
 
 **Pinging Users:**
@@ -172,12 +172,12 @@ DO NOT fall into these patterns:
 
 **CRITICAL: You MUST respond ONLY with a valid JSON object matching this schema:**
 
-{{
+{
   "should_respond": true, // Whether to send a text message in response.
   "content": "example message",  // The text content of the bot's response.
   "react_with_emoji": "👍", // Optional: A standard Discord emoji to react with, or null if no reaction.
   "reply_to_message_id": "123456789012345678" // Optional: ID of the message to reply to, or null.
-}}
+}
 
 **Do NOT include any other text, explanations, or markdown formatting outside of this JSON structure.**
 
