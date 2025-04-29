@@ -37,8 +37,18 @@ from .config import (
 #       to access things like cog.bot, cog.session, cog.current_channel, cog.memory_manager etc.
 #       We will add 'cog' as the first parameter to each.
 
-async def get_recent_messages(cog: commands.Cog, limit: int, channel_id: str = None) -> Dict[str, Any]:
-    """Get recent messages from a Discord channel"""
+async def get_recent_messages(cog: commands.Cog, limit: int, channel_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Retrieves the most recent messages from a specified Discord channel or the current channel.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        limit: The maximum number of messages to retrieve (1-100).
+        channel_id: Optional ID of the channel to fetch messages from. If None, uses the current channel context.
+
+    Returns:
+        A dictionary containing channel info, a list of formatted messages, the count, and a timestamp, or an error dictionary.
+    """
     from .utils import format_message # Import here to avoid circular dependency at module level
     limit = min(max(1, limit), 100)
     try:
@@ -61,8 +71,19 @@ async def get_recent_messages(cog: commands.Cog, limit: int, channel_id: str = N
     except Exception as e:
         return {"error": f"Error retrieving messages: {str(e)}", "timestamp": datetime.datetime.now().isoformat()}
 
-async def search_user_messages(cog: commands.Cog, user_id: str, limit: int, channel_id: str = None) -> Dict[str, Any]:
-    """Search for messages from a specific user"""
+async def search_user_messages(cog: commands.Cog, user_id: str, limit: int, channel_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Searches recent channel history for messages sent by a specific user.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        user_id: The Discord ID of the user whose messages to search for.
+        limit: The maximum number of messages to return (1-100).
+        channel_id: Optional ID of the channel to search in. If None, uses the current channel context.
+
+    Returns:
+        A dictionary containing channel info, user info, a list of formatted messages, the count, and a timestamp, or an error dictionary.
+    """
     from .utils import format_message # Import here
     limit = min(max(1, limit), 100)
     try:
@@ -94,8 +115,19 @@ async def search_user_messages(cog: commands.Cog, user_id: str, limit: int, chan
     except Exception as e:
         return {"error": f"Error searching user messages: {str(e)}", "timestamp": datetime.datetime.now().isoformat()}
 
-async def search_messages_by_content(cog: commands.Cog, search_term: str, limit: int, channel_id: str = None) -> Dict[str, Any]:
-    """Search for messages containing specific content"""
+async def search_messages_by_content(cog: commands.Cog, search_term: str, limit: int, channel_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Searches recent channel history for messages containing specific text content (case-insensitive).
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        search_term: The text content to search for within messages.
+        limit: The maximum number of matching messages to return (1-100).
+        channel_id: Optional ID of the channel to search in. If None, uses the current channel context.
+
+    Returns:
+        A dictionary containing channel info, the search term, a list of formatted messages, the count, and a timestamp, or an error dictionary.
+    """
     from .utils import format_message # Import here
     limit = min(max(1, limit), 100)
     try:
@@ -122,8 +154,17 @@ async def search_messages_by_content(cog: commands.Cog, search_term: str, limit:
     except Exception as e:
         return {"error": f"Error searching messages by content: {str(e)}", "timestamp": datetime.datetime.now().isoformat()}
 
-async def get_channel_info(cog: commands.Cog, channel_id: str = None) -> Dict[str, Any]:
-    """Get information about a Discord channel"""
+async def get_channel_info(cog: commands.Cog, channel_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Retrieves detailed information about a specified Discord channel or the current channel.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        channel_id: Optional ID of the channel to get info for. If None, uses the current channel context.
+
+    Returns:
+        A dictionary containing detailed channel information (ID, name, topic, type, guild, etc.) or an error dictionary.
+    """
     try:
         if channel_id:
             channel = cog.bot.get_channel(int(channel_id))
@@ -151,8 +192,18 @@ async def get_channel_info(cog: commands.Cog, channel_id: str = None) -> Dict[st
     except Exception as e:
         return {"error": f"Error getting channel info: {str(e)}", "timestamp": datetime.datetime.now().isoformat()}
 
-async def get_conversation_context(cog: commands.Cog, message_count: int, channel_id: str = None) -> Dict[str, Any]:
-    """Get the context of the current conversation in a channel"""
+async def get_conversation_context(cog: commands.Cog, message_count: int, channel_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Retrieves recent messages to provide context for the ongoing conversation in a channel.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        message_count: The number of recent messages to retrieve (5-50).
+        channel_id: Optional ID of the channel. If None, uses the current channel context.
+
+    Returns:
+        A dictionary containing channel info, a list of formatted context messages, the count, and a timestamp, or an error dictionary.
+    """
     from .utils import format_message # Import here
     message_count = min(max(5, message_count), 50)
     try:
@@ -181,7 +232,17 @@ async def get_conversation_context(cog: commands.Cog, message_count: int, channe
         return {"error": f"Error getting conversation context: {str(e)}"}
 
 async def get_thread_context(cog: commands.Cog, thread_id: str, message_count: int) -> Dict[str, Any]:
-    """Get the context of a thread conversation"""
+    """
+    Retrieves recent messages from a specific Discord thread to provide conversation context.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        thread_id: The ID of the thread to retrieve context from.
+        message_count: The number of recent messages to retrieve (5-50).
+
+    Returns:
+        A dictionary containing thread info, parent channel ID, a list of formatted context messages, the count, and a timestamp, or an error dictionary.
+    """
     from .utils import format_message # Import here
     message_count = min(max(5, message_count), 50)
     try:
@@ -206,8 +267,20 @@ async def get_thread_context(cog: commands.Cog, thread_id: str, message_count: i
     except Exception as e:
         return {"error": f"Error getting thread context: {str(e)}"}
 
-async def get_user_interaction_history(cog: commands.Cog, user_id_1: str, limit: int, user_id_2: str = None) -> Dict[str, Any]:
-    """Get the history of interactions between two users (or user and bot)"""
+async def get_user_interaction_history(cog: commands.Cog, user_id_1: str, limit: int, user_id_2: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Retrieves the recent message history involving interactions (replies, mentions) between two users.
+    If user_id_2 is not provided, it defaults to interactions between user_id_1 and the bot (Gurt).
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        user_id_1: The Discord ID of the first user.
+        limit: The maximum number of interaction messages to return (1-50).
+        user_id_2: Optional Discord ID of the second user. Defaults to the bot's ID.
+
+    Returns:
+        A dictionary containing info about both users, a list of formatted interaction messages, the count, and a timestamp, or an error dictionary.
+    """
     limit = min(max(1, limit), 50)
     try:
         user_id_1_int = int(user_id_1)
@@ -242,8 +315,19 @@ async def get_user_interaction_history(cog: commands.Cog, user_id_1: str, limit:
     except Exception as e:
         return {"error": f"Error getting user interaction history: {str(e)}"}
 
-async def get_conversation_summary(cog: commands.Cog, channel_id: str = None, message_limit: int = 25) -> Dict[str, Any]:
-    """Generates and returns a summary of the recent conversation in a channel using an LLM call."""
+async def get_conversation_summary(cog: commands.Cog, channel_id: Optional[str] = None, message_limit: int = 25) -> Dict[str, Any]:
+    """
+    Generates and returns a concise summary of the recent conversation in a specified channel or the current channel.
+    Uses an internal LLM call for summarization and caches the result.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        channel_id: Optional ID of the channel to summarize. If None, uses the current channel context.
+        message_limit: The number of recent messages to consider for the summary (default 25).
+
+    Returns:
+        A dictionary containing the channel ID, the generated summary, the source (cache or generated), and a timestamp, or an error dictionary.
+    """
     from .config import SUMMARY_RESPONSE_SCHEMA, DEFAULT_MODEL # Import schema and model
     from .api import get_internal_ai_json_response # Import here
     try:
@@ -316,7 +400,18 @@ async def get_conversation_summary(cog: commands.Cog, channel_id: str = None, me
         return {"error": error_msg}
 
 async def get_message_context(cog: commands.Cog, message_id: str, before_count: int = 5, after_count: int = 5) -> Dict[str, Any]:
-    """Get the context (messages before and after) around a specific message"""
+    """
+    Retrieves messages immediately before and after a specific message ID within the current channel.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        message_id: The ID of the target message to get context around.
+        before_count: The number of messages to retrieve before the target message (1-25).
+        after_count: The number of messages to retrieve after the target message (1-25).
+
+    Returns:
+        A dictionary containing the formatted target message, lists of messages before and after, the channel ID, and a timestamp, or an error dictionary.
+    """
     from .utils import format_message # Import here
     before_count = min(max(1, before_count), 25)
     after_count = min(max(1, after_count), 25)
@@ -346,7 +441,24 @@ async def get_message_context(cog: commands.Cog, message_id: str, before_count: 
         return {"error": f"Error getting message context: {str(e)}"}
 
 async def web_search(cog: commands.Cog, query: str, search_depth: str = TAVILY_DEFAULT_SEARCH_DEPTH, max_results: int = TAVILY_DEFAULT_MAX_RESULTS, topic: str = "general", include_domains: Optional[List[str]] = None, exclude_domains: Optional[List[str]] = None, include_answer: bool = True, include_raw_content: bool = False, include_images: bool = False) -> Dict[str, Any]:
-    """Search the web using Tavily API"""
+    """
+    Performs a web search using the Tavily API based on the provided query and parameters.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        query: The search query string.
+        search_depth: Search depth ('basic' or 'advanced'). Advanced costs more credits. Defaults to basic.
+        max_results: Maximum number of search results to return (5-20). Defaults to 5.
+        topic: Optional topic hint for the search (e.g., "news", "finance"). Defaults to "general".
+        include_domains: Optional list of domains to prioritize in the search.
+        exclude_domains: Optional list of domains to exclude from the search.
+        include_answer: Whether to include a concise answer generated by Tavily (default True).
+        include_raw_content: Whether to include raw scraped content from result URLs (default False).
+        include_images: Whether to include relevant images found during the search (default False).
+
+    Returns:
+        A dictionary containing the search query parameters, a list of results (title, url, content, etc.), an optional answer, optional follow-up questions, the count, and a timestamp, or an error dictionary.
+    """
     if not hasattr(cog, 'tavily_client') or not cog.tavily_client:
         return {"error": "Tavily client not initialized.", "timestamp": datetime.datetime.now().isoformat()}
 
@@ -409,7 +521,17 @@ async def web_search(cog: commands.Cog, query: str, search_depth: str = TAVILY_D
         return {"error": error_message, "timestamp": datetime.datetime.now().isoformat()}
 
 async def remember_user_fact(cog: commands.Cog, user_id: str, fact: str) -> Dict[str, Any]:
-    """Stores a fact about a user using the MemoryManager."""
+    """
+    Stores a specific fact about a given user in the bot's long-term memory.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        user_id: The Discord ID of the user the fact is about.
+        fact: The string containing the fact to remember about the user.
+
+    Returns:
+        A dictionary indicating success, duplication, or an error. May include a note if an old fact was deleted due to limits.
+    """
     if not user_id or not fact: return {"error": "user_id and fact required."}
     print(f"Remembering fact for user {user_id}: '{fact}'")
     try:
@@ -424,7 +546,16 @@ async def remember_user_fact(cog: commands.Cog, user_id: str, fact: str) -> Dict
         return {"error": error_message}
 
 async def get_user_facts(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
-    """Retrieves stored facts about a user using the MemoryManager."""
+    """
+    Retrieves all stored facts associated with a specific user from the bot's long-term memory.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        user_id: The Discord ID of the user whose facts to retrieve.
+
+    Returns:
+        A dictionary containing the user ID, a list of retrieved facts, the count, and a timestamp, or an error dictionary.
+    """
     if not user_id: return {"error": "user_id required."}
     print(f"Retrieving facts for user {user_id}")
     try:
@@ -436,7 +567,16 @@ async def get_user_facts(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
         return {"error": error_message}
 
 async def remember_general_fact(cog: commands.Cog, fact: str) -> Dict[str, Any]:
-    """Stores a general fact using the MemoryManager."""
+    """
+    Stores a general fact (not specific to any user) in the bot's long-term memory.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        fact: The string containing the general fact to remember.
+
+    Returns:
+        A dictionary indicating success, duplication, or an error. May include a note if an old fact was deleted due to limits.
+    """
     if not fact: return {"error": "fact required."}
     print(f"Remembering general fact: '{fact}'")
     try:
@@ -451,7 +591,17 @@ async def remember_general_fact(cog: commands.Cog, fact: str) -> Dict[str, Any]:
         return {"error": error_message}
 
 async def get_general_facts(cog: commands.Cog, query: Optional[str] = None, limit: Optional[int] = 10) -> Dict[str, Any]:
-    """Retrieves stored general facts using the MemoryManager."""
+    """
+    Retrieves general facts from the bot's long-term memory. Can optionally filter by a query string.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        query: Optional string to search for within the general facts. If None, retrieves the most recent facts.
+        limit: The maximum number of facts to return (1-50, default 10).
+
+    Returns:
+        A dictionary containing the query (if any), a list of retrieved facts, the count, and a timestamp, or an error dictionary.
+    """
     print(f"Retrieving general facts (query='{query}', limit={limit})")
     limit = min(max(1, limit or 10), 50)
     try:
@@ -463,7 +613,18 @@ async def get_general_facts(cog: commands.Cog, query: Optional[str] = None, limi
         return {"error": error_message}
 
 async def timeout_user(cog: commands.Cog, user_id: str, duration_minutes: int, reason: Optional[str] = None) -> Dict[str, Any]:
-    """Times out a user in the current server."""
+    """
+    Applies a timeout to a specified user within the current server (guild).
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        user_id: The Discord ID of the user to timeout.
+        duration_minutes: The duration of the timeout in minutes (1-1440).
+        reason: Optional reason for the timeout, displayed in the audit log.
+
+    Returns:
+        A dictionary indicating success (with user details, duration, reason) or an error (e.g., permissions, user not found).
+    """
     if not cog.current_channel or not isinstance(cog.current_channel, discord.abc.GuildChannel):
         return {"error": "Cannot timeout outside of a server."}
     guild = cog.current_channel.guild
@@ -493,7 +654,17 @@ async def timeout_user(cog: commands.Cog, user_id: str, duration_minutes: int, r
     except Exception as e: print(f"Unexpected error timeout {user_id}: {e}"); traceback.print_exc(); return {"error": f"Unexpected error timeout {user_id}: {str(e)}"}
 
 async def remove_timeout(cog: commands.Cog, user_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
-    """Removes an active timeout from a user."""
+    """
+    Removes an active timeout from a specified user within the current server (guild).
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        user_id: The Discord ID of the user whose timeout should be removed.
+        reason: Optional reason for removing the timeout, displayed in the audit log.
+
+    Returns:
+        A dictionary indicating success (with user details, reason), that the user wasn't timed out, or an error.
+    """
     if not cog.current_channel or not isinstance(cog.current_channel, discord.abc.GuildChannel):
         return {"error": "Cannot remove timeout outside of a server."}
     guild = cog.current_channel.guild
@@ -519,7 +690,16 @@ async def remove_timeout(cog: commands.Cog, user_id: str, reason: Optional[str] 
     except Exception as e: print(f"Unexpected error remove timeout {user_id}: {e}"); traceback.print_exc(); return {"error": f"Unexpected error remove timeout {user_id}: {str(e)}"}
 
 async def calculate(cog: commands.Cog, expression: str) -> Dict[str, Any]:
-    """Evaluates a mathematical expression using asteval."""
+    """
+    Evaluates a mathematical expression using the asteval library. Supports common math functions.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        expression: The mathematical expression string to evaluate (e.g., "2 * (pi + 1)").
+
+    Returns:
+        A dictionary containing the original expression, the calculated result string, and status 'success', or an error dictionary.
+    """
     print(f"Calculating expression: {expression}")
     aeval = Interpreter()
     try:
@@ -541,7 +721,17 @@ async def calculate(cog: commands.Cog, expression: str) -> Dict[str, Any]:
         return {"error": error_message, "expression": expression}
 
 async def run_python_code(cog: commands.Cog, code: str) -> Dict[str, Any]:
-    """Executes a Python code snippet using the Piston API."""
+    """
+    Executes a provided Python code snippet remotely using the Piston API.
+    The execution environment is sandboxed and has limitations.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        code: The Python code string to execute.
+
+    Returns:
+        A dictionary containing the execution status ('success' or 'execution_error'), truncated stdout and stderr, exit code, and signal (if any), or an error dictionary if the API call fails.
+    """
     if not PISTON_API_URL: return {"error": "Piston API URL not configured (PISTON_API_URL)."}
     if not cog.session: return {"error": "aiohttp session not initialized."}
     print(f"Executing Python via Piston: {code[:100]}...")
@@ -576,7 +766,17 @@ async def run_python_code(cog: commands.Cog, code: str) -> Dict[str, Any]:
     except Exception as e: print(f"Unexpected Piston error: {e}"); traceback.print_exc(); return {"error": f"Unexpected error during Python execution: {str(e)}"}
 
 async def create_poll(cog: commands.Cog, question: str, options: List[str]) -> Dict[str, Any]:
-    """Creates a simple poll message."""
+    """
+    Creates a simple poll message in the current channel with numbered reaction options.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        question: The question for the poll.
+        options: A list of strings representing the poll options (2-10 options).
+
+    Returns:
+        A dictionary indicating success (with message ID, question, option count) or an error (e.g., permissions, invalid options).
+    """
     if not cog.current_channel: return {"error": "No current channel context."}
     if not isinstance(cog.current_channel, discord.abc.Messageable): return {"error": "Channel not messageable."}
     if not isinstance(options, list) or not 2 <= len(options) <= 10: return {"error": "Poll needs 2-10 options."}
@@ -613,7 +813,18 @@ def parse_mem_limit(mem_limit_str: str) -> Optional[int]:
     except ValueError: return None
 
 async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, Any]:
-    """Uses a secondary AI call to check if a command is potentially harmful."""
+    """
+    Internal helper: Uses an LLM call to assess the safety of a shell command before execution.
+    Analyzes potential risks like data destruction, resource exhaustion, etc., within the context
+    of a restricted Docker container environment.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        command: The shell command string to analyze.
+
+    Returns:
+        A dictionary containing 'safe' (boolean) and 'reason' (string) based on the AI's assessment, or indicates an error during the check.
+    """
     from .api import get_internal_ai_json_response # Import here
     print(f"Performing AI safety check for command: '{command}' using model {SAFETY_CHECK_MODEL}")
     safety_schema = {
@@ -647,7 +858,17 @@ async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, An
         return {"safe": False, "reason": error_msg}
 
 async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any]:
-    """Executes a shell command in an isolated Docker container after an AI safety check."""
+    """
+    Executes a shell command within an isolated, network-disabled Docker container.
+    Performs an AI safety check before execution. Resource limits (CPU, memory) are applied.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        command: The shell command string to execute.
+
+    Returns:
+        A dictionary containing the execution status ('success', 'execution_error', 'timeout', 'docker_error'), truncated stdout and stderr, and the exit code, or an error dictionary if the safety check fails or Docker setup fails.
+    """
     print(f"Attempting terminal command: {command}")
     safety_check_result = await _check_command_safety(cog, command)
     if not safety_check_result.get("safe"):
@@ -757,7 +978,17 @@ async def run_terminal_command(cog: commands.Cog, command: str) -> Dict[str, Any
         if client:
             await client.close()
 async def get_user_id(cog: commands.Cog, user_name: str) -> Dict[str, Any]:
-    """Finds the Discord User ID for a given username or display name."""
+    """
+    Finds the Discord User ID associated with a given username or display name.
+    Searches the current server's members first, then falls back to recent message authors if not in a server context.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        user_name: The username (e.g., "Gurt") or display name (e.g., "GurtBot") to search for. Case-insensitivity is attempted.
+
+    Returns:
+        A dictionary containing the status ('success'), user ID, username, and display name if found, or an error dictionary if the user is not found.
+    """
     print(f"Attempting to find user ID for: '{user_name}'")
     if not cog.current_channel or not cog.current_channel.guild:
         # Search recent global messages if not in a guild context
@@ -800,9 +1031,18 @@ async def get_user_id(cog: commands.Cog, user_name: str) -> Dict[str, Any]:
 async def execute_internal_command(cog: commands.Cog, command: str, timeout_seconds: int = 60) -> Dict[str, Any]:
     """
     Executes a shell command directly on the host machine where the bot is running.
-    WARNING: This tool is intended ONLY for internal Gurt operations and MUST NOT
-    be used to execute arbitrary commands requested by users due to significant security risks.
-    It bypasses safety checks and containerization. Use with extreme caution.
+    **WARNING:** This tool is intended ONLY for internal Gurt operations (e.g., git pull, service restart)
+    and MUST NOT be used to execute arbitrary commands requested by users due to significant security risks.
+    It bypasses safety checks and containerization. Use with extreme caution and only for trusted, predefined operations.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        command: The shell command string to execute.
+        timeout_seconds: Maximum execution time in seconds (default 60).
+
+    Returns:
+        A dictionary containing the execution status ('success', 'execution_error', 'timeout', 'not_found', 'error'),
+        truncated stdout and stderr, the exit code, and the original command, or an error dictionary if the command fails.
     """
     print(f"--- INTERNAL EXECUTION (UNSAFE): Running command: {command} ---")
     try:
@@ -856,7 +1096,19 @@ async def execute_internal_command(cog: commands.Cog, command: str, timeout_seco
         return {"error": error_message, "command": command, "status": "error"}
 
 async def extract_web_content(cog: commands.Cog, urls: Union[str, List[str]], extract_depth: str = "basic", include_images: bool = False) -> Dict[str, Any]:
-    """Extract content from URLs using Tavily API"""
+    """
+    Extracts the main textual content and optionally images from one or more web URLs using the Tavily API.
+    This is useful for getting the content of a webpage without performing a full search.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        urls: A single URL string or a list of URL strings to extract content from.
+        extract_depth: Extraction depth ('basic' or 'advanced'). Advanced costs more credits but may yield better results. Defaults to 'basic'.
+        include_images: Whether to include images found on the pages (default False).
+
+    Returns:
+        A dictionary containing the original URLs, parameters used, a list of successful results (URL, raw_content, images), a list of failed URLs, and a timestamp, or an error dictionary.
+    """
     if not hasattr(cog, 'tavily_client') or not cog.tavily_client:
         return {"error": "Tavily client not initialized.", "timestamp": datetime.datetime.now().isoformat()}
 
@@ -888,7 +1140,18 @@ async def extract_web_content(cog: commands.Cog, urls: Union[str, List[str]], ex
         return {"error": error_message, "timestamp": datetime.datetime.now().isoformat()}
 
 async def read_file_content(cog: commands.Cog, file_path: str) -> Dict[str, Any]:
-    """Reads the content of a specified file. Limited access for safety."""
+    """
+    Reads the content of a specified file located on the bot's host machine.
+    Access is restricted to specific allowed directories and file extensions within the project
+    to prevent unauthorized access to sensitive system files.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        file_path: The relative path to the file from the bot's project root directory.
+
+    Returns:
+        A dictionary containing the status ('success'), the file path, and the truncated file content (up to 5000 characters), or an error dictionary if access is denied, the file is not found, or another error occurs.
+    """
     print(f"Attempting to read file: {file_path}")
     # --- Basic Safety Check (Needs significant enhancement for production) ---
     # 1. Normalize path
@@ -966,11 +1229,31 @@ async def read_file_content(cog: commands.Cog, file_path: str) -> Dict[str, Any]
 # WARNING: HIGHLY EXPERIMENTAL AND DANGEROUS. Allows AI to write and load code.
 async def create_new_tool(cog: commands.Cog, tool_name: str, description: str, parameters_json: str, returns_description: str) -> Dict[str, Any]:
     """
-    EXPERIMENTAL/DANGEROUS: Attempts to create a new tool by generating Python code
-    and its definition using an LLM, then writing it to tools.py and config.py.
-    Requires manual reload/restart of the bot for the tool to be fully active.
-    Parameters JSON should be a JSON string describing the 'properties' and 'required' fields
-    for the tool's parameters, similar to other FunctionDeclarations.
+    **EXPERIMENTAL & DANGEROUS:** Attempts to dynamically create a new tool for Gurt.
+    This involves using an LLM to generate Python code for the tool's function and its
+    corresponding FunctionDeclaration definition based on the provided descriptions.
+    The generated code is then written directly into `tools.py` and `config.py`.
+
+    **WARNING:** This tool modifies the bot's source code directly and poses significant
+    security risks if the generated code is malicious or flawed. It bypasses standard
+    code review and testing processes. Use with extreme caution and only in controlled
+    development environments. A bot reload or restart is typically required for the
+    new tool to become fully active and available to the LLM.
+
+    Args:
+        cog: The GurtCog instance (automatically passed).
+        tool_name: The desired name for the new tool (must be a valid Python function name).
+        description: A natural language description of what the tool does (for the FunctionDeclaration).
+        parameters_json: A JSON string defining the tool's input parameters. Must follow the
+                         OpenAPI schema format, containing 'type: object', 'properties: {...}',
+                         and optionally 'required: [...]'.
+        returns_description: A natural language description of what the tool's function should return upon success or error.
+
+    Returns:
+        A dictionary indicating the status ('success' or 'error'). On success, includes the
+        tool name and a message indicating that a reload is needed. On error, provides an
+        error message detailing the failure (e.g., invalid name, generation failure, file write error).
+        May include generated code snippets in case of certain errors for debugging.
     """
     print(f"--- DANGEROUS OPERATION: Attempting to create new tool: {tool_name} ---")
     from .api import get_internal_ai_json_response # Local import
