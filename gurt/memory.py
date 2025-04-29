@@ -3,6 +3,8 @@
 import os
 import importlib.util
 
+from discordbot.gurt.cog import GurtCog
+
 # Get the absolute path to gurt_memory.py
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 gurt_memory_path = os.path.join(parent_dir, 'gurt_memory.py')
