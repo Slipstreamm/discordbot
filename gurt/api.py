@@ -672,6 +672,21 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             function_call = find_function_call_in_parts(candidate.content.parts)
 
             if function_call:
+                # Check if the AI signaled completion with no_operation
+                if function_call.name == "no_operation":
+                    print("AI called no_operation, signaling completion of tool sequence.")
+                    # Append the no_operation call itself for context, but don't execute it as a real tool
+                    contents.append(candidate.content)
+                    # Add the dummy function response for no_operation
+                    contents.append(Content(role="function", parts=[Part.from_function_response(
+                        name="no_operation",
+                        response={"status": "success", "message": "No operation performed."}
+                    )]))
+                    # Update last_response_obj to include this final step before breaking
+                    last_response_obj = current_response_obj # Or maybe construct a new one? Let's stick with this for now.
+                    break # Exit the loop, ready for final JSON generation
+
+                # If it's a different tool, proceed with execution
                 tool_calls_made += 1
                 print(f"AI requested tool: {function_call.name} (Call {tool_calls_made}/{max_tool_calls})")
 
