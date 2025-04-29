@@ -1269,9 +1269,10 @@ async def create_new_tool(cog: commands.Cog, tool_name: str, description: str, p
     config_py_path = "discordbot/gurt/config.py"
     try:
         print(f"Attempting to add FunctionDeclaration for '{tool_name}' to {config_py_path}...")
+        # Use FunctionDeclaration directly, assuming it's imported in config.py
         declaration_code = (
             f"    tool_declarations.append(\n"
-            f"        generative_models.FunctionDeclaration(\n"
+            f"        FunctionDeclaration( # Use imported FunctionDeclaration\n"
             f"            name=\"{tool_name}\",\n"
             f"            description=\"{escaped_declaration_desc}\", # Use escaped description\n"
             f"            parameters={declaration_params_str} # Generated parameters\n"

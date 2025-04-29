@@ -10,23 +10,28 @@ from typing import TYPE_CHECKING, Optional, List, Dict, Any, Union, AsyncIterabl
 import jsonschema # For manual JSON validation
 from .tools import get_conversation_summary
 
-# Vertex AI Imports
+# Google Generative AI Imports (using Vertex AI backend)
 try:
-    import vertexai
-    from vertexai import generative_models
-    from vertexai.generative_models import (
-        GenerativeModel, GenerationConfig, Part, Content, Tool, FunctionDeclaration,
-        GenerationResponse, FinishReason, ToolConfig # Import ToolConfig
-    )
-    from google.api_core import exceptions as google_exceptions
-    from google.cloud.storage import Client as GCSClient # For potential image uploads
+    from google import genai
+    from google.generativeai import types
+    # Explicitly import necessary types for clarity and potential dummy definitions
+    from google.generativeai.types import GenerationResponse, FunctionCall, Part, Content, Tool, FunctionDeclaration, SafetySetting, HarmCategory, FinishReason, ToolConfig, GenerateContentResponse
+    from google.api_core import exceptions as google_exceptions # Keep for retry logic if applicable
+    # GCSClient might still be needed if image uploads via GCS are implemented elsewhere
+    # from google.cloud.storage import Client as GCSClient
 except ImportError:
-    print("WARNING: google-cloud-vertexai or google-cloud-storage not installed. API calls will fail.")
+    print("WARNING: google-generativeai or google-api-core not installed. API calls will fail.")
     # Define dummy classes/exceptions if library isn't installed
-    class DummyGenerativeModel:
-        def __init__(self, model_name, system_instruction=None, tools=None): pass
-        async def generate_content_async(self, contents, generation_config=None, safety_settings=None, stream=False): return None
-    GenerativeModel = DummyGenerativeModel
+    genai = None # Indicate genai module is missing
+    types = None # Indicate types module is missing
+    class DummyGenerationResponse:
+        def __init__(self):
+            self.candidates = []
+            self.text = None # Add basic text attribute for compatibility
+    class DummyFunctionCall:
+        def __init__(self):
+            self.name = None
+            self.args = None
     class DummyPart:
         @staticmethod
         def from_text(text): return None
@@ -36,13 +41,55 @@ except ImportError:
         def from_uri(uri, mime_type): return None
         @staticmethod
         def from_function_response(name, response): return None
+        @staticmethod
+        def from_function_call(function_call): return None # Add this
+    class DummyContent:
+        def __init__(self, role=None, parts=None):
+            self.role = role
+            self.parts = parts or []
+    class DummyTool:
+        def __init__(self, function_declarations=None): pass
+    class DummyFunctionDeclaration:
+        def __init__(self, name, description, parameters): pass
+    class DummySafetySetting:
+        def __init__(self, category, threshold): pass
+    class DummyHarmCategory:
+        HARM_CATEGORY_HATE_SPEECH = "HARM_CATEGORY_HATE_SPEECH"
+        HARM_CATEGORY_DANGEROUS_CONTENT = "HARM_CATEGORY_DANGEROUS_CONTENT"
+        HARM_CATEGORY_SEXUALLY_EXPLICIT = "HARM_CATEGORY_SEXUALLY_EXPLICIT"
+        HARM_CATEGORY_HARASSMENT = "HARM_CATEGORY_HARASSMENT"
+    class DummyFinishReason:
+        STOP = "STOP"
+        MAX_TOKENS = "MAX_TOKENS"
+        SAFETY = "SAFETY"
+        RECITATION = "RECITATION"
+        OTHER = "OTHER"
+        FUNCTION_CALL = "FUNCTION_CALL" # Add this
+    class DummyToolConfig:
+         class FunctionCallingConfig:
+             class Mode:
+                 ANY = "ANY"
+                 NONE = "NONE"
+                 AUTO = "AUTO"
+         def __init__(self, function_calling_config=None): pass
+    class DummyGenerateContentResponse: # For non-streaming response type hint
+        def __init__(self):
+            self.candidates = []
+            self.text = None
+
+    # Assign dummy types
+    GenerationResponse = DummyGenerationResponse
+    FunctionCall = DummyFunctionCall
     Part = DummyPart
-    Content = dict
-    Tool = list
-    FunctionDeclaration = object
-    GenerationConfig = dict
-    GenerationResponse = object
-    FinishReason = object
+    Content = DummyContent
+    Tool = DummyTool
+    FunctionDeclaration = DummyFunctionDeclaration
+    SafetySetting = DummySafetySetting
+    HarmCategory = DummyHarmCategory
+    FinishReason = DummyFinishReason
+    ToolConfig = DummyToolConfig
+    GenerateContentResponse = DummyGenerateContentResponse
+
     class DummyGoogleExceptions:
         ResourceExhausted = type('ResourceExhausted', (Exception,), {})
         InternalServerError = type('InternalServerError', (Exception,), {})
@@ -111,20 +158,33 @@ def _preprocess_schema_for_vertex(schema: Dict[str, Any]) -> Dict[str, Any]:
 
 
     return processed_schema
-
-
 # --- Helper Function to Safely Extract Text ---
-def _get_response_text(response: Optional['GenerationResponse']) -> Optional[str]:
-    """Safely extracts the text content from the first text part of a GenerationResponse."""
+# Updated to handle google.generativeai.types.GenerateContentResponse
+def _get_response_text(response: Optional[GenerateContentResponse]) -> Optional[str]:
+    """
+    Safely extracts the text content from the first text part of a GenerateContentResponse.
+    Handles potential errors and lack of text parts gracefully.
+    """
     if not response:
         print("[_get_response_text] Received None response object.")
         return None
+
+    # Check if response has the 'text' attribute directly (common case for simple text responses)
+    if hasattr(response, 'text') and response.text:
+        print("[_get_response_text] Found text directly in response.text attribute.")
+        return response.text
+
+    # If no direct text, check candidates
     if not response.candidates:
+        # Log the response object itself for debugging if it exists but has no candidates
         print(f"[_get_response_text] Response object has no candidates. Response: {response}")
         return None
 
     try:
+        # Prioritize the first candidate
         candidate = response.candidates[0]
+
+        # Check candidate.content and candidate.content.parts
         if not hasattr(candidate, 'content') or not candidate.content:
             print(f"[_get_response_text] Candidate 0 has no 'content'. Candidate: {candidate}")
             return None
@@ -132,112 +192,145 @@ def _get_response_text(response: Optional['GenerationResponse']) -> Optional[str
             print(f"[_get_response_text] Candidate 0 content has no 'parts' or parts list is empty. Content: {candidate.content}")
             return None
 
-        # Log all parts for debugging
-        print(f"[_get_response_text] Inspecting parts: {candidate.content.parts}")
+        # Log parts for debugging
+        print(f"[_get_response_text] Inspecting parts in candidate 0: {candidate.content.parts}")
 
         # Iterate through parts to find the first text part
         for i, part in enumerate(candidate.content.parts):
-            print(f"[_get_response_text] Checking part {i}: Type={type(part)}, Attributes={dir(part)}")
-            # Check if the part has a 'text' attribute and it's not empty
-            if hasattr(part, 'text') and part.text:
-                print(f"[_get_response_text] Found text in part {i}.")
-                return part.text
+            # Check if the part has a 'text' attribute and it's not empty/None
+            if hasattr(part, 'text') and part.text is not None: # Check for None explicitly
+                 # Check if text is non-empty string after stripping whitespace
+                 if isinstance(part.text, str) and part.text.strip():
+                     print(f"[_get_response_text] Found non-empty text in part {i}.")
+                     return part.text
+                 else:
+                     print(f"[_get_response_text] Part {i} has 'text' attribute, but it's empty or not a string: {part.text!r}")
+            # else:
+            #     print(f"[_get_response_text] Part {i} does not have 'text' attribute or it's None.")
 
-        # If no text part is found after checking all parts
-        print(f"[_get_response_text] No usable text part found after iterating through all parts.")
+
+        # If no text part is found after checking all parts in the first candidate
+        print(f"[_get_response_text] No usable text part found in candidate 0 after iterating through all parts.")
         return None
-    except (AttributeError, IndexError) as e:
-        # Handle cases where structure is unexpected or parts list is empty during access
+
+    except (AttributeError, IndexError, TypeError) as e:
+        # Handle cases where structure is unexpected, list is empty, or types are wrong
         print(f"[_get_response_text] Error accessing response structure: {type(e).__name__}: {e}")
+        # Log the problematic response object for deeper inspection
+        print(f"Problematic response object: {response}")
         return None
     except Exception as e:
-        # Catch unexpected errors during access
+        # Catch other unexpected errors during access
         print(f"[_get_response_text] Unexpected error extracting text: {e}")
+        print(f"Response object during error: {response}")
         return None
 
 
-# --- Initialize Vertex AI ---
+# --- Initialize Google Generative AI Client for Vertex AI ---
+# No explicit genai.configure(api_key=...) needed when using Vertex AI backend
 try:
-    vertexai.init(project=PROJECT_ID, location=LOCATION)
-    print(f"Vertex AI initialized for project '{PROJECT_ID}' in location '{LOCATION}'.")
+    # Initialize the client specifically for Vertex AI
+    # This assumes credentials (like ADC) are set up correctly in the environment
+    genai_client = genai.Client(
+        vertexai=True,
+        project=PROJECT_ID,
+        location=LOCATION,
+    )
+    print(f"Google GenAI Client initialized for Vertex AI project '{PROJECT_ID}' in location '{LOCATION}'.")
 except NameError:
-    print("Vertex AI SDK not imported, skipping initialization.")
+    genai_client = None
+    print("Google GenAI SDK (genai) not imported, skipping client initialization.")
 except Exception as e:
-    print(f"Error initializing Vertex AI: {e}")
+    genai_client = None
+    print(f"Error initializing Google GenAI Client for Vertex AI: {e}")
 
 # --- Constants ---
-# Define standard safety settings (adjust as needed)
-# Use actual types if import succeeded, otherwise fallback to Any
-_HarmCategory = getattr(generative_models, 'HarmCategory', Any)
-_HarmBlockThreshold = getattr(generative_models, 'HarmBlockThreshold', Any)
-# To disable blocking, set all thresholds to BLOCK_NONE (or equivalent).
-STANDARD_SAFETY_SETTINGS = {
-    getattr(_HarmCategory, 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_HATE_SPEECH'): getattr(_HarmBlockThreshold, 'BLOCK_NONE', 'BLOCK_NONE'),
-    getattr(_HarmCategory, 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_DANGEROUS_CONTENT'): getattr(_HarmBlockThreshold, 'BLOCK_NONE', 'BLOCK_NONE'),
-    getattr(_HarmCategory, 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_SEXUALLY_EXPLICIT'): getattr(_HarmBlockThreshold, 'BLOCK_NONE', 'BLOCK_NONE'),
-    getattr(_HarmCategory, 'HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HARASSMENT'): getattr(_HarmBlockThreshold, 'BLOCK_NONE', 'BLOCK_NONE'),
-}
+# Define standard safety settings using google.generativeai types
+# Set all thresholds to OFF as requested
+STANDARD_SAFETY_SETTINGS = [
+    SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold="BLOCK_NONE"),
+    SafetySetting(category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold="BLOCK_NONE"),
+    SafetySetting(category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold="BLOCK_NONE"),
+    SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold="BLOCK_NONE"),
+]
 
 # --- API Call Helper ---
-async def call_vertex_api_with_retry(
+async def call_google_genai_api_with_retry(
     cog: 'GurtCog',
-    model: 'GenerativeModel', # Use string literal for type hint
-    contents: List['Content'], # Use string literal for type hint
-    generation_config: 'GenerationConfig', # Use string literal for type hint
-    safety_settings: Optional[Dict[Any, Any]], # Use Any for broader compatibility
+    model_name: str, # Pass model name string instead of model object
+    contents: List[Content], # Use Content type from google.generativeai.types
+    generation_config: types.GenerateContentConfig, # Use specific type
+    safety_settings: Optional[List[SafetySetting]], # Use specific type
     request_desc: str,
-    stream: bool = False,
-    tool_config: Optional['ToolConfig'] = None # Add tool_config parameter
-) -> Union['GenerationResponse', AsyncIterable['GenerationResponse'], None]: # Use string literals
+    tools: Optional[List[Tool]] = None, # Pass tools list if needed
+    tool_config: Optional[ToolConfig] = None
+) -> Optional[GenerateContentResponse]: # Return type for non-streaming
     """
-    Calls the Vertex AI Gemini API with retry logic.
+    Calls the Google Generative AI API (Vertex AI backend) with retry logic (non-streaming).
 
     Args:
         cog: The GurtCog instance.
-        model: The initialized GenerativeModel instance.
+        model_name: The name/path of the model to use (e.g., 'models/gemini-1.5-pro-preview-0409' or custom endpoint path).
         contents: The list of Content objects for the prompt.
-        generation_config: The GenerationConfig object.
-        safety_settings: Safety settings for the request.
+        generation_config: The types.GenerateContentConfig object.
+        safety_settings: Safety settings for the request (List[SafetySetting]).
         request_desc: A description of the request for logging purposes.
-        stream: Whether to stream the response.
+        tools: Optional list of Tool objects for function calling.
+        tool_config: Optional ToolConfig object.
 
     Returns:
-        The GenerationResponse object or an AsyncIterable if streaming, or None on failure.
+        The GenerateContentResponse object if successful, or None on failure after retries.
 
     Raises:
         Exception: If the API call fails after all retry attempts or encounters a non-retryable error.
     """
+    if not genai_client:
+        raise Exception("Google GenAI Client (genai_client) is not initialized.")
+
     last_exception = None
-    model_name = model._model_name # Get model name for logging
     start_time = time.monotonic()
+
+    # Get the model object from the client
+    # Note: model_name should include the 'projects/.../locations/.../endpoints/...' path for custom models
+    # or just 'models/model-name' for standard models.
+    try:
+        model = genai_client.get_model(model_name) # Use get_model to ensure it exists
+        if not model:
+             raise ValueError(f"Could not retrieve model: {model_name}")
+    except Exception as model_e:
+         print(f"Error retrieving model '{model_name}': {model_e}")
+         raise # Re-raise the exception as this is a fundamental setup issue
 
     for attempt in range(API_RETRY_ATTEMPTS + 1):
         try:
             print(f"Sending API request for {request_desc} using {model_name} (Attempt {attempt + 1}/{API_RETRY_ATTEMPTS + 1})...")
 
+            # Use the non-streaming async call
             response = await model.generate_content_async(
                 contents=contents,
                 generation_config=generation_config,
                 safety_settings=safety_settings or STANDARD_SAFETY_SETTINGS,
-                stream=stream,
-                tool_config=tool_config # Pass tool_config here
+                tools=tools,
+                tool_config=tool_config,
+                # stream=False is implicit for generate_content_async
             )
 
             # --- Check Finish Reason (Safety) ---
-            # This check is primarily for non-streaming responses where a single finish_reason is available.
-            if not stream and response and response.candidates:
+            # Access finish reason and safety ratings from the response object
+            if response and response.candidates:
                 candidate = response.candidates[0]
-                # Ensure FinishReason is accessible (it should be if vertexai imported correctly)
-                _FinishReason = globals().get('FinishReason')
-                if _FinishReason and candidate.finish_reason == _FinishReason.SAFETY:
-                    safety_ratings_str = ", ".join([f"{rating.category}: {rating.probability.name}" for rating in candidate.safety_ratings]) if candidate.safety_ratings else "N/A"
+                finish_reason = getattr(candidate, 'finish_reason', None)
+                safety_ratings = getattr(candidate, 'safety_ratings', [])
+
+                if finish_reason == FinishReason.SAFETY:
+                    safety_ratings_str = ", ".join([f"{rating.category.name}: {rating.probability.name}" for rating in safety_ratings]) if safety_ratings else "N/A"
                     print(f"⚠️ SAFETY BLOCK: API request for {request_desc} ({model_name}) was blocked by safety filters. Finish Reason: SAFETY. Ratings: [{safety_ratings_str}]")
                     # Optionally, raise a specific exception here if needed downstream
                     # raise SafetyBlockError(f"Blocked by safety filters. Ratings: {safety_ratings_str}")
-                elif _FinishReason and candidate.finish_reason != _FinishReason.STOP and candidate.finish_reason != _FinishReason.MAX_TOKENS and candidate.finish_reason != _FinishReason.FUNCTION_CALL:
+                elif finish_reason not in [FinishReason.STOP, FinishReason.MAX_TOKENS, FinishReason.FUNCTION_CALL, None]: # Allow None finish reason
                      # Log other unexpected finish reasons
-                     print(f"⚠️ UNEXPECTED FINISH REASON: API request for {request_desc} ({model_name}) finished with reason: {candidate.finish_reason.name}")
-
+                     finish_reason_name = FinishReason(finish_reason).name if isinstance(finish_reason, int) else str(finish_reason)
+                     print(f"⚠️ UNEXPECTED FINISH REASON: API request for {request_desc} ({model_name}) finished with reason: {finish_reason_name}")
 
             # --- Success Logging (Proceed even if safety blocked, but log occurred) ---
             elapsed_time = time.monotonic() - start_time
@@ -250,8 +343,10 @@ async def call_vertex_api_with_retry(
             print(f"API request successful for {request_desc} ({model_name}) in {elapsed_time:.2f}s.")
             return response # Success
 
+        # Adapt exception handling if google.generativeai raises different types
+        # google.api_core.exceptions should still cover many common API errors
         except google_exceptions.ResourceExhausted as e:
-            error_msg = f"Rate limit error (ResourceExhausted) for {request_desc}: {e}"
+            error_msg = f"Rate limit error (ResourceExhausted) for {request_desc} ({model_name}): {e}"
             print(f"{error_msg} (Attempt {attempt + 1})")
             last_exception = e
             if attempt < API_RETRY_ATTEMPTS:
@@ -266,7 +361,7 @@ async def call_vertex_api_with_retry(
                 break # Max retries reached
 
         except (google_exceptions.InternalServerError, google_exceptions.ServiceUnavailable) as e:
-            error_msg = f"API server error ({type(e).__name__}) for {request_desc}: {e}"
+            error_msg = f"API server error ({type(e).__name__}) for {request_desc} ({model_name}): {e}"
             print(f"{error_msg} (Attempt {attempt + 1})")
             last_exception = e
             if attempt < API_RETRY_ATTEMPTS:
@@ -281,14 +376,14 @@ async def call_vertex_api_with_retry(
                 break # Max retries reached
 
         except google_exceptions.InvalidArgument as e:
-            # Often indicates a problem with the request itself (e.g., bad schema, unsupported format)
-            error_msg = f"Invalid argument error for {request_desc}: {e}"
+            # Often indicates a problem with the request itself (e.g., bad schema, unsupported format, invalid model name)
+            error_msg = f"Invalid argument error for {request_desc} ({model_name}): {e}"
             print(error_msg)
             last_exception = e
             break # Non-retryable
 
         except asyncio.TimeoutError: # Handle potential client-side timeouts if applicable
-             error_msg = f"Client-side request timed out for {request_desc} (Attempt {attempt + 1})"
+             error_msg = f"Client-side request timed out for {request_desc} ({model_name}) (Attempt {attempt + 1})"
              print(error_msg)
              last_exception = asyncio.TimeoutError(error_msg)
              # Decide if client-side timeouts should be retried
@@ -296,13 +391,13 @@ async def call_vertex_api_with_retry(
                  if model_name not in cog.api_stats:
                      cog.api_stats[model_name] = {'success': 0, 'failure': 0, 'retries': 0, 'total_time': 0.0, 'count': 0}
                  cog.api_stats[model_name]['retries'] += 1
-                 await asyncio.sleep(API_RETRY_DELAY * (attempt + 1))
+                 await asyncio.sleep(API_RETRY_DELAY * (attempt + 1)) # Linear backoff for timeout? Or keep exponential?
                  continue
              else:
                  break
 
-        except Exception as e: # Catch other potential exceptions
-            error_msg = f"Unexpected error during API call for {request_desc} (Attempt {attempt + 1}): {type(e).__name__}: {e}"
+        except Exception as e: # Catch other potential exceptions (e.g., from genai library itself)
+            error_msg = f"Unexpected error during API call for {request_desc} ({model_name}) (Attempt {attempt + 1}): {type(e).__name__}: {e}"
             print(error_msg)
             import traceback
             traceback.print_exc()
@@ -400,19 +495,20 @@ def parse_and_validate_json_response(
 
 
 # --- Tool Processing ---
-async def process_requested_tools(cog: 'GurtCog', function_call: 'generative_models.FunctionCall') -> 'Part': # Use string literals
+# Updated to use google.generativeai types
+async def process_requested_tools(cog: 'GurtCog', function_call: FunctionCall) -> Part:
     """
     Process a tool request specified by the AI's FunctionCall response.
 
     Args:
         cog: The GurtCog instance.
-        function_call: The FunctionCall object from the GenerationResponse.
+        function_call: The FunctionCall object from the GenerateContentResponse.
 
     Returns:
         A Part object containing the tool result or error, formatted for the follow-up API call.
     """
     function_name = function_call.name
-    # Convert the Struct field arguments to a standard Python dict
+    # function_call.args is already a dict-like object in google.generativeai
     function_args = dict(function_call.args) if function_call.args else {}
     tool_result_content = None
 
@@ -473,22 +569,26 @@ async def process_requested_tools(cog: 'GurtCog', function_call: 'generative_mod
         print(f"{error_message} (Took {tool_elapsed_time:.2f}s)")
         tool_result_content = {"error": error_message}
 
-    # Return the result formatted as a Part for the API
-    return Part.from_function_response(name=function_name, response=tool_result_content)
+    # Return the result formatted as a Part for the API using the correct type
+    return Part(function_response=types.FunctionResponse(name=function_name, response=tool_result_content))
 
 
 # --- Helper to find function call in parts ---
-def find_function_call_in_parts(parts: Optional[List['Part']]) -> Optional['generative_models.FunctionCall']:
+# Updated to use google.generativeai types
+def find_function_call_in_parts(parts: Optional[List[Part]]) -> Optional[FunctionCall]:
     """Finds the first valid FunctionCall object within a list of Parts."""
     if not parts:
         return None
     for part in parts:
-        if hasattr(part, 'function_call') and part.function_call:
-            # Check if the function_call object itself is not None
-            if part.function_call.name and isinstance(part.function_call.name, str): # Basic validation
+        # Check if the part has a 'function_call' attribute and it's a valid FunctionCall object
+        if hasattr(part, 'function_call') and isinstance(part.function_call, FunctionCall):
+            # Basic validation: ensure name exists
+            if part.function_call.name:
                  return part.function_call
             else:
-                 print(f"Warning: Found part with 'function_call' attribute, but it was invalid or None: {part.function_call}")
+                 print(f"Warning: Found Part with 'function_call', but its name is missing: {part.function_call}")
+        # else:
+        #     print(f"Debug: Part does not have valid function_call: {part}") # Optional debug log
     return None
 
 
@@ -509,8 +609,14 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         - "error": An error message string if a critical error occurred, otherwise None.
         - "fallback_initial": Optional minimal response if initial parsing failed critically (less likely with controlled generation).
     """
-    if not PROJECT_ID or not LOCATION:
-         return {"final_response": None, "error": "Google Cloud Project ID or Location not configured"}
+    if not PROJECT_ID or not LOCATION or not genai_client: # Check genai_client too
+         error_msg = "Google Cloud Project ID/Location not configured or GenAI Client failed to initialize."
+         print(f"Error in get_ai_response: {error_msg}")
+         return {"final_response": None, "error": error_msg}
+
+    # Use the specific custom model endpoint provided by the user
+    target_model_name = model_name or "projects/1079377687568/locations/us-central1/endpoints/6677946543460319232"
+    print(f"Using model: {target_model_name}")
 
     channel_id = message.channel.id
     user_id = message.author.id
@@ -639,70 +745,71 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             print("Warning: No content parts generated for user message.")
             contents.append(Content(role="user", parts=[Part.from_text("")])) # Ensure content list isn't empty
 
-        # --- Initialize TWO Model Instances ---
-        # 1. Model WITH tools: For the main loop to detect and execute tool calls
+        # --- Prepare Tools ---
+        # Convert FunctionDeclarations from config.py (TOOLS) into a Tool object
+        # Assuming TOOLS is a list of FunctionDeclaration objects
         vertex_tool = Tool(function_declarations=TOOLS) if TOOLS else None
-        model_with_tools = GenerativeModel(
-            model_name=(
-                "projects/gurting/locations/us-central1/tunedModels/"
-                "670687799292198912"
-            ),
-            system_instruction=final_system_prompt,
-            tools=[vertex_tool] if vertex_tool else None # Pass tools here
-        )
-        # 2. Model WITHOUT tools: For the final call to strictly enforce JSON schema
-        model_without_tools = GenerativeModel(
-            model_name=(
-                "projects/gurting/locations/us-central1/tunedModels/"
-                "670687799292198912"
-            ),
-            system_instruction=final_system_prompt
-            # Omit 'tools' parameter here
-        )
-        print("Initialized separate models for tool checking and final JSON generation.")
+        tools_list = [vertex_tool] if vertex_tool else None
 
-        # --- Config for checking tool calls within the loop (using model_with_tools) ---
-        # No schema enforcement needed here, just checking for function calls
-        generation_config_tool_check = GenerationConfig(
-            temperature=0.5, # Or desired temp for tool reasoning
-            max_output_tokens=10000 # Allow ample tokens for reasoning + function call
+        # --- Prepare Generation Config ---
+        # Use settings from user example and config.py
+        # Note: response_modalities and speech_config from user example are not standard genai config
+        generation_config = types.GenerateContentConfig(
+            temperature=1.0, # From user example
+            top_p=0.95,      # From user example
+            max_output_tokens=8192, # From user example
+            # response_mime_type="application/json", # Set this later for the final JSON call
+            # response_schema=... # Set this later for the final JSON call
+            # stop_sequences=... # Add if needed
+            # candidate_count=1 # Default is 1
         )
-        # Force *any* tool use if the model deems it necessary
+
+        # Tool config for the loop (allow any tool call)
         tool_config_any = ToolConfig(
             function_calling_config=ToolConfig.FunctionCallingConfig(
-                mode=ToolConfig.FunctionCallingConfig.Mode.ANY
+                mode=ToolConfig.FunctionCallingConfig.Mode.ANY # Use ANY to allow model to call tools
             )
-        ) if vertex_tool else None # Only set tool_config if tools exist
+        ) if vertex_tool else None
 
         # --- Tool Execution Loop ---
         while tool_calls_made < max_tool_calls:
             print(f"Making API call (Loop Iteration {tool_calls_made + 1}/{max_tool_calls})...")
 
-            # --- Log Request Payload for this iteration ---
+            # --- Log Request Payload ---
+            # (Keep existing logging logic if desired)
             try:
-                request_payload_log = [{"role": c.role, "parts": [str(p) for p in c.parts]} for c in contents]
-                print(f"--- Raw API Request (Loop {tool_calls_made + 1}) ---\n{json.dumps(request_payload_log, indent=2)}\n------------------------------------")
+                 request_payload_log = [{"role": c.role, "parts": [str(p) for p in c.parts]} for c in contents]
+                 print(f"--- Raw API Request (Loop {tool_calls_made + 1}) ---\n{json.dumps(request_payload_log, indent=2)}\n------------------------------------")
             except Exception as log_e:
-                print(f"Error logging raw request/response: {log_e}")
-            # --- End Logging ---
+                 print(f"Error logging raw request/response: {log_e}")
 
-            current_response_obj = await call_vertex_api_with_retry(
+            # --- Call API using the new helper ---
+            # Use a temporary config for tool checking (no JSON enforcement yet)
+            current_gen_config = types.GenerateContentConfig(
+                temperature=generation_config.temperature, # Use base temp or specific tool temp
+                top_p=generation_config.top_p,
+                max_output_tokens=generation_config.max_output_tokens,
+                # Omit response_mime_type and response_schema here
+            )
+
+            current_response_obj = await call_google_genai_api_with_retry(
                 cog=cog,
-                model=model_with_tools, # Use model *with* tools enabled
+                model_name=target_model_name, # Pass the model name string
                 contents=contents,
-                generation_config=generation_config_tool_check,
-                safety_settings=STANDARD_SAFETY_SETTINGS,
+                generation_config=current_gen_config, # Use temp config
+                safety_settings=STANDARD_SAFETY_SETTINGS, # Use the new list format
                 request_desc=f"Tool Check {tool_calls_made + 1} for message {message.id}",
-                tool_config=tool_config_any # Pass tool config to allow function calls
+                tools=tools_list, # Pass the Tool object list
+                tool_config=tool_config_any
             )
             last_response_obj = current_response_obj # Store the latest response
 
-            # --- Log Raw Response for this iteration ---
+            # --- Log Raw Response ---
+            # (Keep existing logging logic if desired)
             try:
-                print(f"--- Raw API Response (Loop {tool_calls_made + 1}) ---\n{current_response_obj}\n-----------------------------------")
+                 print(f"--- Raw API Response (Loop {tool_calls_made + 1}) ---\n{current_response_obj}\n-----------------------------------")
             except Exception as log_e:
-                print(f"Error logging raw request/response: {log_e}")
-            # --- End Logging ---
+                 print(f"Error logging raw request/response: {log_e}")
 
             if not current_response_obj or not current_response_obj.candidates:
                 error_message = f"API call in tool loop (Iteration {tool_calls_made + 1}) failed to return candidates."
@@ -711,60 +818,50 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
             candidate = current_response_obj.candidates[0]
 
-            # --- Find ALL function calls in the candidate's parts ---
+            # --- Find ALL function calls using the updated helper ---
+            # The response structure might differ slightly; check candidate.content.parts
             function_calls_found = []
             if candidate.content and candidate.content.parts:
-                for part in candidate.content.parts:
-                    if hasattr(part, 'function_call') and part.function_call and part.function_call.name:
-                        function_calls_found.append(part.function_call)
+                 function_calls_found = [part.function_call for part in candidate.content.parts if hasattr(part, 'function_call') and isinstance(part.function_call, FunctionCall)]
 
             if function_calls_found:
                 # Check if the *only* call is no_operation
                 if len(function_calls_found) == 1 and function_calls_found[0].name == "no_operation":
                     print("AI called only no_operation, signaling completion.")
-                    contents.append(candidate.content) # Append the model's turn (with the no_op call)
-                    # Add the dummy function response for no_operation
-                    contents.append(Content(role="function", parts=[Part.from_function_response(
-                        name="no_operation",
-                        response={"status": "success", "message": "No operation performed."}
-                    )]))
-                    last_response_obj = current_response_obj
+                    # Append the model's response (which contains the function call part)
+                    contents.append(candidate.content)
+                    # Add the function response part using the updated process_requested_tools
+                    no_op_response_part = await process_requested_tools(cog, function_calls_found[0])
+                    contents.append(Content(role="function", parts=[no_op_response_part]))
+                    last_response_obj = current_response_obj # Keep track of the response containing the no_op
                     break # Exit loop
 
                 # Process multiple function calls if present (or a single non-no_op call)
                 tool_calls_made += 1 # Increment once per model turn that requests tools
                 print(f"AI requested {len(function_calls_found)} tool(s): {[fc.name for fc in function_calls_found]} (Turn {tool_calls_made}/{max_tool_calls})")
 
-                # Append the entire model response content (containing all function calls)
+                # Append the model's response content (containing the function call parts)
                 contents.append(candidate.content)
 
-                # --- Execute all requested tools and gather responses ---
+                # --- Execute all requested tools and gather response parts ---
                 function_response_parts = []
                 for func_call in function_calls_found:
-                     # Skip executing no_operation if it's mixed with other calls
-                     if func_call.name == "no_operation":
-                         print("Skipping execution for 'no_operation' call mixed with others.")
-                         # Add the dummy response part for it
-                         response_part = Part.from_function_response(
-                             name="no_operation",
-                             response={"status": "success", "message": "No operation performed."}
-                         )
-                     else:
-                         # Execute the actual tool
-                         response_part = await process_requested_tools(cog, func_call)
+                     # Execute the tool using the updated helper (which handles no_op internally if needed)
+                     response_part = await process_requested_tools(cog, func_call)
                      function_response_parts.append(response_part)
 
                 # Append a single function role turn containing ALL response parts
                 if function_response_parts:
+                    # Role should be 'function' for tool responses in google.generativeai
                     contents.append(Content(role="function", parts=function_response_parts))
                 else:
                      print("Warning: Function calls found, but no response parts generated.")
 
-                # Continue the loop to see if the AI needs more tools after these results
+                # Continue the loop
             else:
-                # No function calls found in this response
+                # No function calls found in this response's parts
                 print("No tool calls requested by AI in this turn. Exiting loop.")
-                # The last_response_obj already holds the model's final (non-tool) response
+                # last_response_obj already holds the model's final (non-tool) response
                 break # Exit loop
 
         # --- After the loop ---
@@ -781,84 +878,81 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             pass # No action needed here, just let the loop exit
 
         # --- Final JSON Generation (outside the loop) ---
-        # This section runs if the loop exited without API errors,
-        # either naturally or by hitting the limit.
-        if not error_message and last_response_obj:
-            # Attempt to parse JSON from the *very last* response object obtained
-            # (This could be from the last tool check or the dedicated follow-up)
-            print("Attempting to parse final JSON from the last response object...")
-            last_response_text = _get_response_text(last_response_obj)
-            if last_response_text:
-                final_parsed_data = parse_and_validate_json_response(
-                    last_response_text, RESPONSE_SCHEMA['schema'], "final response (from last object)"
-                )
-
-            # If parsing the last response failed, OR if the loop hit the limit (and we want to be sure),
-            # make one final dedicated call using the model *without* tools.
-            if final_parsed_data is None:
-                # Add a specific log message depending on why we're here
-                if tool_calls_made >= max_tool_calls:
-                    log_reason = "hit tool limit"
-                elif last_response_text:
-                    log_reason = "last response parsing failed"
-                else:
-                    log_reason = "last response had no text"
-                print(f"Making dedicated final API call ({log_reason})...")
-
-                # Use the model_without_tools instance
-                processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
-                generation_config_final_json = GenerationConfig(
-                    temperature=0.6, # Or desired final temp
-                    max_output_tokens=10000, # Or desired final max tokens
-                    response_mime_type="application/json",
-                    response_schema=processed_response_schema
-                )
-
-                # Append the last AI response content (which didn't have a valid tool call or JSON)
-                # to the history before making the final attempt.
-                if last_response_obj and last_response_obj.candidates:
-                    contents.append(last_response_obj.candidates[0].content)
-
-                final_json_response_obj = await call_vertex_api_with_retry(
-                    cog=cog,
-                    model=model_without_tools, # Use model WITHOUT tools
-                    contents=contents,
-                    generation_config=generation_config_final_json,
-                    safety_settings=STANDARD_SAFETY_SETTINGS,
-                    request_desc=f"Final JSON Generation (dedicated call) for message {message.id}",
-                    tool_config=None # Ensure no tool config is passed
-                )
-
-                if not final_json_response_obj or not final_json_response_obj.candidates:
-                    error_msg_suffix = "Final dedicated API call returned no response or candidates."
-                    print(error_msg_suffix)
-                    # Append to existing error message if limit was hit
-                    if error_message: error_message += f" | {error_msg_suffix}"
-                    else: error_message = error_msg_suffix
-                else:
-                    final_response_text = _get_response_text(final_json_response_obj)
+        if not error_message:
+            # If the loop finished because no more tools were called, the last_response_obj
+            # should contain the final textual response (potentially JSON).
+            if last_response_obj:
+                print("Attempting to parse final JSON from the last response object...")
+                last_response_text = _get_response_text(last_response_obj)
+                if last_response_text:
+                    # Try parsing directly first
                     final_parsed_data = parse_and_validate_json_response(
-                        final_response_text, RESPONSE_SCHEMA['schema'], "final response (dedicated call)"
+                        last_response_text, RESPONSE_SCHEMA['schema'], "final response (from last loop object)"
                     )
-                    if final_parsed_data is None:
-                        error_msg_suffix = "Failed to parse/validate final dedicated JSON response."
-                        print(f"Critical Error: {error_msg_suffix}")
+
+                # If direct parsing failed OR if we hit the tool limit, make a dedicated call for JSON.
+                if final_parsed_data is None:
+                    log_reason = "last response parsing failed" if last_response_text else "last response had no text"
+                    if tool_calls_made >= max_tool_calls:
+                        log_reason = "hit tool limit"
+                    print(f"Making dedicated final API call for JSON ({log_reason})...")
+
+                    # Prepare the final generation config with JSON enforcement
+                    processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema']) # Keep using this helper for now
+                    generation_config_final_json = types.GenerateContentConfig(
+                        temperature=generation_config.temperature, # Use original temp
+                        top_p=generation_config.top_p,
+                        max_output_tokens=generation_config.max_output_tokens,
+                        response_mime_type="application/json",
+                        response_schema=processed_response_schema # Pass the schema here
+                    )
+
+                    # Make the final call *without* tools enabled
+                    final_json_response_obj = await call_google_genai_api_with_retry(
+                        cog=cog,
+                        model_name=target_model_name, # Use the target model
+                        contents=contents, # Pass the accumulated history
+                        generation_config=generation_config_final_json, # Use JSON config
+                        safety_settings=STANDARD_SAFETY_SETTINGS,
+                        request_desc=f"Final JSON Generation (dedicated call) for message {message.id}",
+                        tools=None, # Explicitly disable tools for final JSON generation
+                        tool_config=None
+                    )
+
+                    if not final_json_response_obj:
+                        error_msg_suffix = "Final dedicated API call returned no response object."
+                        print(error_msg_suffix)
                         if error_message: error_message += f" | {error_msg_suffix}"
                         else: error_message = error_msg_suffix
-                        if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
-                            fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+                    elif not final_json_response_obj.candidates:
+                         error_msg_suffix = "Final dedicated API call returned no candidates."
+                         print(error_msg_suffix)
+                         if error_message: error_message += f" | {error_msg_suffix}"
+                         else: error_message = error_msg_suffix
                     else:
-                        print("Successfully parsed final JSON response from dedicated call.")
-            elif final_parsed_data:
-                 print("Successfully parsed final JSON response from last loop object.")
-
-        elif not error_message:
-             # This case handles if the loop exited without error but also without a last_response_obj
-             # (e.g., initial API call failed before loop even started, but wasn't caught as error).
-             error_message = "Tool processing completed without a final response object."
-             print(error_message)
-             if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
-                 fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+                        final_response_text = _get_response_text(final_json_response_obj)
+                        final_parsed_data = parse_and_validate_json_response(
+                            final_response_text, RESPONSE_SCHEMA['schema'], "final response (dedicated call)"
+                        )
+                        if final_parsed_data is None:
+                            error_msg_suffix = f"Failed to parse/validate final dedicated JSON response. Raw text: {final_response_text[:500]}"
+                            print(f"Critical Error: {error_msg_suffix}")
+                            if error_message: error_message += f" | {error_msg_suffix}"
+                            else: error_message = error_msg_suffix
+                            # Set fallback only if mentioned or replied to
+                            if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
+                                fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+                        else:
+                            print("Successfully parsed final JSON response from dedicated call.")
+                elif final_parsed_data:
+                     print("Successfully parsed final JSON response from last loop object.")
+            else:
+                 # This case handles if the loop exited without error but also without a last_response_obj
+                 # (e.g., initial API call failed before loop even started, but wasn't caught as error).
+                 error_message = "Tool processing completed without a final response object."
+                 print(error_message)
+                 if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
+                     fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
 
 
     except Exception as e:
@@ -974,40 +1068,54 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
         final_proactive_prompt_parts.append("Generate a casual, in-character message based on the plan and context. Keep it relatively short and natural-sounding.")
         final_proactive_system_prompt = "\n\n".join(final_proactive_prompt_parts)
 
-        # --- Initialize Final Model ---
-        model = GenerativeModel(
-            model_name=DEFAULT_MODEL,
-            system_instruction=final_proactive_system_prompt
+        # --- Prepare Final Contents (System prompt handled by model init in helper) ---
+        # The system prompt is complex and built dynamically, so we'll pass it
+        # via the contents list as the first 'user' turn, followed by the model's
+        # expected empty response, then the final user instruction.
+        # This structure mimics how system prompts are often handled when not
+        # directly supported by the model object itself.
+
+        proactive_contents: List[Content] = [
+             # Simulate system prompt via user/model turn
+             Content(role="user", parts=[Part(text=final_proactive_system_prompt)]),
+             Content(role="model", parts=[Part(text="Understood. I will generate the JSON response as instructed.")]) # Placeholder model response
+        ]
+        # Add the final instruction
+        proactive_contents.append(
+             Content(role="user", parts=[Part.from_text(
+                 f"Generate the response based on your plan. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{json.dumps(RESPONSE_SCHEMA['schema'], indent=2)}\n\n**Ensure nothing precedes or follows the JSON.**"
+             )])
         )
 
-        # --- Prepare Final Contents ---
-        contents = [
-            Content(role="user", parts=[Part.from_text(
-                f"Generate the response based on your plan. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{json.dumps(RESPONSE_SCHEMA['schema'], indent=2)}\n\n**Ensure nothing precedes or follows the JSON.**"
-            )])
-        ]
 
         # --- Call Final LLM API ---
-        # Preprocess the schema before passing it to GenerationConfig
+        # Preprocess the schema
         processed_response_schema_proactive = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
-        generation_config_final = GenerationConfig(
+        generation_config_final = types.GenerateContentConfig(
             temperature=0.6, # Use original proactive temp
             max_output_tokens=2000,
             response_mime_type="application/json",
             response_schema=processed_response_schema_proactive # Use preprocessed schema
         )
 
-        response_obj = await call_vertex_api_with_retry(
+        # Use the new API call helper
+        response_obj = await call_google_genai_api_with_retry(
             cog=cog,
-            model=model,
-            contents=contents,
+            model_name=DEFAULT_MODEL, # Use the default model for proactive responses
+            contents=proactive_contents, # Pass the constructed contents
             generation_config=generation_config_final,
             safety_settings=STANDARD_SAFETY_SETTINGS,
-            request_desc=f"Final proactive response for channel {channel_id} ({trigger_reason})"
+            request_desc=f"Final proactive response for channel {channel_id} ({trigger_reason})",
+            tools=None, # No tools needed for this final generation
+            tool_config=None
         )
 
-        if not response_obj or not response_obj.candidates:
-            raise Exception("Final proactive API call returned no response or candidates.")
+        if not response_obj:
+             raise Exception("Final proactive API call returned no response object.")
+        if not response_obj.candidates:
+            # Try to get text even without candidates, might contain error info
+            raw_text = getattr(response_obj, 'text', 'No text available.')
+            raise Exception(f"Final proactive API call returned no candidates. Raw text: {raw_text[:200]}")
 
         # --- Parse and Validate Final Response ---
         final_response_text = _get_response_text(response_obj)
@@ -1059,16 +1167,16 @@ async def get_internal_ai_json_response(
     prompt_messages: List[Dict[str, Any]], # Keep this format
     task_description: str,
     response_schema_dict: Dict[str, Any], # Expect schema as dict
-    model_name: Optional[str] = None,
+    model_name_override: Optional[str] = None, # Renamed for clarity
     temperature: float = 0.7,
     max_tokens: int = 5000,
 ) -> Optional[Tuple[Optional[Dict[str, Any]], Optional[str]]]: # Return tuple: (parsed_data, raw_text)
     """
-    Makes a Vertex AI call expecting a specific JSON response format for internal tasks.
+    Makes a Google GenAI API call (Vertex AI backend) expecting a specific JSON response format for internal tasks.
 
     Args:
         cog: The GurtCog instance.
-        prompt_messages: List of message dicts (like OpenAI format: {'role': 'user'/'model', 'content': '...'}).
+        prompt_messages: List of message dicts (like OpenAI format: {'role': 'user'/'system'/'model', 'content': '...'}).
         task_description: Description for logging.
         response_schema_dict: The expected JSON output schema as a dictionary.
         model_name: Optional model override.
@@ -1158,102 +1266,73 @@ async def get_internal_ai_json_response(
              contents.append(Content(role="user", parts=[Part.from_text(json_instruction_content)]))
 
 
-        # --- Initialize Model ---
-        model = GenerativeModel(
-            model_name=model_name or DEFAULT_MODEL, # Use keyword argument
-            system_instruction=system_instruction
-            # No tools needed for internal JSON tasks usually
-        )
+        # --- Determine Model ---
+        # Use override if provided, otherwise default (e.g., FALLBACK_MODEL for planning)
+        actual_model_name = model_name_override or DEFAULT_MODEL # Or choose a specific default like FALLBACK_MODEL
 
         # --- Prepare Generation Config ---
-        # Preprocess the schema before passing it to GenerationConfig
         processed_schema_internal = _preprocess_schema_for_vertex(response_schema_dict)
-        generation_config = GenerationConfig(
+        generation_config = types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
             response_mime_type="application/json",
             response_schema=processed_schema_internal # Use preprocessed schema
         )
 
-        # Prepare payload for logging (approximate)
-        # Convert GenerationConfig to a serializable dict first
-        generation_config_log = {}
-        # Use isinstance with the actual type if available, otherwise check attribute existence
-        _GenerationConfigType = globals().get('GenerationConfig', object) # Get actual or dummy type
-        if isinstance(generation_config, _GenerationConfigType) and hasattr(generation_config, 'temperature'):
-             generation_config_log = {
-                 "temperature": getattr(generation_config, 'temperature', None),
-                 "max_output_tokens": getattr(generation_config, 'max_output_tokens', None),
-                 "response_mime_type": getattr(generation_config, 'response_mime_type', None),
-                 # Represent the schema as a string for simplicity in logs
-                 "response_schema": str(getattr(generation_config, 'response_schema', None))
-             }
-        elif isinstance(generation_config, dict): # Handle if it's already a dict (fallback)
-             generation_config_log = generation_config # Use as is if already a dict
-        else:
-             print(f"Warning: Unexpected type for generation_config in logging: {type(generation_config)}")
-             generation_config_log = str(generation_config) # Fallback to string representation
-
+        # --- Prepare Payload for Logging ---
+        # (Logging needs adjustment as model object isn't created here)
+        generation_config_log = {
+             "temperature": generation_config.temperature,
+             "max_output_tokens": generation_config.max_output_tokens,
+             "response_mime_type": generation_config.response_mime_type,
+             "response_schema": str(generation_config.response_schema) # Log schema as string
+        }
         request_payload_for_logging = {
-            "model": model._model_name,
-            "system_instruction": system_instruction,
-            "contents": [ # Simplified representation for logging
-                 {"role": c.role, "parts": [p.text if hasattr(p,'text') else str(type(p)) for p in c.parts]}
-                 for c in contents
-             ],
-             # Use the serializable dict version for logging
-             "generation_config": generation_config_log
-         }
-
-        # --- Add detailed logging for raw request ---
+            "model": actual_model_name, # Log the name used
+            # System instruction is now part of 'contents' for logging if handled that way
+            "contents": [{"role": c.role, "parts": [str(p) for p in c.parts]} for c in contents],
+            "generation_config": generation_config_log
+        }
+        # (Keep detailed logging logic if desired)
         try:
-            print(f"--- Raw request payload for {task_description} ---")
-            # Use json.dumps for pretty printing, handle potential errors
-            print(json.dumps(request_payload_for_logging, indent=2, default=str)) # Use default=str as fallback
-            print(f"--- End Raw request payload ---")
+             print(f"--- Raw request payload for {task_description} ---")
+             print(json.dumps(request_payload_for_logging, indent=2, default=str))
+             print(f"--- End Raw request payload ---")
         except Exception as req_log_e:
-            print(f"Error logging raw request payload: {req_log_e}")
-            print(f"Payload causing error: {request_payload_for_logging}") # Print the raw dict on error
-        # --- End detailed logging ---
+             print(f"Error logging raw request payload: {req_log_e}")
 
 
-        # --- Call API ---
-        response_obj = await call_vertex_api_with_retry(
+        # --- Call API using the new helper ---
+        response_obj = await call_google_genai_api_with_retry(
             cog=cog,
-            model=model,
+            model_name=actual_model_name, # Pass the determined model name
             contents=contents,
             generation_config=generation_config,
             safety_settings=STANDARD_SAFETY_SETTINGS, # Use standard safety
-            request_desc=task_description
+            request_desc=task_description,
+            tools=None, # No tools for internal JSON tasks
+            tool_config=None
         )
 
+        # --- Process Response ---
         if not response_obj:
-             # This case might happen if call_vertex_api_with_retry itself fails critically
              raise Exception("Internal API call failed to return a response object.")
-        if not response_obj.candidates:
-             # Handle cases where the response object exists but has no candidates (e.g., safety block)
-             print(f"Warning: Internal API call for {task_description} returned no candidates. Response: {response_obj}")
-             # Attempt to get text even without candidates, though it's unlikely
-             final_response_text = getattr(response_obj, 'text', None)
-             # No valid data to parse
-             final_parsed_data = None
-             # We might still have the raw text if the API provided it despite blocking
-        else:
-             # --- Log the entire response object BEFORE attempting to parse ---
-             print(f"--- Full response_obj received for {task_description} ---")
-             print(response_obj)
-             print(f"--- End Full response_obj ---")
-             # --- End Logging ---
 
-             # --- Parse and Validate ---
-             # Use the helper function to safely extract text, even from structured parts
+        # Log the raw response object
+        print(f"--- Full response_obj received for {task_description} ---")
+        print(response_obj)
+        print(f"--- End Full response_obj ---")
+
+        if not response_obj.candidates:
+             print(f"Warning: Internal API call for {task_description} returned no candidates. Response: {response_obj}")
+             final_response_text = getattr(response_obj, 'text', None) # Try to get text anyway
+             final_parsed_data = None
+        else:
+             # Parse and Validate using the updated helper
              final_response_text = _get_response_text(response_obj) # Store raw text
-             # --- Add detailed logging for raw response text (now using the extracted text) ---
-             print(f"--- Extracted Text for {task_description} (via _get_response_text) ---")
+             print(f"--- Extracted Text for {task_description} ---")
              print(final_response_text)
              print(f"--- End Extracted Text ---")
-             # --- End detailed logging ---
-             print(f"Parsing ({task_description}): Using Extracted Text for JSON.")
 
              final_parsed_data = parse_and_validate_json_response(
                  final_response_text, response_schema_dict, f"internal task ({task_description})"
@@ -1261,8 +1340,7 @@ async def get_internal_ai_json_response(
 
              if final_parsed_data is None:
                  print(f"Warning: Internal task '{task_description}' failed JSON validation.")
-                 # No re-prompting for internal tasks, just return None (parsed data is None)
-                 # Keep final_response_text as it is for returning
+                 # Keep final_response_text for returning raw output
 
     except Exception as e:
         print(f"Error in get_internal_ai_json_response ({task_description}): {type(e).__name__}: {e}")

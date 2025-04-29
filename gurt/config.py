@@ -3,18 +3,20 @@ import random
 import json
 from dotenv import load_dotenv
 
-# Placeholder for actual import - will be handled at runtime
+# Import necessary types from google.generativeai
 try:
-    from vertexai import generative_models
+    # Import the specific type needed for tool definitions
+    from google.generativeai.types import FunctionDeclaration
 except ImportError:
     # Define a dummy class if the library isn't installed,
-    # so eval doesn't immediately fail.
-    # This assumes the code won't actually run without the library.
-    class DummyGenerativeModels:
-        class FunctionDeclaration:
-            def __init__(self, name, description, parameters):
-                pass
-    generative_models = DummyGenerativeModels()
+    # so the rest of the file can load without immediate error.
+    print("WARNING: google-generativeai not installed. Tool definitions may be incomplete.")
+    class DummyFunctionDeclaration:
+        def __init__(self, name, description, parameters):
+            self.name = name
+            self.description = description
+            self.parameters = parameters
+    FunctionDeclaration = DummyFunctionDeclaration
 
 
 # Load environment variables
@@ -361,11 +363,11 @@ GOAL_DECOMPOSITION_SCHEMA = {
 # --- Tools Definition ---
 def create_tools_list():
     # This function creates the list of FunctionDeclaration objects.
-    # It requires 'generative_models' to be imported.
-    # We define it here but call it later, assuming the import succeeded.
+    # This function creates the list of FunctionDeclaration objects.
+    # It now requires 'FunctionDeclaration' from 'google.generativeai.types' to be imported.
     tool_declarations = []
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="get_recent_messages",
             description="Get recent messages from a Discord channel",
             parameters={
@@ -385,7 +387,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="search_user_messages",
             description="Search for messages from a specific user",
             parameters={
@@ -409,7 +411,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="search_messages_by_content",
             description="Search for messages containing specific content",
             parameters={
@@ -433,7 +435,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="get_channel_info",
             description="Get information about a Discord channel",
             parameters={
@@ -449,7 +451,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="get_conversation_context",
             description="Get the context of the current conversation",
             parameters={
@@ -469,7 +471,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="get_thread_context",
             description="Get the context of a thread conversation",
             parameters={
@@ -489,7 +491,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="get_user_interaction_history",
             description="Get the history of interactions between users",
             parameters={
@@ -513,7 +515,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="get_conversation_summary",
             description="Get a summary of the recent conversation in a channel",
             parameters={
@@ -529,7 +531,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="get_message_context",
             description="Get the context around a specific message",
             parameters={
@@ -553,7 +555,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="web_search",
             description="Search the web for information on a given topic or query. Use this to find current information, facts, or context about things mentioned in the chat.",
             parameters={
@@ -569,7 +571,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="remember_user_fact",
             description="Store a specific fact or piece of information about a user for later recall. Use this when you learn something potentially relevant about a user (e.g., their preferences, current activity, mentioned interests).",
             parameters={
@@ -589,7 +591,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="get_user_facts",
             description="Retrieve previously stored facts or information about a specific user. Use this before responding to a user to potentially recall relevant details about them.",
             parameters={
@@ -605,7 +607,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="remember_general_fact",
             description="Store a general fact or piece of information not specific to a user (e.g., server events, shared knowledge, recent game updates). Use this to remember context relevant to the community or ongoing discussions.",
             parameters={
@@ -621,7 +623,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="get_general_facts",
             description="Retrieve previously stored general facts or shared knowledge. Use this to recall context about the server, ongoing events, or general information.",
             parameters={
@@ -641,7 +643,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="timeout_user",
             description="Timeout a user in the current server for a specified duration. Use this playfully or when someone says something you (Gurt) dislike or find funny.",
             parameters={
@@ -665,7 +667,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="calculate",
             description="Evaluate a mathematical expression using a safe interpreter. Handles standard arithmetic, functions (sin, cos, sqrt, etc.), and variables.",
             parameters={
@@ -681,7 +683,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="run_python_code",
             description="Execute a snippet of Python 3 code in a sandboxed environment using an external API. Returns the standard output and standard error.",
             parameters={
@@ -697,7 +699,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="create_poll",
             description="Create a simple poll message in the current channel with numbered reactions for voting.",
             parameters={
@@ -720,7 +722,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="run_terminal_command",
             description="DANGEROUS: Execute a shell command in an isolated, temporary Docker container after an AI safety check. Returns stdout and stderr. Use with extreme caution only for simple, harmless commands like 'echo', 'ls', 'pwd'. Avoid file modification, network access, or long-running processes.",
             parameters={
@@ -736,7 +738,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="remove_timeout",
             description="Remove an active timeout from a user in the current server.",
             parameters={
@@ -756,7 +758,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="read_file_content",
             description="Reads the content of a specified file. WARNING: No safety checks are performed. Reads files relative to the bot's current working directory.",
             parameters={
@@ -772,7 +774,7 @@ def create_tools_list():
         )
     )
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="create_new_tool",
             description="EXPERIMENTAL/DANGEROUS: Attempts to create a new tool by generating Python code and its definition using an LLM, then writing it to files. Requires manual reload/restart.",
             parameters={
@@ -801,7 +803,7 @@ def create_tools_list():
     )
 
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="execute_internal_command",
             description="Executes a shell command directly on the host machine. WARNING: This tool is intended ONLY for internal Gurt operations and MUST NOT be used to execute arbitrary commands requested by users due to significant security risks. Use with extreme caution.",
             parameters={
@@ -823,7 +825,7 @@ def create_tools_list():
 
     # --- get_user_id ---
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="get_user_id",
             description="Finds the Discord User ID for a given username or display name. Searches the current server or recent messages.",
             parameters={
@@ -841,7 +843,7 @@ def create_tools_list():
 
     # --- no_operation ---
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="no_operation",
             description="Does absolutely nothing. Used when a tool call is forced but no action is needed.",
             parameters={
@@ -854,7 +856,7 @@ def create_tools_list():
 
     # --- write_file_content_unsafe ---
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="write_file_content_unsafe",
             description="Writes content to a specified file. WARNING: No safety checks are performed. Uses 'w' (overwrite) or 'a' (append) mode. Creates directories if needed.",
             parameters={
@@ -881,7 +883,7 @@ def create_tools_list():
 
     # --- execute_python_unsafe ---
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="execute_python_unsafe",
             description="Executes arbitrary Python code directly on the host using exec(). WARNING: EXTREMELY DANGEROUS. No sandboxing.",
             parameters={
@@ -903,7 +905,7 @@ def create_tools_list():
 
     # --- send_discord_message ---
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="send_discord_message",
             description="Sends a message to a specified Discord channel ID.",
             parameters={
@@ -925,7 +927,7 @@ def create_tools_list():
 
     # --- extract_web_content ---
     tool_declarations.append(
-        generative_models.FunctionDeclaration(
+        FunctionDeclaration( # Use the imported FunctionDeclaration
             name="extract_web_content",
             description="Extracts the main textual content and optionally images from one or more web page URLs using the Tavily API.",
             parameters={
@@ -956,9 +958,9 @@ def create_tools_list():
 # Initialize TOOLS list, handling potential ImportError if library not installed
 try:
     TOOLS = create_tools_list()
-except NameError: # If generative_models wasn't imported due to ImportError
+except NameError: # If FunctionDeclaration wasn't imported due to ImportError
     TOOLS = []
-    print("WARNING: google-cloud-vertexai not installed. TOOLS list is empty.")
+    print("WARNING: google-generativeai not installed. TOOLS list is empty.")
 
 
 # --- Simple Gurt Responses ---
