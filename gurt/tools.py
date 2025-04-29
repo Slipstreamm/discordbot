@@ -714,10 +714,12 @@ def calculate(cog: commands.Cog, expression: str) -> Dict[str, Any]:
         else: result_str = repr(result) # Fallback
 
         print(f"Calculation result: {result_str}")
-        return {"expression": expression, "result": result_str, "status": "success"}
+        # Return only the result string on success, as expected by some agent frameworks
+        return result_str
     except Exception as e:
         error_message = f"Unexpected error during calculation: {str(e)}"
         print(error_message); traceback.print_exc()
+        # Return error message as string on failure
         return {"error": error_message, "expression": expression}
 
 async def run_python_code(cog: commands.Cog, code: str) -> Dict[str, Any]:
