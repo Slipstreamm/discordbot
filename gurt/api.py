@@ -752,13 +752,3 @@ async def get_internal_ai_json_response(
         logger.error(f"Error in get_internal_ai_json_response ({task_description}): {type(e).__name__}: {e}", exc_info=True)
         error_occurred = e # Capture the exception object
         final_parsed_data = None
-    finally:
-        # Log the call using the utility function
-        elapsed_time = time.monotonic() - start_time
-        try:
-            # Pass the simplified payload for logging
-            await log_internal_api_call(cog, task_description, request_payload_for_logging, final_parsed_data, error_occurred, elapsed_time)
-        except Exception as log_e:
-            logger.error(f"Error logging internal API call: {log_e}", exc_info=True)
-
-    return final_parsed_data
