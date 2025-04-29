@@ -2,8 +2,10 @@
 # Use a direct import path that doesn't rely on package structure
 import os
 import importlib.util
+from typing import TYPE_CHECKING # Import TYPE_CHECKING
 
-from discordbot.gurt.cog import GurtCog
+if TYPE_CHECKING:
+    from .cog import GurtCog # Use relative import for type hinting
 
 # Get the absolute path to gurt_memory.py
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
