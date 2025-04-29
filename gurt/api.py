@@ -338,7 +338,7 @@ async def call_google_genai_api_with_retry(
             print(f"Sending API request for {request_desc} using {model_name} (Attempt {attempt + 1}/{API_RETRY_ATTEMPTS + 1})...")
 
             # Use the non-streaming async call
-            response = await model.generate_content_async(
+            response = await genai_client.models.generate_content_async(
                 contents=contents,
                 generation_config=generation_config,
                 safety_settings=safety_settings or STANDARD_SAFETY_SETTINGS,
@@ -803,7 +803,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         # Use settings from user example and config.py
         # Note: response_modalities and speech_config from user example are not standard genai config
         generation_config = types.GenerateContentConfig(
-            temperature=1.0, # From user example
+            temperature=0.85, # From user example
             top_p=0.95,      # From user example
             max_output_tokens=8192, # From user example
             # response_mime_type="application/json", # Set this later for the final JSON call

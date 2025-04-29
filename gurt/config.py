@@ -9,7 +9,7 @@ from google.genai.types import FunctionDeclaration
 load_dotenv()
 
 # --- API and Keys ---
-PROJECT_ID = os.getenv("GCP_PROJECT_ID", "your-gcp-project-id")
+PROJECT_ID = os.getenv("GCP_PROJECT_ID", "1079377687568")
 LOCATION = os.getenv("GCP_LOCATION", "us-central1")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 PISTON_API_URL = os.getenv("PISTON_API_URL") # For run_python_code tool
