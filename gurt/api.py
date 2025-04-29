@@ -13,8 +13,7 @@ from .tools import get_conversation_summary
 # Google Generative AI Imports (using Vertex AI backend)
 # try:
 from google import genai
-from google.cloud.aiplatform.generative_models import SafetySetting, HarmCategory
-from google.generativeai import types
+from google.genai import types
 from google.api_core import exceptions as google_exceptions # Keep for retry logic if applicable
 # except ImportError:
 #     print("WARNING: google-generativeai or google-api-core not installed. API calls will fail.")
@@ -50,7 +49,7 @@ from google.api_core import exceptions as google_exceptions # Keep for retry log
 #         def __init__(self, function_declarations=None): pass
 #     class DummyFunctionDeclaration:
 #         def __init__(self, name, description, parameters): pass
-#     class DummySafetySetting:
+#     class Dummytypes.SafetySetting:
 #         def __init__(self, category, threshold): pass
 #     class Dummytypes.HarmCategory:
 #         HARM_CATEGORY_HATE_SPEECH = "HARM_CATEGORY_HATE_SPEECH"
@@ -100,7 +99,7 @@ from google.api_core import exceptions as google_exceptions # Keep for retry log
 #             self.types.Content = DummyContent
 #             self.Tool = DummyTool
 #             self.FunctionDeclaration = DummyFunctionDeclaration
-#             self.SafetySetting = DummySafetySetting
+#             self.types.SafetySetting = Dummytypes.SafetySetting
 #             self.types.HarmCategory = Dummytypes.HarmCategory
 #             self.FinishReason = DummyFinishReason
 #             self.ToolConfig = DummyToolConfig
@@ -117,7 +116,7 @@ from google.api_core import exceptions as google_exceptions # Keep for retry log
 #     types.Content = DummyContent
 #     Tool = DummyTool
 #     FunctionDeclaration = DummyFunctionDeclaration
-#     SafetySetting = DummySafetySetting
+#     types.SafetySetting = Dummytypes.SafetySetting
 #     types.HarmCategory = Dummytypes.HarmCategory
 #     FinishReason = DummyFinishReason
 #     ToolConfig = DummyToolConfig
@@ -281,10 +280,10 @@ except Exception as e:
 # Define standard safety settings using google.generativeai types
 # Set all thresholds to OFF as requested
 STANDARD_SAFETY_SETTINGS = [
-    SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold="BLOCK_NONE"),
-    SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold="BLOCK_NONE"),
-    SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold="BLOCK_NONE"),
-    SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold="BLOCK_NONE"),
+    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold="BLOCK_NONE"),
+    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold="BLOCK_NONE"),
+    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold="BLOCK_NONE"),
+    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold="BLOCK_NONE"),
 ]
 
 # --- API Call Helper ---
@@ -293,7 +292,7 @@ async def call_google_genai_api_with_retry(
     model_name: str, # Pass model name string instead of model object
     contents: List[types.types.Content], # Use types.Content type from google.generativeai.types
     generation_config: types.GenerateContentConfig, # Use specific type
-    safety_settings: Optional[List[SafetySetting]], # Use specific type
+    safety_settings: Optional[List[types.SafetySetting]], # Use specific type
     request_desc: str,
     tools: Optional[List[types.Tool]] = None, # Pass tools list if needed
     tool_config: Optional[types.ToolConfig] = None
@@ -306,7 +305,7 @@ async def call_google_genai_api_with_retry(
         model_name: The name/path of the model to use (e.g., 'models/gemini-1.5-pro-preview-0409' or custom endpoint path).
         contents: The list of types.Content objects for the prompt.
         generation_config: The types.GenerateContentConfig object.
-        safety_settings: Safety settings for the request (List[SafetySetting]).
+        safety_settings: Safety settings for the request (List[types.SafetySetting]).
         request_desc: A description of the request for logging purposes.
         tools: Optional list of Tool objects for function calling.
         tool_config: Optional ToolConfig object.
