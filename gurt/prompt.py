@@ -381,4 +381,15 @@ These traits should subtly influence your communication style without being expl
     except Exception as e:
         print(f"Error retrieving interests for prompt injection: {e}")
 
-    return "\n".join(system_context_parts)
+    # --- Escape potential template variables in dynamic context ---
+    final_prompt_string = ""
+    for i, part in enumerate(system_context_parts):
+        if i == 0: # Skip escaping the base prompt which contains intended placeholders
+            final_prompt_string += part
+        else:
+            # Escape single braces in dynamically added context parts
+            escaped_part = part.replace('{', '{{').replace('}', '}}')
+            final_prompt_string += "\n" + escaped_part
+
+    # return "\n".join(system_context_parts) # Old return
+    return final_prompt_string
