@@ -643,13 +643,19 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         # 1. Model WITH tools: For the main loop to detect and execute tool calls
         vertex_tool = Tool(function_declarations=TOOLS) if TOOLS else None
         model_with_tools = GenerativeModel(
-            model_name or DEFAULT_MODEL,
+            model_name=(
+                "projects/gurting/locations/us-central1/models/"
+                "670687799292198912"
+            ),
             system_instruction=final_system_prompt,
             tools=[vertex_tool] if vertex_tool else None # Pass tools here
         )
         # 2. Model WITHOUT tools: For the final call to strictly enforce JSON schema
         model_without_tools = GenerativeModel(
-            model_name or DEFAULT_MODEL,
+            model_name=(
+                "projects/gurting/locations/us-central1/models/"
+                "670687799292198912"
+            ),
             system_instruction=final_system_prompt
             # Omit 'tools' parameter here
         )
