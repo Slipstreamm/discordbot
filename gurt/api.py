@@ -676,16 +676,63 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 # Append tool response to history
                 contents.append(Content(role="function", parts=[tool_response_part]))
 
-                # Add a more direct instruction for the AI after the tool call, using 'model' role
-                contents.append(Content(role="model", parts=[Part.from_text(
-                    "(System Instruction: Tool call completed. Function response provided above. "
-                    "Task is now to generate the final JSON response for the user based *only* on the preceding function response. Do not call any more tools.)"
-                )]))
-                print("Added system instruction (as model role) for AI to generate final response after tool.")
+                # --- Make a follow-up call *expecting* JSON ---
+                # After executing a tool, we immediately ask for the final JSON response
+                # without allowing further tool calls in this specific request.
+                print(f"Tool '{function_call.name}' executed. Making follow-up call expecting final JSON response...")
 
-                # Continue to the next loop iteration to see if AI calls another tool or generates the final response
+                # Prepare generation config for the JSON response
+                processed_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
+                generation_config_expect_json = GenerationConfig(
+                    temperature=0.75, # Use desired temp for final response
+                    max_output_tokens=10000, # Use desired max tokens for final response
+                    response_mime_type="application/json",
+                    response_schema=processed_schema
+                )
+
+                # Make the API call configured for JSON, with tool_config=None
+                follow_up_response_obj = await call_vertex_api_with_retry(
+                    cog=cog,
+                    model=model_with_tools, # Still using the model that knows about tools
+                    contents=contents,      # History includes the tool call/response
+                    generation_config=generation_config_expect_json, # Expect JSON
+                    safety_settings=STANDARD_SAFETY_SETTINGS,
+                    request_desc=f"Follow-up JSON check after tool {tool_calls_made}",
+                    tool_config=None # IMPORTANT: Disable tool use for this specific call
+                )
+                last_response_obj = follow_up_response_obj # Update last response object
+
+                # --- Log Raw Response for this follow-up call ---
+                try:
+                    print(f"--- Raw API Response (Follow-up JSON Check after tool {tool_calls_made}) ---\n{follow_up_response_obj}\n-----------------------------------")
+                except Exception as log_e:
+                    print(f"Error logging raw request/response: {log_e}")
+                # --- End Logging ---
+
+                if not follow_up_response_obj or not follow_up_response_obj.candidates:
+                    error_message = f"Follow-up API call after tool {tool_calls_made} failed to return candidates."
+                    print(error_message)
+                    break # Exit loop on critical API failure
+
+                # Check if this follow-up *still* tried to call a function (highly unexpected)
+                candidate = follow_up_response_obj.candidates[0]
+                follow_up_function_call = find_function_call_in_parts(candidate.content.parts)
+
+                if follow_up_function_call:
+                    # This shouldn't happen if tool_config was None, but handle defensively
+                    error_message = f"AI unexpectedly called tool '{follow_up_function_call.name}' again after being explicitly asked for final JSON."
+                    print(f"Warning: {error_message}")
+                    # Append the unexpected response to contents before breaking, might help debugging
+                    contents.append(candidate.content)
+                    break # Exit loop, let outer logic handle parsing failure
+                else:
+                    # Success! The follow-up call yielded text (hopefully JSON)
+                    print("Follow-up call did not request further tools. Exiting loop.")
+                    # last_response_obj now holds the potential final JSON response
+                    break # Exit loop, proceed to parsing outside
+
             else:
-                # No function call found in the response parts - AI likely provided the final response directly
+                # No function call found in the main loop iteration response
                 print("No further tool call requested by AI. Exiting loop.")
                 break # Exit loop
 
