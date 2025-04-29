@@ -15,7 +15,8 @@ from .tools import get_conversation_summary
 from google import genai
 from google.generativeai import types
 # Explicitly import necessary types for clarity and potential dummy definitions
-from google.generativeai.types import FunctionCall, Part, Content, Tool, SafetySetting, HarmCategory, FinishReason, ToolConfig, GenerateContentResponse
+from google.generativeai.types import Part, Content, Tool, SafetySetting, HarmCategory, FinishReason, ToolConfig, GenerateContentResponse
+from google.generativeai.types.content_types import FunctionCall # Import FunctionCall from submodule
 from google.api_core import exceptions as google_exceptions # Keep for retry logic if applicable
 # except ImportError:
 #     print("WARNING: google-generativeai or google-api-core not installed. API calls will fail.")
@@ -358,7 +359,6 @@ async def call_google_genai_api_with_retry(
 
                 if finish_reason == FinishReason.SAFETY:
                     safety_ratings_str = ", ".join([f"{rating.category.name}: {rating.probability.name}" for rating in safety_ratings]) if safety_ratings else "N/A"
-                    print(f"⚠️ SAFETY BLOCK: API request for {request_desc} ({model_name}) was blocked by safety filters. Finish Reason: SAFETY. Ratings: [{safety_ratings_str}]")
                     # Optionally, raise a specific exception here if needed downstream
                     # raise SafetyBlockError(f"Blocked by safety filters. Ratings: {safety_ratings_str}")
                 elif finish_reason not in [FinishReason.STOP, FinishReason.MAX_TOKENS, FinishReason.FUNCTION_CALL, None]: # Allow None finish reason
