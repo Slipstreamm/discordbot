@@ -676,14 +676,14 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 # Append tool response to history
                 contents.append(Content(role="function", parts=[tool_response_part]))
 
-                # Add an explicit instruction for the AI to proceed after the tool call
-                contents.append(Content(role="user", parts=[Part.from_text(
-                    "(System Note: The requested tool action has been performed based on the function response above. "
-                    "Please now generate the final JSON response for the user, acknowledging the action if appropriate.)"
+                # Add a more direct instruction for the AI after the tool call, using 'model' role
+                contents.append(Content(role="model", parts=[Part.from_text(
+                    "(System Instruction: Tool call completed. Function response provided above. "
+                    "Task is now to generate the final JSON response for the user based *only* on the preceding function response. Do not call any more tools.)"
                 )]))
-                print("Added system note instructing AI to generate final response.")
+                print("Added system instruction (as model role) for AI to generate final response after tool.")
 
-                 # Continue to the next loop iteration to see if AI calls another tool or generates the final response
+                # Continue to the next loop iteration to see if AI calls another tool or generates the final response
             else:
                 # No function call found in the response parts - AI likely provided the final response directly
                 print("No further tool call requested by AI. Exiting loop.")
