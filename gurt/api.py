@@ -14,9 +14,6 @@ from .tools import get_conversation_summary
 # try:
 from google import genai
 from google.generativeai import types
-# Explicitly import necessary types for clarity and potential dummy definitions
-from google.generativeai.types import Part, Content, Tool, SafetySetting, HarmCategory, FinishReason, ToolConfig, GenerateContentResponse
-from google.generativeai.types.content_types import FunctionCall # Import FunctionCall from submodule
 from google.api_core import exceptions as google_exceptions # Keep for retry logic if applicable
 # except ImportError:
 #     print("WARNING: google-generativeai or google-api-core not installed. API calls will fail.")
@@ -52,9 +49,9 @@ from google.api_core import exceptions as google_exceptions # Keep for retry log
 #         def __init__(self, function_declarations=None): pass
 #     class DummyFunctionDeclaration:
 #         def __init__(self, name, description, parameters): pass
-#     class DummySafetySetting:
+#     class Dummytypes.SafetySetting:
 #         def __init__(self, category, threshold): pass
-#     class DummyHarmCategory:
+#     class Dummytypes.HarmCategory:
 #         HARM_CATEGORY_HATE_SPEECH = "HARM_CATEGORY_HATE_SPEECH"
 #         HARM_CATEGORY_DANGEROUS_CONTENT = "HARM_CATEGORY_DANGEROUS_CONTENT"
 #         HARM_CATEGORY_SEXUALLY_EXPLICIT = "HARM_CATEGORY_SEXUALLY_EXPLICIT"
@@ -98,12 +95,12 @@ from google.api_core import exceptions as google_exceptions # Keep for retry log
 #         def __init__(self):
 #             self.GenerationResponse = DummyGenerationResponse
 #             self.FunctionCall = DummyFunctionCall
-#             self.Part = DummyPart
-#             self.Content = DummyContent
+#             self.types.Part = DummyPart
+#             self.types.Content = DummyContent
 #             self.Tool = DummyTool
 #             self.FunctionDeclaration = DummyFunctionDeclaration
-#             self.SafetySetting = DummySafetySetting
-#             self.HarmCategory = DummyHarmCategory
+#             self.types.SafetySetting = Dummytypes.SafetySetting
+#             self.types.HarmCategory = Dummytypes.HarmCategory
 #             self.FinishReason = DummyFinishReason
 #             self.ToolConfig = DummyToolConfig
 #             self.GenerateContentResponse = DummyGenerateContentResponse
@@ -115,12 +112,12 @@ from google.api_core import exceptions as google_exceptions # Keep for retry log
 #     # Assign dummy types to global scope for direct imports if needed
 #     GenerationResponse = DummyGenerationResponse
 #     FunctionCall = DummyFunctionCall
-#     Part = DummyPart
-#     Content = DummyContent
+#     types.Part = DummyPart
+#     types.Content = DummyContent
 #     Tool = DummyTool
 #     FunctionDeclaration = DummyFunctionDeclaration
-#     SafetySetting = DummySafetySetting
-#     HarmCategory = DummyHarmCategory
+#     types.SafetySetting = Dummytypes.SafetySetting
+#     types.HarmCategory = Dummytypes.HarmCategory
 #     FinishReason = DummyFinishReason
 #     ToolConfig = DummyToolConfig
 #     GenerateContentResponse = DummyGenerateContentResponse
@@ -195,7 +192,7 @@ def _preprocess_schema_for_vertex(schema: Dict[str, Any]) -> Dict[str, Any]:
     return processed_schema
 # --- Helper Function to Safely Extract Text ---
 # Updated to handle google.generativeai.types.GenerateContentResponse
-def _get_response_text(response: Optional[GenerateContentResponse]) -> Optional[str]:
+def _get_response_text(response: Optional[types.GenerateContentResponse]) -> Optional[str]:
     """
     Safely extracts the text content from the first text part of a GenerateContentResponse.
     Handles potential errors and lack of text parts gracefully.
@@ -224,7 +221,7 @@ def _get_response_text(response: Optional[GenerateContentResponse]) -> Optional[
             print(f"[_get_response_text] Candidate 0 has no 'content'. Candidate: {candidate}")
             return None
         if not hasattr(candidate.content, 'parts') or not candidate.content.parts:
-            print(f"[_get_response_text] Candidate 0 content has no 'parts' or parts list is empty. Content: {candidate.content}")
+            print(f"[_get_response_text] Candidate 0 content has no 'parts' or parts list is empty. types.Content: {candidate.content}")
             return None
 
         # Log parts for debugging
@@ -239,9 +236,9 @@ def _get_response_text(response: Optional[GenerateContentResponse]) -> Optional[
                      print(f"[_get_response_text] Found non-empty text in part {i}.")
                      return part.text
                  else:
-                     print(f"[_get_response_text] Part {i} has 'text' attribute, but it's empty or not a string: {part.text!r}")
+                     print(f"[_get_response_text] types.Part {i} has 'text' attribute, but it's empty or not a string: {part.text!r}")
             # else:
-            #     print(f"[_get_response_text] Part {i} does not have 'text' attribute or it's None.")
+            #     print(f"[_get_response_text] types.Part {i} does not have 'text' attribute or it's None.")
 
 
         # If no text part is found after checking all parts in the first candidate
@@ -283,32 +280,32 @@ except Exception as e:
 # Define standard safety settings using google.generativeai types
 # Set all thresholds to OFF as requested
 STANDARD_SAFETY_SETTINGS = [
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold="BLOCK_NONE"),
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold="BLOCK_NONE"),
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold="BLOCK_NONE"),
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold="BLOCK_NONE"),
+    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold="BLOCK_NONE"),
+    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold="BLOCK_NONE"),
+    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold="BLOCK_NONE"),
+    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold="BLOCK_NONE"),
 ]
 
 # --- API Call Helper ---
 async def call_google_genai_api_with_retry(
     cog: 'GurtCog',
     model_name: str, # Pass model name string instead of model object
-    contents: List[Content], # Use Content type from google.generativeai.types
+    contents: List[types.types.Content], # Use types.Content type from google.generativeai.types
     generation_config: types.GenerateContentConfig, # Use specific type
-    safety_settings: Optional[List[SafetySetting]], # Use specific type
+    safety_settings: Optional[List[types.SafetySetting]], # Use specific type
     request_desc: str,
-    tools: Optional[List[Tool]] = None, # Pass tools list if needed
-    tool_config: Optional[ToolConfig] = None
-) -> Optional[GenerateContentResponse]: # Return type for non-streaming
+    tools: Optional[List[types.Tool]] = None, # Pass tools list if needed
+    tool_config: Optional[types.ToolConfig] = None
+) -> Optional[types.GenerateContentResponse]: # Return type for non-streaming
     """
     Calls the Google Generative AI API (Vertex AI backend) with retry logic (non-streaming).
 
     Args:
         cog: The GurtCog instance.
         model_name: The name/path of the model to use (e.g., 'models/gemini-1.5-pro-preview-0409' or custom endpoint path).
-        contents: The list of Content objects for the prompt.
+        contents: The list of types.Content objects for the prompt.
         generation_config: The types.GenerateContentConfig object.
-        safety_settings: Safety settings for the request (List[SafetySetting]).
+        safety_settings: Safety settings for the request (List[types.SafetySetting]).
         request_desc: A description of the request for logging purposes.
         tools: Optional list of Tool objects for function calling.
         tool_config: Optional ToolConfig object.
@@ -357,13 +354,13 @@ async def call_google_genai_api_with_retry(
                 finish_reason = getattr(candidate, 'finish_reason', None)
                 safety_ratings = getattr(candidate, 'safety_ratings', [])
 
-                if finish_reason == FinishReason.SAFETY:
+                if finish_reason == types.FinishReason.SAFETY:
                     safety_ratings_str = ", ".join([f"{rating.category.name}: {rating.probability.name}" for rating in safety_ratings]) if safety_ratings else "N/A"
                     # Optionally, raise a specific exception here if needed downstream
                     # raise SafetyBlockError(f"Blocked by safety filters. Ratings: {safety_ratings_str}")
-                elif finish_reason not in [FinishReason.STOP, FinishReason.MAX_TOKENS, FinishReason.FUNCTION_CALL, None]: # Allow None finish reason
+                elif finish_reason not in [types.FinishReason.STOP, types.FinishReason.MAX_TOKENS, types.FinishReason.FUNCTION_CALL, None]: # Allow None finish reason
                      # Log other unexpected finish reasons
-                     finish_reason_name = FinishReason(finish_reason).name if isinstance(finish_reason, int) else str(finish_reason)
+                     finish_reason_name = types.FinishReason(finish_reason).name if isinstance(finish_reason, int) else str(finish_reason)
                      print(f"⚠️ UNEXPECTED FINISH REASON: API request for {request_desc} ({model_name}) finished with reason: {finish_reason_name}")
 
             # --- Success Logging (Proceed even if safety blocked, but log occurred) ---
@@ -530,7 +527,7 @@ def parse_and_validate_json_response(
 
 # --- Tool Processing ---
 # Updated to use google.generativeai types
-async def process_requested_tools(cog: 'GurtCog', function_call: FunctionCall) -> Part:
+async def process_requested_tools(cog: 'GurtCog', function_call: types.FunctionCall) -> types.types.Part:
     """
     Process a tool request specified by the AI's FunctionCall response.
 
@@ -539,7 +536,7 @@ async def process_requested_tools(cog: 'GurtCog', function_call: FunctionCall) -
         function_call: The FunctionCall object from the GenerateContentResponse.
 
     Returns:
-        A Part object containing the tool result or error, formatted for the follow-up API call.
+        A types.Part object containing the tool result or error, formatted for the follow-up API call.
     """
     function_name = function_call.name
     # function_call.args is already a dict-like object in google.generativeai
@@ -603,26 +600,26 @@ async def process_requested_tools(cog: 'GurtCog', function_call: FunctionCall) -
         print(f"{error_message} (Took {tool_elapsed_time:.2f}s)")
         tool_result_content = {"error": error_message}
 
-    # Return the result formatted as a Part for the API using the correct type
-    return Part(function_response=types.FunctionResponse(name=function_name, response=tool_result_content))
+    # Return the result formatted as a types.Part for the API using the correct type
+    return types.types.Part(function_response=types.FunctionResponse(name=function_name, response=tool_result_content))
 
 
 # --- Helper to find function call in parts ---
 # Updated to use google.generativeai types
-def find_function_call_in_parts(parts: Optional[List[Part]]) -> Optional[FunctionCall]:
+def find_function_call_in_parts(parts: Optional[List[types.types.Part]]) -> Optional[types.FunctionCall]:
     """Finds the first valid FunctionCall object within a list of Parts."""
     if not parts:
         return None
     for part in parts:
         # Check if the part has a 'function_call' attribute and it's a valid FunctionCall object
-        if hasattr(part, 'function_call') and isinstance(part.function_call, FunctionCall):
+        if hasattr(part, 'function_call') and isinstance(part.function_call, types.FunctionCall):
             # Basic validation: ensure name exists
             if part.function_call.name:
                  return part.function_call
             else:
-                 print(f"Warning: Found Part with 'function_call', but its name is missing: {part.function_call}")
+                 print(f"Warning: Found types.Part with 'function_call', but its name is missing: {part.function_call}")
         # else:
-        #     print(f"Debug: Part does not have valid function_call: {part}") # Optional debug log
+        #     print(f"Debug: types.Part does not have valid function_call: {part}") # Optional debug log
     return None
 
 
@@ -670,7 +667,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
         # --- Prepare Message History (Contents) ---
         # Contents will be built progressively within the loop
-        contents: List[Content] = []
+        contents: List[types.Content] = []
 
         # Add memory context if available
         if memory_context:
@@ -681,7 +678,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             print("Memory context available, relying on system_instruction.")
             # If needed, could potentially add as a 'model' role message before user messages,
             # but this might confuse the turn structure.
-            # contents.append(Content(role="model", parts=[Part.from_text(f"System Note: {memory_context}")]))
+            # contents.append(types.Content(role="model", parts=[types.Part.from_text(f"System Note: {memory_context}")]))
 
 
         # Add conversation history
@@ -695,12 +692,12 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                  continue
             # Handle potential multimodal content in history (if stored that way)
             if isinstance(msg.get("content"), list):
-                 parts = [Part.from_text(part["text"]) if part["type"] == "text" else Part.from_uri(part["image_url"]["url"], mime_type=part["image_url"]["url"].split(";")[0].split(":")[1]) if part["type"] == "image_url" else None for part in msg["content"]]
+                 parts = [types.Part.from_text(part["text"]) if part["type"] == "text" else types.Part.from_uri(part["image_url"]["url"], mime_type=part["image_url"]["url"].split(";")[0].split(":")[1]) if part["type"] == "image_url" else None for part in msg["content"]]
                  parts = [p for p in parts if p] # Filter out None parts
                  if parts:
-                     contents.append(Content(role=role, parts=parts))
+                     contents.append(types.Content(role=role, parts=parts))
             elif isinstance(msg.get("content"), str):
-                 contents.append(Content(role=role, parts=[Part.from_text(msg["content"])]))
+                 contents.append(types.Content(role=role, parts=[types.Part.from_text(msg["content"])]))
 
 
         # --- Prepare the current message content (potentially multimodal) ---
@@ -726,7 +723,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             mentions_str = ", ".join([f"{m['display_name']}(id:{m['id']})" for m in formatted_current_message["mentioned_users_details"]])
             text_content += f"\n(Message Details: Mentions=[{mentions_str}])"
 
-        current_message_parts.append(Part.from_text(text_content))
+        current_message_parts.append(types.Part.from_text(text_content))
         # --- End text content construction ---
 
         if message.attachments:
@@ -753,36 +750,36 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                     try:
                         # 1. Add text part instructing AI about the file
                         instruction_text = f"User attached a file: '{filename}' (Type: {mime_type}). Analyze this file from the following URI and incorporate your understanding into your response."
-                        current_message_parts.append(Part.from_text(instruction_text))
+                        current_message_parts.append(types.Part.from_text(instruction_text))
                         print(f"Added text instruction for attachment: {filename}")
 
                         # 2. Add the URI part
                         # Ensure mime_type doesn't contain parameters like '; charset=...' if the API doesn't like them
                         clean_mime_type = mime_type.split(';')[0]
-                        current_message_parts.append(Part.from_uri(uri=file_url, mime_type=clean_mime_type))
+                        current_message_parts.append(types.Part.from_uri(uri=file_url, mime_type=clean_mime_type))
                         print(f"Added URI part for attachment: {filename} ({clean_mime_type}) using URL: {file_url}")
 
                     except Exception as e:
-                        print(f"Error creating Part for attachment {filename} ({mime_type}): {e}")
+                        print(f"Error creating types.Part for attachment {filename} ({mime_type}): {e}")
                         # Optionally add a text part indicating the error
-                        current_message_parts.append(Part.from_text(f"(System Note: Failed to process attachment '{filename}' - {e})"))
+                        current_message_parts.append(types.Part.from_text(f"(System Note: Failed to process attachment '{filename}' - {e})"))
                 else:
                     print(f"Skipping unsupported or invalid attachment: {filename} (Type: {mime_type}, URL: {file_url})")
                     # Optionally inform the AI that an unsupported file was attached
-                    current_message_parts.append(Part.from_text(f"(System Note: User attached an unsupported file '{filename}' of type '{mime_type}' which cannot be processed.)"))
+                    current_message_parts.append(types.Part.from_text(f"(System Note: User attached an unsupported file '{filename}' of type '{mime_type}' which cannot be processed.)"))
 
 
         # Ensure there's always *some* content part, even if only text or errors
         if current_message_parts:
-            contents.append(Content(role="user", parts=current_message_parts))
+            contents.append(types.Content(role="user", parts=current_message_parts))
         else:
             print("Warning: No content parts generated for user message.")
-            contents.append(Content(role="user", parts=[Part.from_text("")])) # Ensure content list isn't empty
+            contents.append(types.Content(role="user", parts=[types.Part.from_text("")])) # Ensure content list isn't empty
 
         # --- Prepare Tools ---
         # Convert FunctionDeclarations from config.py (TOOLS) into a Tool object
         # Assuming TOOLS is a list of FunctionDeclaration objects
-        vertex_tool = Tool(function_declarations=TOOLS) if TOOLS else None
+        vertex_tool = types.Tool(function_declarations=TOOLS) if TOOLS else None
         tools_list = [vertex_tool] if vertex_tool else None
 
         # --- Prepare Generation Config ---
@@ -799,9 +796,9 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         )
 
         # Tool config for the loop (allow any tool call)
-        tool_config_any = ToolConfig(
-            function_calling_config=ToolConfig.FunctionCallingConfig(
-                mode=ToolConfig.FunctionCallingConfig.Mode.ANY # Use ANY to allow model to call tools
+        tool_config_any = types.ToolConfig(
+            function_calling_config=types.ToolConfig.FunctionCallingConfig(
+                mode=types.ToolConfig.FunctionCallingConfig.Mode.ANY # Use ANY to allow model to call tools
             )
         ) if vertex_tool else None
 
@@ -856,7 +853,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             # The response structure might differ slightly; check candidate.content.parts
             function_calls_found = []
             if candidate.content and candidate.content.parts:
-                 function_calls_found = [part.function_call for part in candidate.content.parts if hasattr(part, 'function_call') and isinstance(part.function_call, FunctionCall)]
+                 function_calls_found = [part.function_call for part in candidate.content.parts if hasattr(part, 'function_call') and isinstance(part.function_call, types.FunctionCall)]
 
             if function_calls_found:
                 # Check if the *only* call is no_operation
@@ -866,7 +863,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                     contents.append(candidate.content)
                     # Add the function response part using the updated process_requested_tools
                     no_op_response_part = await process_requested_tools(cog, function_calls_found[0])
-                    contents.append(Content(role="function", parts=[no_op_response_part]))
+                    contents.append(types.Content(role="function", parts=[no_op_response_part]))
                     last_response_obj = current_response_obj # Keep track of the response containing the no_op
                     break # Exit loop
 
@@ -887,7 +884,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 # Append a single function role turn containing ALL response parts
                 if function_response_parts:
                     # Role should be 'function' for tool responses in google.generativeai
-                    contents.append(Content(role="function", parts=function_response_parts))
+                    contents.append(types.Content(role="function", parts=function_response_parts))
                 else:
                      print("Warning: Function calls found, but no response parts generated.")
 
@@ -1109,14 +1106,14 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
         # This structure mimics how system prompts are often handled when not
         # directly supported by the model object itself.
 
-        proactive_contents: List[Content] = [
+        proactive_contents: List[types.Content] = [
              # Simulate system prompt via user/model turn
-             Content(role="user", parts=[Part(text=final_proactive_system_prompt)]),
-             Content(role="model", parts=[Part(text="Understood. I will generate the JSON response as instructed.")]) # Placeholder model response
+             types.Content(role="user", parts=[types.Part(text=final_proactive_system_prompt)]),
+             types.Content(role="model", parts=[types.Part(text="Understood. I will generate the JSON response as instructed.")]) # Placeholder model response
         ]
         # Add the final instruction
         proactive_contents.append(
-             Content(role="user", parts=[Part.from_text(
+             types.Content(role="user", parts=[types.Part.from_text(
                  f"Generate the response based on your plan. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{json.dumps(RESPONSE_SCHEMA['schema'], indent=2)}\n\n**Ensure nothing precedes or follows the JSON.**"
              )])
         )
@@ -1232,8 +1229,8 @@ async def get_internal_ai_json_response(
     request_payload_for_logging = {} # For logging
 
     try:
-        # --- Convert prompt messages to Vertex AI Content format ---
-        contents: List[Content] = []
+        # --- Convert prompt messages to Vertex AI types.Content format ---
+        contents: List[types.Content] = []
         system_instruction = None
         for msg in prompt_messages:
             role = msg.get("role", "user")
@@ -1251,29 +1248,29 @@ async def get_internal_ai_json_response(
 
             # --- Process content (string or list) ---
             content_value = msg.get("content")
-            message_parts: List[Part] = [] # Initialize list to hold parts for this message
+            message_parts: List[types.Part] = [] # Initialize list to hold parts for this message
 
             if isinstance(content_value, str):
                 # Handle simple string content
-                message_parts.append(Part.from_text(content_value))
+                message_parts.append(types.Part.from_text(content_value))
             elif isinstance(content_value, list):
                 # Handle list content (e.g., multimodal from ProfileUpdater)
                 for part_data in content_value:
                     part_type = part_data.get("type")
                     if part_type == "text":
                         text = part_data.get("text", "")
-                        message_parts.append(Part.from_text(text))
+                        message_parts.append(types.Part.from_text(text))
                     elif part_type == "image_data":
                         mime_type = part_data.get("mime_type")
                         base64_data = part_data.get("data")
                         if mime_type and base64_data:
                             try:
                                 image_bytes = base64.b64decode(base64_data)
-                                message_parts.append(Part.from_data(data=image_bytes, mime_type=mime_type))
+                                message_parts.append(types.Part.from_data(data=image_bytes, mime_type=mime_type))
                             except Exception as decode_err:
                                 print(f"Error decoding/adding image part in get_internal_ai_json_response: {decode_err}")
                                 # Optionally add a placeholder text part indicating failure
-                                message_parts.append(Part.from_text("(System Note: Failed to process an image part)"))
+                                message_parts.append(types.Part.from_text("(System Note: Failed to process an image part)"))
                         else:
                              print("Warning: image_data part missing mime_type or data.")
                     else:
@@ -1283,7 +1280,7 @@ async def get_internal_ai_json_response(
 
             # Add the content object if parts were generated
             if message_parts:
-                contents.append(Content(role=role, parts=message_parts))
+                contents.append(types.Content(role=role, parts=message_parts))
             else:
                  print(f"Warning: No parts generated for message role '{role}'.")
 
@@ -1295,9 +1292,9 @@ async def get_internal_ai_json_response(
             f"**Ensure nothing precedes or follows the JSON.**"
         )
         if contents and contents[-1].role == "user":
-             contents[-1].parts.append(Part.from_text(f"\n\n{json_instruction_content}"))
+             contents[-1].parts.append(types.Part.from_text(f"\n\n{json_instruction_content}"))
         else:
-             contents.append(Content(role="user", parts=[Part.from_text(json_instruction_content)]))
+             contents.append(types.Content(role="user", parts=[types.Part.from_text(json_instruction_content)]))
 
 
         # --- Determine Model ---
