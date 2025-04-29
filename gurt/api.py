@@ -166,7 +166,8 @@ async def call_vertex_api_with_retry(
     generation_config: 'GenerationConfig', # Use string literal for type hint
     safety_settings: Optional[Dict[Any, Any]], # Use Any for broader compatibility
     request_desc: str,
-    stream: bool = False
+    stream: bool = False,
+    tool_config: Optional['ToolConfig'] = None # Add tool_config parameter
 ) -> Union['GenerationResponse', AsyncIterable['GenerationResponse'], None]: # Use string literals
     """
     Calls the Vertex AI Gemini API with retry logic.
@@ -198,7 +199,8 @@ async def call_vertex_api_with_retry(
                 contents=contents,
                 generation_config=generation_config,
                 safety_settings=safety_settings or STANDARD_SAFETY_SETTINGS,
-                stream=stream
+                stream=stream,
+                tool_config=tool_config # Pass tool_config here
             )
 
             # --- Success Logging ---
@@ -602,10 +604,10 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 mode=ToolConfig.FunctionCallingConfig.Mode.ANY
             )
         )
+        # Define the generation config without tool_config initially
         generation_config_initial = GenerationConfig(
             temperature=0.75,
-            max_output_tokens=10000, # Adjust as needed
-            tool_config=tool_config_any # Use ToolConfig here
+            max_output_tokens=10000 # Adjust as needed
             # No response schema needed for the initial call, just checking for function calls
         )
 
@@ -615,8 +617,8 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             contents=contents,
             generation_config=generation_config_initial,
             safety_settings=STANDARD_SAFETY_SETTINGS,
-            request_desc=f"Initial response check for message {message.id}"
-            # Removed incorrect tool_choice="any" here
+            request_desc=f"Initial response check for message {message.id}",
+            tool_config=tool_config_any # Pass ToolConfig directly here
         )
 
         # --- Log Raw Request and Response ---
