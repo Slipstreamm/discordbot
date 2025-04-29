@@ -1,32 +1,39 @@
 import discord
-import aiohttp
 import asyncio
 import json
 import base64
 import re
 import time
 import datetime
+import functools # Added for partial tool application
+import logging # Added for logging
 from typing import TYPE_CHECKING, Optional, List, Dict, Any, Union, AsyncIterable
 import jsonschema # For manual JSON validation
-from .tools import get_conversation_summary
 
-# Vertex AI Imports
+# Vertex AI and LangChain Imports
 try:
     import vertexai
-    from vertexai import generative_models
-    from vertexai.generative_models import (
-        GenerativeModel, GenerationConfig, Part, Content, Tool, FunctionDeclaration,
-        GenerationResponse, FinishReason
+    from vertexai import agent_engines
+    from vertexai.generative_models import ( # Keep specific types if needed elsewhere, otherwise remove
+         Part, Content, GenerationConfig, HarmCategory, HarmBlockThreshold
     )
     from google.api_core import exceptions as google_exceptions
-    from google.cloud.storage import Client as GCSClient # For potential image uploads
+    # Langchain specific imports (add as needed)
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+    from langchain_core.tools import Tool as LangchainTool # Rename to avoid conflict
+    # Import specific chat model and message types
+    from langchain_google_vertexai import ChatVertexAI
+    from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage
+
 except ImportError:
-    print("WARNING: google-cloud-vertexai or google-cloud-storage not installed. API calls will fail.")
+    print("WARNING: google-cloud-vertexai, langchain-google-vertexai or langchain-core not installed. API calls will fail.")
     # Define dummy classes/exceptions if library isn't installed
-    class DummyGenerativeModel:
-        def __init__(self, model_name, system_instruction=None, tools=None): pass
-        async def generate_content_async(self, contents, generation_config=None, safety_settings=None, stream=False): return None
-    GenerativeModel = DummyGenerativeModel
+    class DummyAgent:
+        def __init__(self, model, tools, chat_history, prompt, model_kwargs): pass
+        async def query(self, input, config): return {"output": '{"should_respond": false, "content": "Error: Vertex/LangChain SDK not installed."}'} # Simulate error response
+    agent_engines = type('agent_engines', (object,), {'LangchainAgent': DummyAgent})() # Mock the class structure
+    # Define other dummies if needed by remaining code
+    # Keep Part and Content if used by format_message or other retained logic
     class DummyPart:
         @staticmethod
         def from_text(text): return None
@@ -34,15 +41,9 @@ except ImportError:
         def from_data(data, mime_type): return None
         @staticmethod
         def from_uri(uri, mime_type): return None
-        @staticmethod
-        def from_function_response(name, response): return None
     Part = DummyPart
     Content = dict
-    Tool = list
-    FunctionDeclaration = object
-    GenerationConfig = dict
-    GenerationResponse = object
-    FinishReason = object
+    GenerationConfig = dict # Keep if model_kwargs uses it, otherwise remove
     class DummyGoogleExceptions:
         ResourceExhausted = type('ResourceExhausted', (Exception,), {})
         InternalServerError = type('InternalServerError', (Exception,), {})
@@ -50,243 +51,64 @@ except ImportError:
         InvalidArgument = type('InvalidArgument', (Exception,), {})
         GoogleAPICallError = type('GoogleAPICallError', (Exception,), {}) # Generic fallback
     google_exceptions = DummyGoogleExceptions()
+    # Dummy Langchain types
+    ChatPromptTemplate = object
+    MessagesPlaceholder = object
+    LangchainTool = object # Use renamed dummy
+    ChatVertexAI = object # Dummy Chat Model
+    BaseMessage = object
+    SystemMessage = object
+    HumanMessage = object
+    AIMessage = object
 
 
 # Relative imports for components within the 'gurt' package
 from .config import (
     PROJECT_ID, LOCATION, DEFAULT_MODEL, FALLBACK_MODEL,
-    API_TIMEOUT, API_RETRY_ATTEMPTS, API_RETRY_DELAY, TOOLS, RESPONSE_SCHEMA,
-    PROACTIVE_PLAN_SCHEMA, # Import the new schema
-    TAVILY_API_KEY, PISTON_API_URL, PISTON_API_KEY, BASELINE_PERSONALITY # Import other needed configs
+    API_TIMEOUT, API_RETRY_ATTEMPTS, API_RETRY_DELAY, # Keep retry config? LangchainAgent might handle it.
+    RESPONSE_SCHEMA, PROACTIVE_PLAN_SCHEMA, BASELINE_PERSONALITY # Keep schemas
 )
 from .prompt import build_dynamic_system_prompt
-from .context import gather_conversation_context, get_memory_context # Renamed functions
-from .tools import TOOL_MAPPING # Import tool mapping
-from .utils import format_message, log_internal_api_call # Import utilities
-import copy # Needed for deep copying schemas
+# from .context import gather_conversation_context # No longer needed directly here
+from .memory import get_gurt_session_history # Import the history factory
+from .tools import TOOL_MAPPING, get_conversation_summary # Import tool mapping AND specific tools if needed directly
+from .utils import format_message, log_internal_api_call # Keep format_message AND re-import log helper
 
 if TYPE_CHECKING:
     from .cog import GurtCog # Import GurtCog for type hinting only
 
-
-# --- Schema Preprocessing Helper ---
-def _preprocess_schema_for_vertex(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Recursively preprocesses a JSON schema dictionary to replace list types
-    (like ["string", "null"]) with the first non-null type, making it
-    compatible with Vertex AI's GenerationConfig schema requirements.
-
-    Args:
-        schema: The JSON schema dictionary to preprocess.
-
-    Returns:
-        A new, preprocessed schema dictionary.
-    """
-    if not isinstance(schema, dict):
-        return schema # Return non-dict elements as is
-
-    processed_schema = copy.deepcopy(schema) # Work on a copy
-
-    for key, value in processed_schema.items():
-        if key == "type" and isinstance(value, list):
-            # Find the first non-"null" type in the list
-            first_valid_type = next((t for t in value if isinstance(t, str) and t.lower() != "null"), None)
-            if first_valid_type:
-                processed_schema[key] = first_valid_type
-            else:
-                # Fallback if only "null" or invalid types are present (shouldn't happen in valid schemas)
-                processed_schema[key] = "object" # Or handle as error
-                print(f"Warning: Schema preprocessing found list type '{value}' with no valid non-null string type. Falling back to 'object'.")
-        elif isinstance(value, dict):
-            processed_schema[key] = _preprocess_schema_for_vertex(value) # Recurse for nested objects
-        elif isinstance(value, list):
-            # Recurse for items within arrays (e.g., in 'properties' of array items)
-            processed_schema[key] = [_preprocess_schema_for_vertex(item) if isinstance(item, dict) else item for item in value]
-        # Handle 'properties' specifically
-        elif key == "properties" and isinstance(value, dict):
-             processed_schema[key] = {prop_key: _preprocess_schema_for_vertex(prop_value) for prop_key, prop_value in value.items()}
-        # Handle 'items' specifically if it's a schema object
-        elif key == "items" and isinstance(value, dict):
-             processed_schema[key] = _preprocess_schema_for_vertex(value)
-
-
-    return processed_schema
-
-
-# --- Helper Function to Safely Extract Text ---
-def _get_response_text(response: Optional['GenerationResponse']) -> Optional[str]:
-    """Safely extracts the text content from the first text part of a GenerationResponse."""
-    if not response or not response.candidates:
-        return None
-    try:
-        # Iterate through parts to find the first text part
-        for part in response.candidates[0].content.parts:
-            # Check if the part has a 'text' attribute and it's not empty
-            if hasattr(part, 'text') and part.text:
-                return part.text
-        # If no text part is found (e.g., only function call or empty text parts)
-        print(f"[_get_response_text] No text part found in candidate parts: {response.candidates[0].content.parts}") # Log parts structure
-        return None
-    except (AttributeError, IndexError) as e:
-        # Handle cases where structure is unexpected or parts list is empty
-        print(f"Error accessing response parts: {type(e).__name__}: {e}")
-        return None
-    except Exception as e:
-        # Catch unexpected errors during access
-        print(f"Unexpected error extracting text from response part: {e}")
-        return None
-
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # --- Initialize Vertex AI ---
+# LangchainAgent handles initialization implicitly if needed,
+# but explicit init is good practice.
 try:
-    vertexai.init(project=PROJECT_ID, location=LOCATION)
-    print(f"Vertex AI initialized for project '{PROJECT_ID}' in location '{LOCATION}'.")
+    if PROJECT_ID and LOCATION:
+        vertexai.init(project=PROJECT_ID, location=LOCATION)
+        logger.info(f"Vertex AI initialized for project '{PROJECT_ID}' in location '{LOCATION}'.")
+    else:
+        logger.warning("PROJECT_ID or LOCATION not set. Vertex AI initialization skipped.")
 except NameError:
-    print("Vertex AI SDK not imported, skipping initialization.")
+    logger.warning("Vertex AI SDK not imported, skipping initialization.")
 except Exception as e:
-    print(f"Error initializing Vertex AI: {e}")
+    logger.error(f"Error initializing Vertex AI: {e}", exc_info=True)
 
 # --- Constants ---
 # Define standard safety settings (adjust as needed)
 # Use actual types if import succeeded, otherwise fallback to Any
-_HarmCategory = getattr(generative_models, 'HarmCategory', Any)
-_HarmBlockThreshold = getattr(generative_models, 'HarmBlockThreshold', Any)
+_HarmCategory = globals().get('HarmCategory', Any)
+_HarmBlockThreshold = globals().get('HarmBlockThreshold', Any)
 STANDARD_SAFETY_SETTINGS = {
     getattr(_HarmCategory, 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_HATE_SPEECH'): getattr(_HarmBlockThreshold, 'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE'),
     getattr(_HarmCategory, 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_DANGEROUS_CONTENT'): getattr(_HarmBlockThreshold, 'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE'),
     getattr(_HarmCategory, 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_SEXUALLY_EXPLICIT'): getattr(_HarmBlockThreshold, 'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE'),
     getattr(_HarmCategory, 'HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HARASSMENT'): getattr(_HarmBlockThreshold, 'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE'),
 }
-
-# --- API Call Helper ---
-async def call_vertex_api_with_retry(
-    cog: 'GurtCog',
-    model: 'GenerativeModel', # Use string literal for type hint
-    contents: List['Content'], # Use string literal for type hint
-    generation_config: 'GenerationConfig', # Use string literal for type hint
-    safety_settings: Optional[Dict[Any, Any]], # Use Any for broader compatibility
-    request_desc: str,
-    stream: bool = False
-) -> Union['GenerationResponse', AsyncIterable['GenerationResponse'], None]: # Use string literals
-    """
-    Calls the Vertex AI Gemini API with retry logic.
-
-    Args:
-        cog: The GurtCog instance.
-        model: The initialized GenerativeModel instance.
-        contents: The list of Content objects for the prompt.
-        generation_config: The GenerationConfig object.
-        safety_settings: Safety settings for the request.
-        request_desc: A description of the request for logging purposes.
-        stream: Whether to stream the response.
-
-    Returns:
-        The GenerationResponse object or an AsyncIterable if streaming, or None on failure.
-
-    Raises:
-        Exception: If the API call fails after all retry attempts or encounters a non-retryable error.
-    """
-    last_exception = None
-    model_name = model._model_name # Get model name for logging
-    start_time = time.monotonic()
-
-    for attempt in range(API_RETRY_ATTEMPTS + 1):
-        try:
-            print(f"Sending API request for {request_desc} using {model_name} (Attempt {attempt + 1}/{API_RETRY_ATTEMPTS + 1})...")
-
-            response = await model.generate_content_async(
-                contents=contents,
-                generation_config=generation_config,
-                safety_settings=safety_settings or STANDARD_SAFETY_SETTINGS,
-                stream=stream
-            )
-
-            # --- Success Logging ---
-            elapsed_time = time.monotonic() - start_time
-            # Ensure model_name exists in stats before incrementing
-            if model_name not in cog.api_stats:
-                 cog.api_stats[model_name] = {'success': 0, 'failure': 0, 'retries': 0, 'total_time': 0.0, 'count': 0}
-            cog.api_stats[model_name]['success'] += 1
-            cog.api_stats[model_name]['total_time'] += elapsed_time
-            cog.api_stats[model_name]['count'] += 1
-            print(f"API request successful for {request_desc} ({model_name}) in {elapsed_time:.2f}s.")
-            return response # Success
-
-        except google_exceptions.ResourceExhausted as e:
-            error_msg = f"Rate limit error (ResourceExhausted) for {request_desc}: {e}"
-            print(f"{error_msg} (Attempt {attempt + 1})")
-            last_exception = e
-            if attempt < API_RETRY_ATTEMPTS:
-                if model_name not in cog.api_stats:
-                    cog.api_stats[model_name] = {'success': 0, 'failure': 0, 'retries': 0, 'total_time': 0.0, 'count': 0}
-                cog.api_stats[model_name]['retries'] += 1
-                wait_time = API_RETRY_DELAY * (2 ** attempt) # Exponential backoff
-                print(f"Waiting {wait_time:.2f} seconds before retrying...")
-                await asyncio.sleep(wait_time)
-                continue
-            else:
-                break # Max retries reached
-
-        except (google_exceptions.InternalServerError, google_exceptions.ServiceUnavailable) as e:
-            error_msg = f"API server error ({type(e).__name__}) for {request_desc}: {e}"
-            print(f"{error_msg} (Attempt {attempt + 1})")
-            last_exception = e
-            if attempt < API_RETRY_ATTEMPTS:
-                if model_name not in cog.api_stats:
-                    cog.api_stats[model_name] = {'success': 0, 'failure': 0, 'retries': 0, 'total_time': 0.0, 'count': 0}
-                cog.api_stats[model_name]['retries'] += 1
-                wait_time = API_RETRY_DELAY * (2 ** attempt) # Exponential backoff
-                print(f"Waiting {wait_time:.2f} seconds before retrying...")
-                await asyncio.sleep(wait_time)
-                continue
-            else:
-                break # Max retries reached
-
-        except google_exceptions.InvalidArgument as e:
-            # Often indicates a problem with the request itself (e.g., bad schema, unsupported format)
-            error_msg = f"Invalid argument error for {request_desc}: {e}"
-            print(error_msg)
-            last_exception = e
-            break # Non-retryable
-
-        except asyncio.TimeoutError: # Handle potential client-side timeouts if applicable
-             error_msg = f"Client-side request timed out for {request_desc} (Attempt {attempt + 1})"
-             print(error_msg)
-             last_exception = asyncio.TimeoutError(error_msg)
-             # Decide if client-side timeouts should be retried
-             if attempt < API_RETRY_ATTEMPTS:
-                 if model_name not in cog.api_stats:
-                     cog.api_stats[model_name] = {'success': 0, 'failure': 0, 'retries': 0, 'total_time': 0.0, 'count': 0}
-                 cog.api_stats[model_name]['retries'] += 1
-                 await asyncio.sleep(API_RETRY_DELAY * (attempt + 1))
-                 continue
-             else:
-                 break
-
-        except Exception as e: # Catch other potential exceptions
-            error_msg = f"Unexpected error during API call for {request_desc} (Attempt {attempt + 1}): {type(e).__name__}: {e}"
-            print(error_msg)
-            import traceback
-            traceback.print_exc()
-            last_exception = e
-            # Decide if this generic exception is retryable
-            # For now, treat unexpected errors as non-retryable
-            break
-
-    # --- Failure Logging ---
-    elapsed_time = time.monotonic() - start_time
-    if model_name not in cog.api_stats:
-        cog.api_stats[model_name] = {'success': 0, 'failure': 0, 'retries': 0, 'total_time': 0.0, 'count': 0}
-    cog.api_stats[model_name]['failure'] += 1
-    cog.api_stats[model_name]['total_time'] += elapsed_time
-    cog.api_stats[model_name]['count'] += 1
-    print(f"API request failed for {request_desc} ({model_name}) after {attempt + 1} attempts in {elapsed_time:.2f}s.")
-
-    # Raise the last encountered exception or a generic one
-    raise last_exception or Exception(f"API request failed for {request_desc} after {API_RETRY_ATTEMPTS + 1} attempts.")
+# Note: LangchainAgent might handle safety settings differently or via model_kwargs. Check documentation.
 
 
-# --- JSON Parsing and Validation Helper ---
+# --- JSON Parsing and Validation Helper (Keep this) ---
 def parse_and_validate_json_response(
     response_text: Optional[str],
     schema: Dict[str, Any],
@@ -304,7 +126,7 @@ def parse_and_validate_json_response(
         A parsed and validated dictionary if successful, None otherwise.
     """
     if response_text is None:
-        print(f"Parsing ({context_description}): Response text is None.")
+        logger.debug(f"Parsing ({context_description}): Response text is None.")
         return None
 
     parsed_data = None
@@ -312,464 +134,250 @@ def parse_and_validate_json_response(
 
     # Attempt 1: Try parsing the whole string directly
     try:
-        parsed_data = json.loads(raw_json_text)
-        print(f"Parsing ({context_description}): Successfully parsed entire response as JSON.")
-    except json.JSONDecodeError:
-        # Attempt 2: Extract JSON object, handling optional markdown fences
-        # More robust regex to handle potential leading/trailing text and variations
-        json_match = re.search(r'```(?:json)?\s*(\{.*\})\s*```|(\{.*\})', response_text, re.DOTALL | re.MULTILINE)
-        if json_match:
-            json_str = json_match.group(1) or json_match.group(2)
-            if json_str:
-                raw_json_text = json_str # Use the extracted string for parsing
-                try:
-                    parsed_data = json.loads(raw_json_text)
-                    print(f"Parsing ({context_description}): Successfully extracted and parsed JSON using regex.")
-                except json.JSONDecodeError as e_inner:
-                    print(f"Parsing ({context_description}): Regex found potential JSON, but it failed to parse: {e_inner}\nContent: {raw_json_text[:500]}")
-                    parsed_data = None
-            else:
-                print(f"Parsing ({context_description}): Regex matched, but failed to capture JSON content.")
-                parsed_data = None
+        # Handle potential markdown code blocks around the JSON
+        match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', response_text, re.DOTALL)
+        if match:
+            json_str = match.group(1)
+            logger.debug(f"Parsing ({context_description}): Found JSON within markdown code block.")
         else:
-            print(f"Parsing ({context_description}): Could not parse directly or extract JSON object using regex.\nContent: {raw_json_text[:500]}")
-            parsed_data = None
+            # If no code block, assume the whole text is JSON (or just the object part)
+            # Find the first '{' and last '}'
+            start_index = response_text.find('{')
+            end_index = response_text.rfind('}')
+            if start_index != -1 and end_index != -1 and end_index > start_index:
+                 json_str = response_text[start_index : end_index + 1]
+                 logger.debug(f"Parsing ({context_description}): Extracted potential JSON between braces.")
+            else:
+                 json_str = raw_json_text # Fallback to using the whole text
+                 logger.debug(f"Parsing ({context_description}): No code block or braces found, attempting parse on raw text.")
+
+        parsed_data = json.loads(json_str)
+        logger.info(f"Parsing ({context_description}): Successfully parsed JSON.")
+
+    except json.JSONDecodeError as e:
+        logger.warning(f"Parsing ({context_description}): Failed to decode JSON: {e}\nContent: {raw_json_text[:500]}")
+        parsed_data = None
 
     # Validation step
     if parsed_data is not None:
         if not isinstance(parsed_data, dict):
-            print(f"Parsing ({context_description}): Parsed data is not a dictionary: {type(parsed_data)}")
+            logger.warning(f"Parsing ({context_description}): Parsed data is not a dictionary: {type(parsed_data)}")
             return None # Fail validation if not a dict
 
         try:
             jsonschema.validate(instance=parsed_data, schema=schema)
-            print(f"Parsing ({context_description}): JSON successfully validated against schema.")
+            logger.info(f"Parsing ({context_description}): JSON successfully validated against schema.")
             # Ensure default keys exist after validation
             parsed_data.setdefault("should_respond", False)
             parsed_data.setdefault("content", None)
             parsed_data.setdefault("react_with_emoji", None)
+            # Add reply_to_message_id default if not present
+            parsed_data.setdefault("reply_to_message_id", None)
             return parsed_data
         except jsonschema.ValidationError as e:
-            print(f"Parsing ({context_description}): JSON failed schema validation: {e.message}")
+            logger.error(f"Parsing ({context_description}): JSON failed schema validation: {e.message}\nData: {parsed_data}")
             # Optionally log more details: e.path, e.schema_path, e.instance
             return None # Validation failed
         except Exception as e: # Catch other potential validation errors
-            print(f"Parsing ({context_description}): Unexpected error during JSON schema validation: {e}")
+            logger.error(f"Parsing ({context_description}): Unexpected error during JSON schema validation: {e}", exc_info=True)
             return None
     else:
         # Parsing failed before validation could occur
         return None
 
 
-# --- Tool Processing ---
-async def process_requested_tools(cog: 'GurtCog', function_call: 'generative_models.FunctionCall') -> 'Part': # Use string literals
-    """
-    Process a tool request specified by the AI's FunctionCall response.
-
-    Args:
-        cog: The GurtCog instance.
-        function_call: The FunctionCall object from the GenerationResponse.
-
-    Returns:
-        A Part object containing the tool result or error, formatted for the follow-up API call.
-    """
-    function_name = function_call.name
-    # Convert the Struct field arguments to a standard Python dict
-    function_args = dict(function_call.args) if function_call.args else {}
-    tool_result_content = None
-
-    print(f"Processing tool request: {function_name} with args: {function_args}")
-    tool_start_time = time.monotonic()
-
-    if function_name in TOOL_MAPPING:
-        try:
-            tool_func = TOOL_MAPPING[function_name]
-            # Execute the mapped function
-            # Ensure the function signature matches the expected arguments
-            # Pass cog if the tool implementation requires it
-            result = await tool_func(cog, **function_args)
-
-            # --- Tool Success Logging ---
-            tool_elapsed_time = time.monotonic() - tool_start_time
-            if function_name not in cog.tool_stats:
-                 cog.tool_stats[function_name] = {'success': 0, 'failure': 0, 'total_time': 0.0, 'count': 0}
-            cog.tool_stats[function_name]['success'] += 1
-            cog.tool_stats[function_name]['total_time'] += tool_elapsed_time
-            cog.tool_stats[function_name]['count'] += 1
-            print(f"Tool '{function_name}' executed successfully in {tool_elapsed_time:.2f}s.")
-
-            # Prepare result for API - must be JSON serializable, typically a dict
-            if not isinstance(result, dict):
-                # Attempt to convert common types or wrap in a dict
-                if isinstance(result, (str, int, float, bool, list)) or result is None:
-                    result = {"result": result}
-                else:
-                    print(f"Warning: Tool '{function_name}' returned non-standard type {type(result)}. Attempting str conversion.")
-                    result = {"result": str(result)}
-
-            tool_result_content = result
-
-        except Exception as e:
-            # --- Tool Failure Logging ---
-            tool_elapsed_time = time.monotonic() - tool_start_time
-            if function_name not in cog.tool_stats:
-                 cog.tool_stats[function_name] = {'success': 0, 'failure': 0, 'total_time': 0.0, 'count': 0}
-            cog.tool_stats[function_name]['failure'] += 1
-            cog.tool_stats[function_name]['total_time'] += tool_elapsed_time
-            cog.tool_stats[function_name]['count'] += 1
-            error_message = f"Error executing tool {function_name}: {type(e).__name__}: {str(e)}"
-            print(f"{error_message} (Took {tool_elapsed_time:.2f}s)")
-            import traceback
-            traceback.print_exc()
-            tool_result_content = {"error": error_message}
-    else:
-        # --- Tool Not Found Logging ---
-        tool_elapsed_time = time.monotonic() - tool_start_time
-        # Log attempt even if tool not found
-        if function_name not in cog.tool_stats:
-             cog.tool_stats[function_name] = {'success': 0, 'failure': 0, 'total_time': 0.0, 'count': 0}
-        cog.tool_stats[function_name]['failure'] += 1
-        cog.tool_stats[function_name]['total_time'] += tool_elapsed_time
-        cog.tool_stats[function_name]['count'] += 1
-        error_message = f"Tool '{function_name}' not found or implemented."
-        print(f"{error_message} (Took {tool_elapsed_time:.2f}s)")
-        tool_result_content = {"error": error_message}
-
-    # Return the result formatted as a Part for the API
-    return Part.from_function_response(name=function_name, response=tool_result_content)
-
-
-# --- Main AI Response Function ---
+# --- Main AI Response Function (Refactored for LangchainAgent) ---
 async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: Optional[str] = None) -> Dict[str, Any]:
     """
-    Gets responses from the Vertex AI Gemini API, handling potential tool usage and returning
-    the final parsed response.
+    Gets responses using Vertex AI LangchainAgent, handling tools and history.
 
     Args:
         cog: The GurtCog instance.
         message: The triggering discord.Message.
-        model_name: Optional override for the AI model name (e.g., "gemini-1.5-pro-preview-0409").
+        model_name: Optional override for the AI model name.
 
     Returns:
         A dictionary containing:
         - "final_response": Parsed JSON data from the final AI call (or None if parsing/validation fails).
         - "error": An error message string if a critical error occurred, otherwise None.
-        - "fallback_initial": Optional minimal response if initial parsing failed critically (less likely with controlled generation).
+        - "fallback_initial": Optional minimal response if parsing failed critically.
     """
     if not PROJECT_ID or not LOCATION:
-         return {"final_response": None, "error": "Google Cloud Project ID or Location not configured"}
+         return {"final_response": None, "error": "Google Cloud Project ID or Location not configured", "fallback_initial": None}
 
     channel_id = message.channel.id
     user_id = message.author.id
-    initial_parsed_data = None # Added to store initial parsed result
     final_parsed_data = None
     error_message = None
     fallback_response = None
+    start_time = time.monotonic()
+    request_desc = f"LangchainAgent response for message {message.id}"
+    selected_model_name = model_name or DEFAULT_MODEL
 
     try:
-        # --- Build Prompt Components ---
-        final_system_prompt = await build_dynamic_system_prompt(cog, message)
-        conversation_context_messages = gather_conversation_context(cog, channel_id, message.id) # Pass cog
-        memory_context = await get_memory_context(cog, message) # Pass cog
+        # --- 1. Build System Prompt ---
+        # This now includes dynamic context like mood, facts, etc.
+        system_prompt_text = await build_dynamic_system_prompt(cog, message)
+        # Create a LangChain prompt template
+        # LangchainAgent default prompt includes placeholders for chat_history and agent_scratchpad
+        # We just need to provide the system message part.
+        # Note: The exact structure might depend on the agent type used by LangchainAgent.
+        # Assuming a standard structure:
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", system_prompt_text),
+            MessagesPlaceholder(variable_name="chat_history"), # Standard placeholder
+            ("user", "{input}"), # User input placeholder
+            MessagesPlaceholder(variable_name="agent_scratchpad"), # Tool execution placeholder
+        ])
 
-        # --- Initialize Model ---
-        # Tools are passed during model initialization in Vertex AI SDK
-        # Combine tool declarations into a Tool object
-        vertex_tool = Tool(function_declarations=TOOLS) if TOOLS else None
+        # --- 2. Prepare Tools ---
+        # Wrap tools from TOOL_MAPPING to include the 'cog' instance
+        prepared_tools = []
+        for tool_name, tool_func in TOOL_MAPPING.items():
+            # Use functools.partial to bind the first argument (cog)
+            # Note: This assumes all tools in TOOL_MAPPING accept 'cog' as the first arg.
+            try:
+                # Create a partial function that includes the cog
+                partial_tool_func = functools.partial(tool_func, cog)
+                # Copy metadata (__name__, __doc__, __annotations__) for LangChain's schema generation
+                functools.update_wrapper(partial_tool_func, tool_func)
 
-        model = GenerativeModel(
-            model_name or DEFAULT_MODEL,
-            system_instruction=final_system_prompt,
-            tools=[vertex_tool] if vertex_tool else None
+                # LangchainAgent expects Tool objects or functions decorated with @tool
+                # Passing the partial function *might* work if it retains enough metadata.
+                # If not, we'd need to manually create Tool objects:
+                # prepared_tools.append(Tool(name=tool_name, func=partial_tool_func, description=tool_func.__doc__))
+                # For now, let's try passing the partial function directly.
+                prepared_tools.append(partial_tool_func)
+            except Exception as tool_prep_e:
+                 logger.error(f"Error preparing tool '{tool_name}': {tool_prep_e}", exc_info=True)
+                 # Optionally skip this tool
+
+        # --- 3. Prepare Chat History Factory ---
+        # Create a partial function for the history factory, binding the cog instance
+        chat_history_factory = functools.partial(get_gurt_session_history, cog=cog)
+
+        # --- 4. Define Model Kwargs ---
+        # These are passed to the underlying LLM (Gemini)
+        model_kwargs = {
+            "temperature": 0.75, # Adjust as needed
+            "max_output_tokens": 4096, # Adjust based on model and expected output size
+            # "safety_settings": STANDARD_SAFETY_SETTINGS, # Pass safety settings if needed
+            # "top_k": ...,
+            # "top_p": ...,
+        }
+
+        # --- 5. Instantiate LangchainAgent ---
+        logger.info(f"Instantiating LangchainAgent with model: {selected_model_name}")
+        agent = agent_engines.LangchainAgent(
+            model=selected_model_name,
+            tools=prepared_tools,
+            chat_history=chat_history_factory, # Pass the factory function
+            prompt=prompt_template, # Pass the constructed prompt template
+            model_kwargs=model_kwargs,
+            # verbose=True, # Enable for debugging agent steps
+            # handle_parsing_errors=True, # Let the agent try to recover from parsing errors
+            # max_iterations=10, # Limit tool execution loops
         )
 
-        # --- Prepare Message History (Contents) ---
-        contents: List[Content] = []
+        # --- 6. Format Input Message ---
+        # LangchainAgent expects a simple string input.
+        # Use format_message utility and combine parts.
+        formatted_current_message = format_message(cog, message)
+        input_parts = []
 
-        # Add memory context if available
-        if memory_context:
-            # System messages aren't directly supported in the 'contents' list for multi-turn like OpenAI.
-            # It's better handled via the 'system_instruction' parameter of GenerativeModel.
-            # We might prepend it to the first user message or handle it differently if needed.
-            # For now, we rely on system_instruction. Let's log if we have memory context.
-            print("Memory context available, relying on system_instruction.")
-            # If needed, could potentially add as a 'model' role message before user messages,
-            # but this might confuse the turn structure.
-            # contents.append(Content(role="model", parts=[Part.from_text(f"System Note: {memory_context}")]))
-
-
-        # Add conversation history
-        for msg in conversation_context_messages:
-            role = msg.get("role", "user") # Default to user if role missing
-            # Map roles if necessary (e.g., 'assistant' -> 'model')
-            if role == "assistant":
-                role = "model"
-            elif role == "system":
-                 # Skip system messages here, handled by system_instruction
-                 continue
-            # Handle potential multimodal content in history (if stored that way)
-            if isinstance(msg.get("content"), list):
-                 parts = [Part.from_text(part["text"]) if part["type"] == "text" else Part.from_uri(part["image_url"]["url"], mime_type=part["image_url"]["url"].split(";")[0].split(":")[1]) if part["type"] == "image_url" else None for part in msg["content"]]
-                 parts = [p for p in parts if p] # Filter out None parts
-                 if parts:
-                     contents.append(Content(role=role, parts=parts))
-            elif isinstance(msg.get("content"), str):
-                 contents.append(Content(role=role, parts=[Part.from_text(msg["content"])]))
-
-
-        # --- Prepare the current message content (potentially multimodal) ---
-        current_message_parts = []
-        formatted_current_message = format_message(cog, message) # Pass cog if needed
-
-        # --- Construct text content, including reply context if applicable ---
-        text_content = ""
+        # Add reply context if applicable
         if formatted_current_message.get("is_reply") and formatted_current_message.get("replied_to_author_name"):
             reply_author = formatted_current_message["replied_to_author_name"]
-            reply_content = formatted_current_message.get("replied_to_content", "...") # Use ellipsis if content missing
-            # Truncate long replied content to keep context concise
+            reply_content = formatted_current_message.get("replied_to_content", "...")
             max_reply_len = 150
             if len(reply_content) > max_reply_len:
                 reply_content = reply_content[:max_reply_len] + "..."
-            text_content += f"(Replying to {reply_author}: \"{reply_content}\")\n"
+            input_parts.append(f"(Replying to {reply_author}: \"{reply_content}\")")
 
         # Add current message author and content
-        text_content += f"{formatted_current_message['author']['display_name']}: {formatted_current_message['content']}"
+        input_parts.append(f"{formatted_current_message['author']['display_name']}: {formatted_current_message['content']}")
 
         # Add mention details
         if formatted_current_message.get("mentioned_users_details"):
             mentions_str = ", ".join([f"{m['display_name']}(id:{m['id']})" for m in formatted_current_message["mentioned_users_details"]])
-            text_content += f"\n(Message Details: Mentions=[{mentions_str}])"
+            input_parts.append(f"(Message Details: Mentions=[{mentions_str}])")
 
-        current_message_parts.append(Part.from_text(text_content))
-        # --- End text content construction ---
+        # Add attachment info (as text description)
+        if formatted_current_message.get("attachment_descriptions"):
+            attachment_str = " ".join([att['description'] for att in formatted_current_message["attachment_descriptions"]])
+            input_parts.append(f"[Attachments: {attachment_str}]")
 
-        if message.attachments:
-            print(f"Processing {len(message.attachments)} attachments for message {message.id}")
-            for attachment in message.attachments:
-                mime_type = attachment.content_type
-                file_url = attachment.url
-                filename = attachment.filename
+        final_input_string = "\n".join(input_parts).strip()
+        logger.debug(f"Formatted input string for LangchainAgent: {final_input_string[:200]}...")
 
-                # Check if MIME type is supported for URI input by Gemini
-                # Expand this list based on Gemini documentation for supported types via URI
-                supported_mime_prefixes = ["image/", "video/", "audio/", "text/plain", "application/pdf"]
-                is_supported = False
-                if mime_type:
-                    for prefix in supported_mime_prefixes:
-                        if mime_type.startswith(prefix):
-                            is_supported = True
-                            break
-                    # Add specific non-prefixed types if needed
-                    # if mime_type in ["application/vnd.google-apps.document", ...]:
-                    #     is_supported = True
+        # --- 7. Query the Agent ---
+        logger.info(f"Querying LangchainAgent for message {message.id}...")
+        # The agent handles retries, tool calls, history management internally.
+        # We pass the channel_id as the session_id for history persistence.
+        agent_response = await agent.query(
+            input=final_input_string,
+            config={"configurable": {"session_id": str(channel_id)}}
+        )
+        # Note: agent.query might raise exceptions on failure.
 
-                if is_supported and file_url:
-                    try:
-                        # 1. Add text part instructing AI about the file
-                        instruction_text = f"User attached a file: '{filename}' (Type: {mime_type}). Analyze this file from the following URI and incorporate your understanding into your response."
-                        current_message_parts.append(Part.from_text(instruction_text))
-                        print(f"Added text instruction for attachment: {filename}")
+        elapsed_time = time.monotonic() - start_time
+        logger.info(f"LangchainAgent query successful for {request_desc} in {elapsed_time:.2f}s.")
+        logger.debug(f"Raw LangchainAgent response: {agent_response}")
 
-                        # 2. Add the URI part
-                        # Ensure mime_type doesn't contain parameters like '; charset=...' if the API doesn't like them
-                        clean_mime_type = mime_type.split(';')[0]
-                        current_message_parts.append(Part.from_uri(uri=file_url, mime_type=clean_mime_type))
-                        print(f"Added URI part for attachment: {filename} ({clean_mime_type}) using URL: {file_url}")
-
-                    except Exception as e:
-                        print(f"Error creating Part for attachment {filename} ({mime_type}): {e}")
-                        # Optionally add a text part indicating the error
-                        current_message_parts.append(Part.from_text(f"(System Note: Failed to process attachment '{filename}' - {e})"))
-                else:
-                    print(f"Skipping unsupported or invalid attachment: {filename} (Type: {mime_type}, URL: {file_url})")
-                    # Optionally inform the AI that an unsupported file was attached
-                    current_message_parts.append(Part.from_text(f"(System Note: User attached an unsupported file '{filename}' of type '{mime_type}' which cannot be processed.)"))
-
-
-        # Ensure there's always *some* content part, even if only text or errors
-        if current_message_parts:
-            contents.append(Content(role="user", parts=current_message_parts))
-        else:
-            print("Warning: No content parts generated for user message.")
-            contents.append(Content(role="user", parts=[Part.from_text("")]))
-
-
-        # --- First API Call (Check for Tool Use) ---
-        print("Making initial API call to check for tool use...")
-        generation_config_initial = GenerationConfig(
-            temperature=0.75,
-            max_output_tokens=10000, # Adjust as needed
-            # No response schema needed for the initial call, just checking for function calls
+        # --- 8. Parse and Validate Output ---
+        # The final response should be in the 'output' key
+        final_response_text = agent_response.get("output")
+        final_parsed_data = parse_and_validate_json_response(
+            final_response_text, RESPONSE_SCHEMA['schema'], "final response (LangchainAgent)"
         )
 
-        initial_response = await call_vertex_api_with_retry(
-            cog=cog,
-            model=model,
-            contents=contents,
-            generation_config=generation_config_initial,
-            safety_settings=STANDARD_SAFETY_SETTINGS,
-            request_desc=f"Initial response check for message {message.id}"
-        )
+        if final_parsed_data is None:
+             logger.error(f"Failed to parse/validate final JSON output from LangchainAgent for {request_desc}. Raw output: {final_response_text}")
+             error_message = "Failed to parse/validate final AI JSON response."
+             # Create a basic fallback if the bot was mentioned
+             replied_to_bot = message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user
+             if cog.bot.user.mentioned_in(message) or replied_to_bot:
+                 fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
 
-        # --- Log Raw Request and Response ---
-        try:
-            # Log the request payload (contents)
-            request_payload_log = [{"role": c.role, "parts": [str(p) for p in c.parts]} for c in contents] # Convert parts to string for logging
-            print(f"--- Raw API Request (Initial Call) ---\n{json.dumps(request_payload_log, indent=2)}\n------------------------------------")
-            # Log the raw response object
-            print(f"--- Raw API Response (Initial Call) ---\n{initial_response}\n-----------------------------------")
-        except Exception as log_e:
-            print(f"Error logging raw request/response: {log_e}")
-        # --- End Logging ---
-
-        if not initial_response or not initial_response.candidates:
-             raise Exception("Initial API call returned no response or candidates.")
-
-        # --- Check for Tool Call FIRST ---
-        candidate = initial_response.candidates[0]
-        finish_reason = getattr(candidate, 'finish_reason', None)
-        function_call = None
-        function_call_part_content = None # Store the AI's request message content
-
-        # Check primarily for the *presence* of a function call part,
-        # as finish_reason might be STOP even with a function call.
-        if hasattr(candidate, 'content') and candidate.content.parts:
-            for part in candidate.content.parts:
-                if hasattr(part, 'function_call'):
-                    function_call = part.function_call # Assign the value
-                    # Add check to ensure function_call is not None before proceeding
-                    if function_call:
-                        # Store the whole content containing the call to add to history later
-                        function_call_part_content = candidate.content
-                        print(f"AI requested tool (found function_call part): {function_call.name}")
-                        break # Found a valid function call part
-                    else:
-                        # Log if the attribute exists but is None (unexpected case)
-                        print("Warning: Found part with 'function_call' attribute, but its value was None.")
-
-        # --- Process Tool Call or Handle Direct Response ---
-        if function_call and function_call_part_content:
-            # --- Tool Call Path ---
-            initial_parsed_data = None # No initial JSON expected if tool is called
-
-            # Process the tool request
-            tool_response_part = await process_requested_tools(cog, function_call)
-
-            # Append the AI's request and the tool's response to the history
-            contents.append(candidate.content) # Add the AI's function call request message
-            contents.append(Content(role="function", parts=[tool_response_part])) # Add the function response part
-
-            # --- Second API Call (Get Final Response After Tool) ---
-            print("Making follow-up API call with tool results...")
-
-            # Initialize a NEW model instance WITHOUT tools for the follow-up call
-            # This prevents the InvalidArgument error when specifying response schema
-            model_final = GenerativeModel(
-                model_name or DEFAULT_MODEL, # Use the same model name
-                system_instruction=final_system_prompt # Keep the same system prompt
-                # Omit the 'tools' parameter here
-            )
-
-            # Preprocess the schema before passing it to GenerationConfig
-            processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
-            generation_config_final = GenerationConfig(
-                temperature=0.75, # Keep original temperature for final response
-                max_output_tokens=10000, # Keep original max tokens
-                response_mime_type="application/json",
-                response_schema=processed_response_schema # Use preprocessed schema
-            )
-
-            final_response_obj = await call_vertex_api_with_retry( # Renamed variable for clarity
-                cog=cog,
-                model=model_final, # Use the new model instance WITHOUT tools
-                contents=contents, # History now includes tool call/response
-                generation_config=generation_config_final,
-                safety_settings=STANDARD_SAFETY_SETTINGS,
-                request_desc=f"Follow-up response for message {message.id} after tool execution"
-            )
-
-            if not final_response_obj or not final_response_obj.candidates:
-                 raise Exception("Follow-up API call returned no response or candidates.")
-
-            final_response_text = _get_response_text(final_response_obj) # Use helper
-            final_parsed_data = parse_and_validate_json_response(
-                final_response_text, RESPONSE_SCHEMA['schema'], "final response after tools"
-            )
-
-            # Handle validation failure - Re-prompt loop (simplified example)
-            if final_parsed_data is None:
-                print("Warning: Final response failed validation. Attempting re-prompt (basic)...")
-                # Construct a basic re-prompt message
-                contents.append(final_response_obj.candidates[0].content) # Add the invalid response
-                contents.append(Content(role="user", parts=[Part.from_text(
-                    "Your previous JSON response was invalid or did not match the required schema. "
-                    f"Please provide the response again, strictly adhering to this schema:\n{json.dumps(RESPONSE_SCHEMA['schema'], indent=2)}"
-                )]))
-
-                # Retry the final call
-                retry_response_obj = await call_vertex_api_with_retry(
-                    cog=cog, model=model, contents=contents,
-                    generation_config=generation_config_final, safety_settings=STANDARD_SAFETY_SETTINGS,
-                    request_desc=f"Re-prompt validation failure for message {message.id}"
-                )
-                if retry_response_obj and retry_response_obj.candidates:
-                    final_response_text = _get_response_text(retry_response_obj) # Use helper
-                    final_parsed_data = parse_and_validate_json_response(
-                        final_response_text, RESPONSE_SCHEMA['schema'], "re-prompted final response"
-                    )
-                    if final_parsed_data is None:
-                         print("Critical Error: Re-prompted response still failed validation.")
-                         error_message = "Failed to get valid JSON response after re-prompting."
-                else:
-                 error_message = "Failed to get response after re-prompting."
-            # final_parsed_data is now set (or None if failed) after tool use and potential re-prompt
-
+        # --- 9. Log Stats (Simplified) ---
+        # LangchainAgent doesn't expose detailed retry/timing stats easily. Log basic success/failure.
+        if selected_model_name not in cog.api_stats:
+            cog.api_stats[selected_model_name] = {'success': 0, 'failure': 0, 'retries': 0, 'total_time': 0.0, 'count': 0}
+        if final_parsed_data:
+            cog.api_stats[selected_model_name]['success'] += 1
         else:
-            # --- No Tool Call Path ---
-            print("No tool call requested by AI. Processing initial response as final.")
-            # Attempt to parse the initial response text directly.
-            initial_response_text = _get_response_text(initial_response) # Use helper
-            # Validate against the final schema because this IS the final response.
-            final_parsed_data = parse_and_validate_json_response(
-                initial_response_text, RESPONSE_SCHEMA['schema'], "final response (no tools)"
-            )
-            initial_parsed_data = final_parsed_data # Keep initial_parsed_data consistent for return dict
-
-            if final_parsed_data is None:
-                 # This means the initial response failed validation.
-                 print("Critical Error: Initial response failed validation (no tools).")
-                 error_message = "Failed to parse/validate initial AI JSON response."
-                 # Create a basic fallback if the bot was mentioned
-                 replied_to_bot = message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user
-                 if cog.bot.user.mentioned_in(message) or replied_to_bot:
-                     fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
-            # initial_parsed_data is not used in this path, only final_parsed_data matters
-
+            cog.api_stats[selected_model_name]['failure'] += 1
+        cog.api_stats[selected_model_name]['total_time'] += elapsed_time
+        cog.api_stats[selected_model_name]['count'] += 1
+        # Note: Tool stats logging needs integration within the tool functions themselves or via LangChain callbacks.
 
     except Exception as e:
-        error_message = f"Error in get_ai_response main loop for message {message.id}: {type(e).__name__}: {str(e)}"
-        print(error_message)
-        import traceback
-        traceback.print_exc()
-        # Ensure both are None on critical error
-        initial_parsed_data = None
-        final_parsed_data = None
+        elapsed_time = time.monotonic() - start_time
+        error_message = f"Error in get_ai_response (LangchainAgent) for message {message.id}: {type(e).__name__}: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        final_parsed_data = None # Ensure None on critical error
+
+        # Log failure stat
+        if selected_model_name not in cog.api_stats:
+            cog.api_stats[selected_model_name] = {'success': 0, 'failure': 0, 'retries': 0, 'total_time': 0.0, 'count': 0}
+        cog.api_stats[selected_model_name]['failure'] += 1
+        cog.api_stats[selected_model_name]['total_time'] += elapsed_time
+        cog.api_stats[selected_model_name]['count'] += 1
 
     return {
-        "initial_response": initial_parsed_data, # Return parsed initial data
-        "final_response": final_parsed_data,    # Return parsed final data
+        "final_response": final_parsed_data,
         "error": error_message,
-        "fallback_initial": fallback_response
+        "fallback_initial": fallback_response # Keep this key for compatibility, though less likely needed
     }
 
 
-# --- Proactive AI Response Function ---
+# --- Proactive AI Response Function (Refactored) ---
 async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, trigger_reason: str) -> Dict[str, Any]:
-    """Generates a proactive response based on a specific trigger using Vertex AI."""
+    """Generates a proactive response based on a specific trigger using LangChain components."""
     if not PROJECT_ID or not LOCATION:
         return {"should_respond": False, "content": None, "react_with_emoji": None, "error": "Google Cloud Project ID or Location not configured"}
 
-    print(f"--- Proactive Response Triggered: {trigger_reason} ---")
+    logger.info(f"--- Proactive Response Triggered: {trigger_reason} ---")
     channel_id = message.channel.id
     final_parsed_data = None
     error_message = None
@@ -782,10 +390,15 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
             f"Proactive Trigger Reason: {trigger_reason}",
             f"Current Mood: {cog.current_mood}",
         ]
-        # Add recent messages summary
-        summary_data = await get_conversation_summary(cog, str(channel_id), message_limit=15) # Use tool function
-        if summary_data and not summary_data.get("error"):
-            planning_context_parts.append(f"Recent Conversation Summary: {summary_data['summary']}")
+        # Add recent messages summary using the tool function directly
+        try:
+            # Ensure get_conversation_summary is called correctly (might need channel_id as string)
+            summary_data = await get_conversation_summary(cog, str(channel_id), message_limit=15)
+            if summary_data and not summary_data.get("error"):
+                planning_context_parts.append(f"Recent Conversation Summary: {summary_data['summary']}")
+        except Exception as summary_e:
+            logger.error(f"Error getting summary for proactive planning: {summary_e}", exc_info=True)
+
         # Add active topics
         active_topics_data = cog.active_topics.get(channel_id)
         if active_topics_data and active_topics_data.get("topics"):
@@ -801,33 +414,33 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
             if interests:
                 interests_str = ", ".join([f"{t} ({l:.1f})" for t, l in interests])
                 planning_context_parts.append(f"Gurt's Interests: {interests_str}")
-        except Exception as int_e: print(f"Error getting interests for planning: {int_e}")
+        except Exception as int_e: logger.error(f"Error getting interests for planning: {int_e}", exc_info=True)
 
         planning_context = "\n".join(planning_context_parts)
 
-        # --- Planning Step ---
-        print("Generating proactive response plan...")
+        # --- Planning Step (using refactored internal call) ---
+        logger.info("Generating proactive response plan...")
         planning_prompt_messages = [
             {"role": "system", "content": "You are Gurt's planning module. Analyze the context and trigger reason to decide if Gurt should respond proactively and, if so, outline a plan (goal, key info, tone). Focus on natural, in-character engagement. Respond ONLY with JSON matching the provided schema."},
             {"role": "user", "content": f"Context:\n{planning_context}\n\nBased on this context and the trigger reason, create a plan for Gurt's proactive response."}
         ]
 
-        plan = await get_internal_ai_json_response(
+        plan = await get_internal_ai_json_response( # Call the refactored function
             cog=cog,
             prompt_messages=planning_prompt_messages,
             task_description=f"Proactive Planning ({trigger_reason})",
             response_schema_dict=PROACTIVE_PLAN_SCHEMA['schema'],
             model_name=FALLBACK_MODEL, # Use a potentially faster/cheaper model for planning
             temperature=0.5,
-            max_tokens=300
+            max_tokens=500 # Increased slightly for planning
         )
 
         if not plan or not plan.get("should_respond"):
             reason = plan.get('reasoning', 'Planning failed or decided against responding.') if plan else 'Planning failed.'
-            print(f"Proactive response aborted by plan: {reason}")
+            logger.info(f"Proactive response aborted by plan: {reason}")
             return {"should_respond": False, "content": None, "react_with_emoji": None, "note": f"Plan: {reason}"}
 
-        print(f"Proactive Plan Generated: Goal='{plan.get('response_goal', 'N/A')}', Reasoning='{plan.get('reasoning', 'N/A')}'")
+        logger.info(f"Proactive Plan Generated: Goal='{plan.get('response_goal', 'N/A')}', Reasoning='{plan.get('reasoning', 'N/A')}'")
 
         # --- Build Final Proactive Prompt using Plan ---
         persistent_traits = await cog.memory_manager.get_all_personality_traits()
@@ -853,49 +466,43 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
         final_proactive_prompt_parts.append("Generate a casual, in-character message based on the plan and context. Keep it relatively short and natural-sounding.")
         final_proactive_system_prompt = "\n\n".join(final_proactive_prompt_parts)
 
-        # --- Initialize Final Model ---
-        model = GenerativeModel(
+        # --- Call Final LLM API (using direct ChatVertexAI call) ---
+        logger.info("Generating final proactive response using direct ChatVertexAI call...")
+        final_model = ChatVertexAI(
             model_name=DEFAULT_MODEL,
-            system_instruction=final_proactive_system_prompt
-        )
-
-        # --- Prepare Final Contents ---
-        contents = [
-            Content(role="user", parts=[Part.from_text(
-                f"Generate the response based on your plan. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{json.dumps(RESPONSE_SCHEMA['schema'], indent=2)}\n\n**Ensure nothing precedes or follows the JSON.**"
-            )])
-        ]
-
-        # --- Call Final LLM API ---
-        # Preprocess the schema before passing it to GenerationConfig
-        processed_response_schema_proactive = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
-        generation_config_final = GenerationConfig(
             temperature=0.8, # Use original proactive temp
             max_output_tokens=200,
-            response_mime_type="application/json",
-            response_schema=processed_response_schema_proactive # Use preprocessed schema
+            # Pass safety settings if needed, e.g., safety_settings=STANDARD_SAFETY_SETTINGS
         )
 
-        response_obj = await call_vertex_api_with_retry(
-            cog=cog,
-            model=model,
-            contents=contents,
-            generation_config=generation_config_final,
-            safety_settings=STANDARD_SAFETY_SETTINGS,
-            request_desc=f"Final proactive response for channel {channel_id} ({trigger_reason})"
-        )
+        # Construct final messages for the direct call
+        final_messages = [
+            SystemMessage(content=final_proactive_system_prompt),
+            HumanMessage(content=(
+                f"Generate the response based on your plan. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n"
+                f"{json.dumps(RESPONSE_SCHEMA['schema'], indent=2)}\n\n"
+                f"**Ensure nothing precedes or follows the JSON.**"
+            ))
+        ]
 
-        if not response_obj or not response_obj.candidates:
-            raise Exception("Final proactive API call returned no response or candidates.")
+        # Invoke the model
+        # Add retry logic here if needed, or rely on LangChain's potential built-in retries
+        try:
+            ai_response: BaseMessage = await final_model.ainvoke(final_messages)
+            final_response_text = ai_response.content
+            logger.debug(f"Raw proactive generation response content: {final_response_text}")
+        except Exception as gen_e:
+             logger.error(f"Error invoking final proactive generation model: {gen_e}", exc_info=True)
+             raise Exception("Final proactive API call failed.") from gen_e
+
 
         # --- Parse and Validate Final Response ---
-        final_response_text = _get_response_text(response_obj)
         final_parsed_data = parse_and_validate_json_response(
             final_response_text, RESPONSE_SCHEMA['schema'], f"final proactive response ({trigger_reason})"
         )
 
         if final_parsed_data is None:
-            print(f"Warning: Failed to parse/validate final proactive JSON response for {trigger_reason}.")
+            logger.error(f"Failed to parse/validate final proactive JSON response for {trigger_reason}. Raw: {final_response_text}")
             final_parsed_data = {"should_respond": False, "content": None, "react_with_emoji": None, "note": "Fallback - Failed to parse/validate final proactive JSON"}
         else:
              # --- Cache Bot Response ---
@@ -914,15 +521,16 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
                  if plan and plan.get('response_goal') == 'engage user interest' and plan.get('key_info_to_include'):
                      topic = plan['key_info_to_include'][0].lower().strip() # Assume first key info is the topic
                      cog.gurt_participation_topics[topic] += 1
-                     print(f"Tracked Gurt participation (proactive) in topic: '{topic}'")
+                     logger.info(f"Tracked Gurt participation (proactive) in topic: '{topic}'")
 
 
     except Exception as e:
         error_message = f"Error getting proactive AI response for channel {channel_id} ({trigger_reason}): {type(e).__name__}: {str(e)}"
-        print(error_message)
+        logger.error(error_message, exc_info=True)
         final_parsed_data = {"should_respond": False, "content": None, "react_with_emoji": None, "error": error_message}
 
     # Ensure default keys exist
+    if final_parsed_data is None: final_parsed_data = {} # Ensure dict exists
     final_parsed_data.setdefault("should_respond", False)
     final_parsed_data.setdefault("content", None)
     final_parsed_data.setdefault("react_with_emoji", None)
@@ -932,10 +540,10 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
     return final_parsed_data
 
 
-# --- Internal AI Call for Specific Tasks ---
+# --- Internal AI Call for Specific Tasks (Refactored) ---
 async def get_internal_ai_json_response(
     cog: 'GurtCog',
-    prompt_messages: List[Dict[str, Any]], # Keep this format
+    prompt_messages: List[Dict[str, Any]], # Keep OpenAI format for input convenience
     task_description: str,
     response_schema_dict: Dict[str, Any], # Expect schema as dict
     model_name: Optional[str] = None,
@@ -943,11 +551,11 @@ async def get_internal_ai_json_response(
     max_tokens: int = 5000,
 ) -> Optional[Dict[str, Any]]: # Keep return type hint simple
     """
-    Makes a Vertex AI call expecting a specific JSON response format for internal tasks.
+    Makes a direct Vertex AI call using LangChain expecting a specific JSON response format.
 
     Args:
         cog: The GurtCog instance.
-        prompt_messages: List of message dicts (like OpenAI format: {'role': 'user'/'model', 'content': '...'}).
+        prompt_messages: List of message dicts (OpenAI format: {'role': 'user'/'system', 'content': '...'}).
         task_description: Description for logging.
         response_schema_dict: The expected JSON output schema as a dictionary.
         model_name: Optional model override.
@@ -958,184 +566,176 @@ async def get_internal_ai_json_response(
         The parsed and validated JSON dictionary if successful, None otherwise.
     """
     if not PROJECT_ID or not LOCATION:
-        print(f"Error in get_internal_ai_json_response ({task_description}): GCP Project/Location not set.")
+        logger.error(f"Error in get_internal_ai_json_response ({task_description}): GCP Project/Location not set.")
         return None
 
     final_parsed_data = None
     error_occurred = None
     request_payload_for_logging = {} # For logging
+    start_time = time.monotonic()
+    selected_model_name = model_name or FALLBACK_MODEL # Use fallback if not specified
 
     try:
-        # --- Convert prompt messages to Vertex AI Content format ---
-        contents: List[Content] = []
-        system_instruction = None
+        # --- Convert prompt messages to LangChain format ---
+        langchain_messages: List[BaseMessage] = []
+        system_instruction_parts = []
         for msg in prompt_messages:
             role = msg.get("role", "user")
-            content_text = msg.get("content", "")
+            content_value = msg.get("content", "")
+
             if role == "system":
-                # Use the first system message as system_instruction
-                if system_instruction is None:
-                    system_instruction = content_text
-                else:
-                    # Append subsequent system messages to the instruction
-                    system_instruction += "\n\n" + content_text
-                continue # Skip adding system messages to contents list
-            elif role == "assistant":
-                role = "model"
+                system_instruction_parts.append(str(content_value))
+                continue # Collect system messages separately
 
-            # --- Process content (string or list) ---
-            content_value = msg.get("content")
-            message_parts: List[Part] = [] # Initialize list to hold parts for this message
-
+            # --- Process content (string or list with images) ---
+            message_content_parts = []
             if isinstance(content_value, str):
-                # Handle simple string content
-                message_parts.append(Part.from_text(content_value))
+                message_content_parts.append({"type": "text", "text": content_value})
             elif isinstance(content_value, list):
-                # Handle list content (e.g., multimodal from ProfileUpdater)
-                for part_data in content_value:
-                    part_type = part_data.get("type")
-                    if part_type == "text":
-                        text = part_data.get("text", "")
-                        message_parts.append(Part.from_text(text))
-                    elif part_type == "image_data":
-                        mime_type = part_data.get("mime_type")
-                        base64_data = part_data.get("data")
-                        if mime_type and base64_data:
-                            try:
-                                image_bytes = base64.b64decode(base64_data)
-                                message_parts.append(Part.from_data(data=image_bytes, mime_type=mime_type))
-                            except Exception as decode_err:
-                                print(f"Error decoding/adding image part in get_internal_ai_json_response: {decode_err}")
-                                # Optionally add a placeholder text part indicating failure
-                                message_parts.append(Part.from_text("(System Note: Failed to process an image part)"))
-                        else:
-                             print("Warning: image_data part missing mime_type or data.")
-                    else:
-                        print(f"Warning: Unknown part type '{part_type}' in internal prompt message.")
+                 # Handle multimodal content (assuming format from ProfileUpdater)
+                 for part_data in content_value:
+                     part_type = part_data.get("type")
+                     if part_type == "text":
+                         message_content_parts.append({"type": "text", "text": part_data.get("text", "")})
+                     elif part_type == "image_data":
+                         mime_type = part_data.get("mime_type")
+                         base64_data = part_data.get("data")
+                         if mime_type and base64_data:
+                             # Format for LangChain message content list
+                             message_content_parts.append({
+                                 "type": "image_url",
+                                 "image_url": {"url": f"data:{mime_type};base64,{base64_data}"}
+                             })
+                         else:
+                             logger.warning("image_data part missing mime_type or data in internal call.")
+                             message_content_parts.append({"type": "text", "text": "(System Note: Invalid image data provided)"})
+                     else:
+                         logger.warning(f"Unknown part type '{part_type}' in internal prompt message.")
             else:
-                 print(f"Warning: Unexpected content type '{type(content_value)}' in internal prompt message.")
+                 logger.warning(f"Unexpected content type '{type(content_value)}' in internal prompt message.")
+                 message_content_parts.append({"type": "text", "text": str(content_value)})
 
-            # Add the content object if parts were generated
-            if message_parts:
-                contents.append(Content(role=role, parts=message_parts))
+
+            # Add message to list
+            if role == "user":
+                langchain_messages.append(HumanMessage(content=message_content_parts))
+            elif role == "assistant": # Map assistant to AIMessage
+                langchain_messages.append(AIMessage(content=message_content_parts))
             else:
-                 print(f"Warning: No parts generated for message role '{role}'.")
+                 logger.warning(f"Unsupported role '{role}' in internal prompt message, treating as user.")
+                 langchain_messages.append(HumanMessage(content=message_content_parts))
 
 
-        # Add the critical JSON instruction to the last user message or as a new user message
+        # Prepend combined system instruction if any
+        if system_instruction_parts:
+            full_system_instruction = "\n\n".join(system_instruction_parts)
+            langchain_messages.insert(0, SystemMessage(content=full_system_instruction))
+
+        # Add the critical JSON instruction to the last message
         json_instruction_content = (
-            f"**CRITICAL: Your response MUST consist *only* of the raw JSON object itself, matching this schema:**\n"
+            f"\n\n**CRITICAL: Your response MUST consist *only* of the raw JSON object itself, matching this schema:**\n"
             f"{json.dumps(response_schema_dict, indent=2)}\n"
             f"**Ensure nothing precedes or follows the JSON.**"
         )
-        if contents and contents[-1].role == "user":
-             contents[-1].parts.append(Part.from_text(f"\n\n{json_instruction_content}"))
+        if langchain_messages and isinstance(langchain_messages[-1], HumanMessage):
+             # Append instruction to the last HumanMessage's content
+             last_msg_content = langchain_messages[-1].content
+             if isinstance(last_msg_content, str):
+                 langchain_messages[-1].content += json_instruction_content
+             elif isinstance(last_msg_content, list):
+                  # Append as a new text part
+                  last_msg_content.append({"type": "text", "text": json_instruction_content})
+             else:
+                  logger.warning("Could not append JSON instruction to last message content (unexpected type).")
+                  # Add as a new message instead?
+                  langchain_messages.append(HumanMessage(content=json_instruction_content))
+
         else:
-             contents.append(Content(role="user", parts=[Part.from_text(json_instruction_content)]))
+             # If no messages or last wasn't Human, add as new HumanMessage
+             langchain_messages.append(HumanMessage(content=json_instruction_content))
 
 
         # --- Initialize Model ---
-        model = GenerativeModel(
-            model_name=model_name or DEFAULT_MODEL, # Use keyword argument
-            system_instruction=system_instruction
-            # No tools needed for internal JSON tasks usually
-        )
-
-        # --- Prepare Generation Config ---
-        # Preprocess the schema before passing it to GenerationConfig
-        processed_schema_internal = _preprocess_schema_for_vertex(response_schema_dict)
-        generation_config = GenerationConfig(
+        # Use ChatVertexAI for direct interaction
+        chat_model = ChatVertexAI(
+            model_name=selected_model_name,
             temperature=temperature,
             max_output_tokens=max_tokens,
-            response_mime_type="application/json",
-            response_schema=processed_schema_internal # Use preprocessed schema
+            # Pass safety settings if needed
+            # safety_settings=STANDARD_SAFETY_SETTINGS
+            # Consider adding .with_structured_output(response_schema_dict) if supported and reliable
+            # for Vertex AI integration. This simplifies prompting but might have limitations.
+            # For now, rely on prompt instructions.
         )
 
         # Prepare payload for logging (approximate)
-        # Convert GenerationConfig to a serializable dict first
-        generation_config_log = {}
-        # Use isinstance with the actual type if available, otherwise check attribute existence
-        _GenerationConfigType = globals().get('GenerationConfig', object) # Get actual or dummy type
-        if isinstance(generation_config, _GenerationConfigType) and hasattr(generation_config, 'temperature'):
-             generation_config_log = {
-                 "temperature": getattr(generation_config, 'temperature', None),
-                 "max_output_tokens": getattr(generation_config, 'max_output_tokens', None),
-                 "response_mime_type": getattr(generation_config, 'response_mime_type', None),
-                 # Represent the schema as a string for simplicity in logs
-                 "response_schema": str(getattr(generation_config, 'response_schema', None))
-             }
-        elif isinstance(generation_config, dict): # Handle if it's already a dict (fallback)
-             generation_config_log = generation_config # Use as is if already a dict
-        else:
-             print(f"Warning: Unexpected type for generation_config in logging: {type(generation_config)}")
-             generation_config_log = str(generation_config) # Fallback to string representation
-
         request_payload_for_logging = {
-            "model": model._model_name,
-            "system_instruction": system_instruction,
-            "contents": [ # Simplified representation for logging
-                 {"role": c.role, "parts": [p.text if hasattr(p,'text') else str(type(p)) for p in c.parts]}
-                 for c in contents
+            "model": selected_model_name,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "messages": [ # Simplified representation for logging
+                 {"role": type(m).__name__, "content": str(m.content)[:200] + "..."} # Log type and truncated content
+                 for m in langchain_messages
              ],
-             # Use the serializable dict version for logging
-             "generation_config": generation_config_log
+             "response_schema": response_schema_dict # Log the target schema
          }
-
-        # --- Add detailed logging for raw request ---
-        try:
-            print(f"--- Raw request payload for {task_description} ---")
-            # Use json.dumps for pretty printing, handle potential errors
-            print(json.dumps(request_payload_for_logging, indent=2, default=str)) # Use default=str as fallback
-            print(f"--- End Raw request payload ---")
-        except Exception as req_log_e:
-            print(f"Error logging raw request payload: {req_log_e}")
-            print(f"Payload causing error: {request_payload_for_logging}") # Print the raw dict on error
-        # --- End detailed logging ---
+        logger.debug(f"--- Request payload for {task_description} ---\n{json.dumps(request_payload_for_logging, indent=2, default=str)}\n--- End Request payload ---")
 
 
         # --- Call API ---
-        response_obj = await call_vertex_api_with_retry(
-            cog=cog,
-            model=model,
-            contents=contents,
-            generation_config=generation_config,
-            safety_settings=STANDARD_SAFETY_SETTINGS, # Use standard safety
-            request_desc=task_description
-        )
+        # Add retry logic here if needed, or rely on LangChain's potential built-in retries
+        # Simple retry example:
+        last_exception = None
+        for attempt in range(API_RETRY_ATTEMPTS + 1):
+            try:
+                logger.info(f"Invoking ChatVertexAI for {task_description} (Attempt {attempt + 1}/{API_RETRY_ATTEMPTS + 1})...")
+                ai_response: BaseMessage = await chat_model.ainvoke(langchain_messages)
+                final_response_text = ai_response.content
+                logger.debug(f"--- Raw response content for {task_description} ---\n{final_response_text}\n--- End Raw response content ---")
+                last_exception = None # Clear exception on success
+                break # Exit retry loop on success
+            except (google_exceptions.ResourceExhausted, google_exceptions.InternalServerError, google_exceptions.ServiceUnavailable) as e:
+                last_exception = e
+                logger.warning(f"Retryable API error for {task_description} (Attempt {attempt+1}): {type(e).__name__}: {e}")
+                if attempt < API_RETRY_ATTEMPTS:
+                    wait_time = API_RETRY_DELAY * (2 ** attempt)
+                    logger.info(f"Waiting {wait_time:.2f}s before retrying...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"API request failed for {task_description} after {attempt + 1} attempts.")
+                    break # Max retries reached
+            except Exception as e: # Catch other errors (non-retryable by default)
+                last_exception = e
+                logger.error(f"Non-retryable error invoking ChatVertexAI for {task_description}: {type(e).__name__}: {e}", exc_info=True)
+                final_response_text = None
+                break # Exit loop on non-retryable error
 
-        if not response_obj or not response_obj.candidates:
-            raise Exception("Internal API call returned no response or candidates.")
+        if last_exception:
+             raise Exception(f"Internal API call failed for {task_description} after retries.") from last_exception
+        if final_response_text is None:
+             raise Exception(f"Internal API call for {task_description} resulted in no content.")
+
 
         # --- Parse and Validate ---
-        # This function always expects JSON, so directly use response_obj.text
-        final_response_text = response_obj.text
-        # --- Add detailed logging for raw response text ---
-        print(f"--- Raw response_obj.text for {task_description} ---")
-        print(final_response_text)
-        print(f"--- End Raw response_obj.text ---")
-        # --- End detailed logging ---
-        print(f"Parsing ({task_description}): Using response_obj.text for JSON.")
-
         final_parsed_data = parse_and_validate_json_response(
             final_response_text, response_schema_dict, f"internal task ({task_description})"
         )
 
         if final_parsed_data is None:
-            print(f"Warning: Internal task '{task_description}' failed JSON validation.")
+            logger.error(f"Internal task '{task_description}' failed JSON validation. Raw response: {final_response_text}")
             # No re-prompting for internal tasks, just return None
 
     except Exception as e:
-        print(f"Error in get_internal_ai_json_response ({task_description}): {type(e).__name__}: {e}")
-        error_occurred = e
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error in get_internal_ai_json_response ({task_description}): {type(e).__name__}: {e}", exc_info=True)
+        error_occurred = e # Capture the exception object
         final_parsed_data = None
     finally:
-        # Log the call
+        # Log the call using the utility function
+        elapsed_time = time.monotonic() - start_time
         try:
             # Pass the simplified payload for logging
-            await log_internal_api_call(cog, task_description, request_payload_for_logging, final_parsed_data, error_occurred)
+            await log_internal_api_call(cog, task_description, request_payload_for_logging, final_parsed_data, error_occurred, elapsed_time)
         except Exception as log_e:
-            print(f"Error logging internal API call: {log_e}")
+            logger.error(f"Error logging internal API call: {log_e}", exc_info=True)
 
     return final_parsed_data
