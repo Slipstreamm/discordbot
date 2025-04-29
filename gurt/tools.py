@@ -1199,11 +1199,11 @@ TOOL_MAPPING = {
     "get_conversation_summary": get_conversation_summary,
     "get_message_context": get_message_context,
     "web_search": web_search,
-    # Point memory tools to the methods on the MemoryManager instance (accessed via cog)
-    "remember_user_fact": lambda cog, **kwargs: cog.memory_manager.add_user_fact(**kwargs),
-    "get_user_facts": lambda cog, **kwargs: cog.memory_manager.get_user_facts(**kwargs),
-    "remember_general_fact": lambda cog, **kwargs: cog.memory_manager.add_general_fact(**kwargs),
-    "get_general_facts": lambda cog, **kwargs: cog.memory_manager.get_general_facts(**kwargs),
+    # Memory tools using direct function references
+    "remember_user_fact": remember_user_fact,
+    "get_user_facts": get_user_facts,
+    "remember_general_fact": remember_general_fact,
+    "get_general_facts": get_general_facts,
     "timeout_user": timeout_user,
     "calculate": calculate,
     "run_python_code": run_python_code,

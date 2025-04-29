@@ -243,11 +243,14 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 functools.update_wrapper(partial_tool_func, tool_func)
 
                 # LangchainAgent expects Tool objects or functions decorated with @tool
-                # Passing the partial function *might* work if it retains enough metadata.
-                # If not, we'd need to manually create Tool objects:
-                # prepared_tools.append(Tool(name=tool_name, func=partial_tool_func, description=tool_func.__doc__))
-                # For now, let's try passing the partial function directly.
-                prepared_tools.append(partial_tool_func)
+                # Wrap the partial function in a LangchainTool object
+                # LangChain uses the function's __name__, __doc__, and type hints
+                prepared_tools.append(LangchainTool(
+                    name=tool_name, # Explicitly provide the name from mapping
+                    func=partial_tool_func,
+                    description=tool_func.__doc__ or f"Executes the {tool_name} tool.", # Use docstring or fallback
+                    # LangChain should infer args_schema from type hints on tool_func
+                ))
             except Exception as tool_prep_e:
                  logger.error(f"Error preparing tool '{tool_name}': {tool_prep_e}", exc_info=True)
                  # Optionally skip this tool
