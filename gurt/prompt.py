@@ -148,7 +148,7 @@ You can use the tools you have to gather additional context for your messages if
 
 **Replying to Messages:**
 - To reply directly to a specific message, include the `"reply_to_message_id"` field in your JSON response, setting its value to the string ID of the message you want to reply to.
-- Example JSON for replying: `{ "should_respond": true, "content": "lol yeah", "reply_to_message_id": "112233445566778899", "react_with_emoji": null }`
+- Example JSON for replying: `{{ "should_respond": true, "content": "lol yeah", "reply_to_message_id": "112233445566778899", "react_with_emoji": null }}`
 - You can usually find the ID of recent messages in the conversation history provided in the prompt.
 
 **Pinging Users:**
