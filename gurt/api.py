@@ -232,36 +232,48 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         ])
 
         # --- 2. Prepare Tools ---
-        # Collect decorated tool functions from the TOOL_MAPPING
-        # The @tool decorator handles schema generation and description.
-        # We still need to bind the 'cog' instance to each tool call.
+        # Create LangchainTool objects from decorated functions, ensuring 'cog' is passed.
         prepared_tools = []
-        for tool_name, tool_func in TOOL_MAPPING.items():
-            # Check if the function is actually decorated (optional, but good practice)
-            # The @tool decorator adds attributes like .name, .description, .args_schema
-            if not hasattr(tool_func, 'is_lc_tool') and not hasattr(tool_func, 'name'):
-                 # Skip functions not decorated with @tool, or internal/experimental ones
-                 if tool_name not in ["create_new_tool", "execute_internal_command", "_check_command_safety"]:
-                     logger.warning(f"Tool function '{tool_name}' in TOOL_MAPPING is missing the @tool decorator. Skipping.")
-                 continue
+        for tool_name, original_tool_func in TOOL_MAPPING.items():
+            # Check if the function is decorated and has the necessary attributes
+            if not hasattr(original_tool_func, 'is_lc_tool') and not hasattr(original_tool_func, 'name'):
+                if tool_name not in ["create_new_tool", "execute_internal_command", "_check_command_safety"]:
+                    logger.warning(f"Tool function '{tool_name}' in TOOL_MAPPING is missing the @tool decorator or required attributes. Skipping.")
+                continue
 
             try:
-                # Create a partial function that includes the 'cog' instance
-                # Langchain agents can often handle partial functions directly.
-                # The agent will call this partial, which in turn calls the original tool with 'cog'.
-                # The @tool decorator ensures Langchain gets the correct signature from the *original* func.
-                tool_with_cog = functools.partial(tool_func, cog)
+                # Define a wrapper that closes over the original function and cog
+                # This wrapper will be the 'func' or 'coroutine' for the LangchainTool
+                if asyncio.iscoroutinefunction(original_tool_func):
+                    # Wrapper for async functions
+                    async def async_tool_wrapper(*args, **kwargs):
+                        # Call the original async tool function with cog
+                        return await original_tool_func(cog, *args, **kwargs)
+                    # Assign the wrapper to the coroutine argument
+                    tool_callable = async_tool_wrapper
+                    is_async = True
+                else:
+                    # Wrapper for sync functions
+                    def sync_tool_wrapper(*args, **kwargs):
+                        # Call the original sync tool function with cog
+                        return original_tool_func(cog, *args, **kwargs)
+                    # Assign the wrapper to the func argument
+                    tool_callable = sync_tool_wrapper
+                    is_async = False
 
-                # Copy essential attributes from the original decorated tool function to the partial
-                # This helps ensure the agent framework recognizes it correctly.
-                functools.update_wrapper(tool_with_cog, tool_func)
-
-                # Add the partial function (which now includes cog) to the list
-                prepared_tools.append(tool_with_cog)
-                logger.debug(f"Prepared tool '{tool_name}' with cog instance bound.")
+                # Create the LangchainTool instance using metadata from the decorated function
+                lc_tool = LangchainTool(
+                    name=getattr(original_tool_func, 'name', tool_name), # Use decorated name if available
+                    description=getattr(original_tool_func, 'description', 'No description provided.'), # Use decorated desc
+                    args_schema=getattr(original_tool_func, 'args_schema', None), # Use decorated schema
+                    func=tool_callable if not is_async else None, # Assign sync wrapper to func
+                    coroutine=tool_callable if is_async else None # Assign async wrapper to coroutine
+                )
+                prepared_tools.append(lc_tool)
+                logger.debug(f"Prepared LangchainTool '{lc_tool.name}' (Async: {is_async})")
 
             except Exception as tool_prep_e:
-                 logger.error(f"Error preparing tool '{tool_name}' with functools.partial: {tool_prep_e}", exc_info=True)
+                 logger.error(f"Error preparing LangchainTool for '{tool_name}': {tool_prep_e}", exc_info=True)
                  # Optionally skip this tool
 
         # --- 3. Prepare Chat History Factory ---
