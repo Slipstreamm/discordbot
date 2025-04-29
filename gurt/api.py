@@ -658,7 +658,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         # --- Config for checking tool calls within the loop (using model_with_tools) ---
         # No schema enforcement needed here, just checking for function calls
         generation_config_tool_check = GenerationConfig(
-            temperature=0.75, # Or desired temp for tool reasoning
+            temperature=0.5, # Or desired temp for tool reasoning
             max_output_tokens=10000 # Allow ample tokens for reasoning + function call
         )
         # Force *any* tool use if the model deems it necessary
@@ -802,7 +802,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 # Use the model_without_tools instance
                 processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
                 generation_config_final_json = GenerationConfig(
-                    temperature=0.75, # Or desired final temp
+                    temperature=0.6, # Or desired final temp
                     max_output_tokens=10000, # Or desired final max tokens
                     response_mime_type="application/json",
                     response_schema=processed_response_schema
@@ -985,8 +985,8 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
         # Preprocess the schema before passing it to GenerationConfig
         processed_response_schema_proactive = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
         generation_config_final = GenerationConfig(
-            temperature=0.8, # Use original proactive temp
-            max_output_tokens=200,
+            temperature=0.6, # Use original proactive temp
+            max_output_tokens=2000,
             response_mime_type="application/json",
             response_schema=processed_response_schema_proactive # Use preprocessed schema
         )

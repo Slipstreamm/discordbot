@@ -647,11 +647,11 @@ async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, An
         cog=cog,
         prompt_messages=prompt_messages,
         task_description="Command Safety Check",
-        response_schema_dict=safety_schema, # Pass the schema dict directly
-        model_name=SAFETY_CHECK_MODEL,
-        temperature=0.1,
-        max_tokens=150
-    )
+         response_schema_dict=safety_schema, # Pass the schema dict directly
+         model_name=SAFETY_CHECK_MODEL,
+         temperature=0.1,
+         max_tokens=1000 # Increased token limit
+     )
 
     # --- Log the raw response text ---
     print(f"--- Raw AI Safety Check Response Text ---\n{safety_response_raw}\n---------------------------------------")
@@ -1055,7 +1055,7 @@ async def create_new_tool(cog: commands.Cog, tool_name: str, description: str, p
         response_schema_dict=generation_schema,
         model_name=cog.default_model, # Use default model for generation
         temperature=0.3, # Lower temperature for more predictable code
-        max_tokens=1500 # Allow ample space for code generation
+        max_tokens=5000 # Allow ample space for code generation
     )
     # Unpack the tuple, we only need the parsed data here
     generated_parsed_data, _ = generated_data if generated_data else (None, None)
