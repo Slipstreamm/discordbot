@@ -814,8 +814,8 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
         # Tool config for the loop (allow any tool call)
         tool_config_any = types.ToolConfig(
-            function_calling_config=types.ToolConfig.FunctionCallingConfig(
-                mode=types.ToolConfig.FunctionCallingConfig.Mode.ANY # Use ANY to allow model to call tools
+            function_calling_config=types.FunctionCallingConfig(
+                mode=types.FunctionCallingConfigMode.ANY # Use ANY to allow model to call tools
             )
         ) if vertex_tool else None
 
