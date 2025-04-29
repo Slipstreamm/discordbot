@@ -692,12 +692,12 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                  continue
             # Handle potential multimodal content in history (if stored that way)
             if isinstance(msg.get("content"), list):
-                 parts = [types.Part.from_text(part["text"]) if part["type"] == "text" else types.Part.from_uri(part["image_url"]["url"], mime_type=part["image_url"]["url"].split(";")[0].split(":")[1]) if part["type"] == "image_url" else None for part in msg["content"]]
+                 parts = [types.Part(text=part["text"]) if part["type"] == "text" else types.Part(uri=part["image_url"]["url"], mime_type=part["image_url"]["url"].split(";")[0].split(":")[1]) if part["type"] == "image_url" else None for part in msg["content"]]
                  parts = [p for p in parts if p] # Filter out None parts
                  if parts:
                      contents.append(types.Content(role=role, parts=parts))
             elif isinstance(msg.get("content"), str):
-                 contents.append(types.Content(role=role, parts=[types.Part.from_text(msg["content"])]))
+                 contents.append(types.Content(role=role, parts=[types.Part(text=msg["content"])]))
 
 
         # --- Prepare the current message content (potentially multimodal) ---
@@ -723,7 +723,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             mentions_str = ", ".join([f"{m['display_name']}(id:{m['id']})" for m in formatted_current_message["mentioned_users_details"]])
             text_content += f"\n(Message Details: Mentions=[{mentions_str}])"
 
-        current_message_parts.append(types.Part.from_text(text_content))
+        current_message_parts.append(types.Part(text=text_content))
         # --- End text content construction ---
 
         if message.attachments:
@@ -750,23 +750,23 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                     try:
                         # 1. Add text part instructing AI about the file
                         instruction_text = f"User attached a file: '{filename}' (Type: {mime_type}). Analyze this file from the following URI and incorporate your understanding into your response."
-                        current_message_parts.append(types.Part.from_text(instruction_text))
+                        current_message_parts.append(types.Part(text=instruction_text))
                         print(f"Added text instruction for attachment: {filename}")
 
                         # 2. Add the URI part
                         # Ensure mime_type doesn't contain parameters like '; charset=...' if the API doesn't like them
                         clean_mime_type = mime_type.split(';')[0]
-                        current_message_parts.append(types.Part.from_uri(uri=file_url, mime_type=clean_mime_type))
+                        current_message_parts.append(types.Part(uri=file_url, mime_type=clean_mime_type))
                         print(f"Added URI part for attachment: {filename} ({clean_mime_type}) using URL: {file_url}")
 
                     except Exception as e:
                         print(f"Error creating types.Part for attachment {filename} ({mime_type}): {e}")
                         # Optionally add a text part indicating the error
-                        current_message_parts.append(types.Part.from_text(f"(System Note: Failed to process attachment '{filename}' - {e})"))
+                        current_message_parts.append(types.Part(text=f"(System Note: Failed to process attachment '{filename}' - {e})"))
                 else:
                     print(f"Skipping unsupported or invalid attachment: {filename} (Type: {mime_type}, URL: {file_url})")
                     # Optionally inform the AI that an unsupported file was attached
-                    current_message_parts.append(types.Part.from_text(f"(System Note: User attached an unsupported file '{filename}' of type '{mime_type}' which cannot be processed.)"))
+                    current_message_parts.append(types.Part(text=f"(System Note: User attached an unsupported file '{filename}' of type '{mime_type}' which cannot be processed.)"))
 
 
         # Ensure there's always *some* content part, even if only text or errors
@@ -774,7 +774,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             contents.append(types.Content(role="user", parts=current_message_parts))
         else:
             print("Warning: No content parts generated for user message.")
-            contents.append(types.Content(role="user", parts=[types.Part.from_text("")])) # Ensure content list isn't empty
+            contents.append(types.Content(role="user", parts=[types.Part(text="")])) # Ensure content list isn't empty
 
         # --- Prepare Tools ---
         # Convert FunctionDeclarations from config.py (TOOLS) into a Tool object
@@ -1113,7 +1113,7 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
         ]
         # Add the final instruction
         proactive_contents.append(
-             types.Content(role="user", parts=[types.Part.from_text(
+             types.Content(role="user", parts=[types.Part(text=
                  f"Generate the response based on your plan. **CRITICAL: Your response MUST be ONLY the raw JSON object matching this schema:**\n\n{json.dumps(RESPONSE_SCHEMA['schema'], indent=2)}\n\n**Ensure nothing precedes or follows the JSON.**"
              )])
         )
@@ -1252,25 +1252,25 @@ async def get_internal_ai_json_response(
 
             if isinstance(content_value, str):
                 # Handle simple string content
-                message_parts.append(types.Part.from_text(content_value))
+                message_parts.append(types.Part(text=content_value))
             elif isinstance(content_value, list):
                 # Handle list content (e.g., multimodal from ProfileUpdater)
                 for part_data in content_value:
                     part_type = part_data.get("type")
                     if part_type == "text":
                         text = part_data.get("text", "")
-                        message_parts.append(types.Part.from_text(text))
+                        message_parts.append(types.Part(text=text))
                     elif part_type == "image_data":
                         mime_type = part_data.get("mime_type")
                         base64_data = part_data.get("data")
                         if mime_type and base64_data:
                             try:
                                 image_bytes = base64.b64decode(base64_data)
-                                message_parts.append(types.Part.from_data(data=image_bytes, mime_type=mime_type))
+                                message_parts.append(types.Part(data=image_bytes, mime_type=mime_type))
                             except Exception as decode_err:
                                 print(f"Error decoding/adding image part in get_internal_ai_json_response: {decode_err}")
                                 # Optionally add a placeholder text part indicating failure
-                                message_parts.append(types.Part.from_text("(System Note: Failed to process an image part)"))
+                                message_parts.append(types.Part(text="(System Note: Failed to process an image part)"))
                         else:
                              print("Warning: image_data part missing mime_type or data.")
                     else:
@@ -1292,9 +1292,9 @@ async def get_internal_ai_json_response(
             f"**Ensure nothing precedes or follows the JSON.**"
         )
         if contents and contents[-1].role == "user":
-             contents[-1].parts.append(types.Part.from_text(f"\n\n{json_instruction_content}"))
+             contents[-1].parts.append(types.Part(text=f"\n\n{json_instruction_content}"))
         else:
-             contents.append(types.Content(role="user", parts=[types.Part.from_text(json_instruction_content)]))
+             contents.append(types.Content(role="user", parts=[types.Part(text=json_instruction_content)]))
 
 
         # --- Determine Model ---
