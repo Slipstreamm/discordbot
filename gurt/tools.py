@@ -689,7 +689,7 @@ async def remove_timeout(cog: commands.Cog, user_id: str, reason: Optional[str] 
     except discord.HTTPException as e: print(f"API error remove timeout {user_id}: {e}"); return {"error": f"API error remove timeout {user_id}: {e}"}
     except Exception as e: print(f"Unexpected error remove timeout {user_id}: {e}"); traceback.print_exc(); return {"error": f"Unexpected error remove timeout {user_id}: {str(e)}"}
 
-async def calculate(cog: commands.Cog, expression: str) -> Dict[str, Any]:
+def calculate(cog: commands.Cog, expression: str) -> Dict[str, Any]:
     """
     Evaluates a mathematical expression using the asteval library. Supports common math functions.
 
