@@ -42,51 +42,7 @@ async def on_ready_listener(cog: 'GurtCog'):
         import traceback
         traceback.print_exc()
 
-    # --- Pre-load message history ---
-    print("GurtCog: Starting to pre-load message history for accessible channels...")
-    loaded_count = 0
-    skipped_count = 0
-    error_count = 0
-    start_time = time.time()
-    for guild in cog.bot.guilds:
-        for channel in guild.text_channels:
-            # Check permissions
-            perms = channel.permissions_for(guild.me)
-            if perms.read_message_history and perms.read_messages:
-                try:
-                    print(f"GurtCog: Loading history for #{channel.name} in {guild.name}...")
-                    history = []
-                    async for msg in channel.history(limit=CONTEXT_WINDOW_SIZE, oldest_first=False):
-                        # Avoid adding messages already potentially cached by recent activity during startup
-                        if msg.id not in [m['id'] for m in cog.message_cache['by_channel'].get(channel.id, [])]:
-                            history.append(format_message(cog, msg)) # Use imported function
-
-                    # Prepend history (oldest messages first in deque)
-                    # The history is fetched newest first, so reverse it before extending
-                    history.reverse()
-                    cog.message_cache['by_channel'][channel.id].extendleft(history) # Use extendleft to add to the beginning
-                    if history:
-                        print(f"GurtCog: Loaded {len(history)} messages for #{channel.name}.")
-                        loaded_count += 1
-                    else:
-                        print(f"GurtCog: No new messages found to load for #{channel.name}.")
-                        skipped_count += 1 # Count channels where no *new* history was loaded
-
-                except discord.Forbidden:
-                    print(f"GurtCog: Permission denied (Forbidden) for #{channel.name} in {guild.name}.")
-                    error_count += 1
-                except discord.HTTPException as e:
-                    print(f"GurtCog: HTTP error loading history for #{channel.name} in {guild.name}: {e}")
-                    error_count += 1
-                except Exception as e:
-                    print(f"GurtCog: Unexpected error loading history for #{channel.name} in {guild.name}: {e}")
-                    error_count += 1
-            else:
-                # print(f"GurtCog: Skipping #{channel.name} in {guild.name} due to missing permissions.") # Too verbose maybe
-                skipped_count += 1
-    end_time = time.time()
-    print(f"GurtCog: Finished pre-loading history. Loaded: {loaded_count}, Skipped/No New: {skipped_count}, Errors: {error_count}. Took {end_time - start_time:.2f}s.")
-    # --- End Pre-load ---
+    # --- Message history pre-loading removed ---
 
 
 async def on_message_listener(cog: 'GurtCog', message: discord.Message):
