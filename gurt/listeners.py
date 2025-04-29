@@ -165,9 +165,10 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
                 "guild_id": str(message.guild.id) if message.guild else None,
                 "timestamp": message.created_at.timestamp()
             }
+            # Pass the entire formatted_message dictionary now
             asyncio.create_task(
                 cog.memory_manager.add_message_embedding(
-                    message_id=str(message.id), text=message.content, metadata=semantic_metadata
+                    message_id=str(message.id), formatted_message_data=formatted_message, metadata=semantic_metadata
                 )
             )
 

@@ -734,19 +734,42 @@ class MemoryManager:
 
     # --- Semantic Memory Methods (ChromaDB) ---
 
-    async def add_message_embedding(self, message_id: str, text: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Generates embedding and stores a message in ChromaDB."""
+    async def add_message_embedding(self, message_id: str, formatted_message_data: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generates embedding and stores a message (including attachment descriptions)
+        in ChromaDB.
+        """
         if not self.semantic_collection:
             return {"error": "Semantic memory (ChromaDB) is not initialized."}
-        if not text:
-             return {"error": "Cannot add empty text to semantic memory."}
 
-        logger.info(f"Adding message {message_id} to semantic memory.")
+        # Construct the text to embed: content + attachment descriptions
+        text_to_embed_parts = []
+        if formatted_message_data.get('content'):
+            text_to_embed_parts.append(formatted_message_data['content'])
+
+        attachment_descs = formatted_message_data.get('attachment_descriptions', [])
+        if attachment_descs:
+            # Add a separator if there's content AND attachments
+            if text_to_embed_parts:
+                 text_to_embed_parts.append("\n") # Add newline separator
+            # Append descriptions
+            for att in attachment_descs:
+                text_to_embed_parts.append(att.get('description', ''))
+
+        text_to_embed = " ".join(text_to_embed_parts).strip()
+
+        if not text_to_embed:
+             # This might happen if a message ONLY contains attachments and no text content,
+             # but format_message should always produce descriptions. Log if empty.
+             logger.warning(f"Message {message_id} resulted in empty text_to_embed. Original data: {formatted_message_data}")
+             return {"error": "Cannot add empty derived text to semantic memory."}
+
+        logger.info(f"Adding message {message_id} to semantic memory (including attachments).")
         try:
             # ChromaDB expects lists for inputs
             await asyncio.to_thread(
                 self.semantic_collection.add,
-                documents=[text],
+                documents=[text_to_embed], # Embed the combined text
                 metadatas=[metadata],
                 ids=[message_id]
             )

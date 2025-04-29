@@ -25,8 +25,35 @@ def gather_conversation_context(cog: 'GurtCog', channel_id: int, current_message
 
         for msg_data in context_messages_data:
             role = "assistant" if msg_data['author']['id'] == str(cog.bot.user.id) else "user"
-            # Simplified content for context
-            content = f"{msg_data['author']['display_name']}: {msg_data['content']}"
+
+            # Build the content string, including reply and attachment info
+            content_parts = []
+            author_name = msg_data['author']['display_name']
+
+            # Add reply prefix if applicable
+            if msg_data.get("is_reply"):
+                reply_author = msg_data.get('replied_to_author_name', 'Unknown User')
+                reply_snippet = msg_data.get('replied_to_content_snippet', '...')
+                # Keep snippet very short for context
+                reply_snippet_short = (reply_snippet[:25] + '...') if len(reply_snippet) > 28 else reply_snippet
+                content_parts.append(f"{author_name} (replying to {reply_author} '{reply_snippet_short}'):")
+            else:
+                content_parts.append(f"{author_name}:")
+
+            # Add main message content
+            if msg_data.get('content'):
+                content_parts.append(msg_data['content'])
+
+            # Add attachment descriptions
+            attachments = msg_data.get("attachment_descriptions", [])
+            if attachments:
+                # Join descriptions into a single string
+                attachment_str = " ".join([att['description'] for att in attachments])
+                content_parts.append(attachment_str)
+
+            # Join all parts with spaces
+            content = " ".join(content_parts).strip()
+
             context_api_messages.append({"role": role, "content": content})
     return context_api_messages
 
@@ -161,6 +188,30 @@ async def get_memory_context(cog: 'GurtCog', message: discord.Message) -> Option
                     semantic_memory_parts.append(f"- (Similarity: {similarity_score:.2f}) {author_name} (at {timestamp_str}): {doc[:100]}")
                 if len(semantic_memory_parts) > 1: memory_parts.append("\n".join(semantic_memory_parts))
     except Exception as e: print(f"Error retrieving semantic memory context: {e}")
+
+    # 10. Add information about recent attachments
+    try:
+        channel_messages = cog.message_cache['by_channel'].get(channel_id, [])
+        messages_with_attachments = [msg for msg in channel_messages if msg.get("attachment_descriptions")]
+        if messages_with_attachments:
+            recent_attachments = messages_with_attachments[-5:] # Get last 5
+            attachment_memory_parts = ["Recently Shared Files/Images:"]
+            for msg in recent_attachments:
+                author_name = msg.get('author', {}).get('display_name', 'Unknown User')
+                timestamp_str = 'Unknown time'
+                try:
+                    # Safely parse timestamp
+                    if msg.get('created_at'):
+                        timestamp_str = datetime.datetime.fromisoformat(msg['created_at']).strftime('%H:%M')
+                except ValueError: pass # Ignore invalid timestamp format
+
+                descriptions = " ".join([att['description'] for att in msg.get('attachment_descriptions', [])])
+                attachment_memory_parts.append(f"- By {author_name} (at {timestamp_str}): {descriptions}")
+
+            if len(attachment_memory_parts) > 1:
+                memory_parts.append("\n".join(attachment_memory_parts))
+    except Exception as e: print(f"Error retrieving recent attachments for memory context: {e}")
+
 
     if not memory_parts: return None
     memory_context_str = "--- Memory Context ---\n" + "\n\n".join(memory_parts) + "\n--- End Memory Context ---"

@@ -21,38 +21,72 @@ def replace_mentions_with_names(cog: 'GurtCog', content: str, message: discord.M
         return content
 
     processed_content = content
+    # Sort by length of ID to handle potential overlaps correctly (longer IDs first)
+    # Although Discord IDs are fixed length, this is safer if formats change
     sorted_mentions = sorted(message.mentions, key=lambda m: len(str(m.id)), reverse=True)
 
     for member in sorted_mentions:
+        # Use display_name for better readability
         processed_content = processed_content.replace(f'<@{member.id}>', member.display_name)
-        processed_content = processed_content.replace(f'<@!{member.id}>', member.display_name)
+        processed_content = processed_content.replace(f'<@!{member.id}>', member.display_name) # Handle nickname mention format
     return processed_content
 
-def format_message(cog: 'GurtCog', message: discord.Message) -> Dict[str, Any]:
-    """Helper function to format a discord.Message object into a dictionary."""
-    processed_content = replace_mentions_with_names(cog, message.content, message) # Pass cog
-    mentioned_users_details = [
-        {"id": str(m.id), "name": m.name, "display_name": m.display_name}
-        for m in message.mentions
-    ]
+def _format_attachment_size(size_bytes: int) -> str:
+    """Formats attachment size into KB or MB."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
 
+def format_message(cog: 'GurtCog', message: discord.Message) -> Dict[str, Any]:
+    """
+    Helper function to format a discord.Message object into a dictionary,
+    including detailed reply info and attachment descriptions.
+    """
+    # Process content first to replace mentions
+    processed_content = replace_mentions_with_names(cog, message.content, message) # Pass cog
+
+    # --- Attachment Processing ---
+    attachment_descriptions = []
+    for a in message.attachments:
+        size_str = _format_attachment_size(a.size)
+        file_type = "Image" if a.content_type and a.content_type.startswith("image/") else "File"
+        description = f"[{file_type}: {a.filename} ({a.content_type or 'unknown type'}, {size_str})]"
+        attachment_descriptions.append({
+            "description": description,
+            "filename": a.filename,
+            "content_type": a.content_type,
+            "size": a.size,
+            "url": a.url # Keep URL for potential future use (e.g., vision model)
+        })
+    # --- End Attachment Processing ---
+
+    # Basic message structure
     formatted_msg = {
         "id": str(message.id),
         "author": {
-            "id": str(message.author.id), "name": message.author.name,
-            "display_name": message.author.display_name, "bot": message.author.bot
+            "id": str(message.author.id),
+            "name": message.author.name,
+            "display_name": message.author.display_name,
+            "bot": message.author.bot
         },
-        "content": processed_content,
+        "content": processed_content, # Use processed content
         "created_at": message.created_at.isoformat(),
-        "attachments": [{"filename": a.filename, "url": a.url} for a in message.attachments],
+        "attachment_descriptions": attachment_descriptions, # Use new descriptions list
+        # "attachments": [{"filename": a.filename, "url": a.url} for a in message.attachments], # REMOVED old field
         "embeds": len(message.embeds) > 0,
-        "mentions": [{"id": str(m.id), "name": m.name} for m in message.mentions], # Keep original simple list too
-        "mentioned_users_details": mentioned_users_details,
-        "replied_to_message_id": None, "replied_to_author_id": None,
-        "replied_to_author_name": None, "replied_to_content": None,
+        "mentions": [{"id": str(m.id), "name": m.name, "display_name": m.display_name} for m in message.mentions], # Keep detailed mentions
+        # Reply fields initialized
+        "replied_to_message_id": None,
+        "replied_to_author_id": None,
+        "replied_to_author_name": None,
+        "replied_to_content_snippet": None, # Changed field name for clarity
         "is_reply": False
     }
 
+    # --- Reply Processing ---
     if message.reference and message.reference.message_id:
         formatted_msg["replied_to_message_id"] = str(message.reference.message_id)
         formatted_msg["is_reply"] = True
@@ -61,14 +95,21 @@ def format_message(cog: 'GurtCog', message: discord.Message) -> Dict[str, Any]:
         if isinstance(ref_msg, discord.Message): # Check if resolved is a Message
             formatted_msg["replied_to_author_id"] = str(ref_msg.author.id)
             formatted_msg["replied_to_author_name"] = ref_msg.author.display_name
-            formatted_msg["replied_to_content"] = ref_msg.content
+            # Create a snippet of the replied-to content
+            snippet = ref_msg.content
+            if len(snippet) > 80: # Truncate long replies
+                snippet = snippet[:77] + "..."
+            formatted_msg["replied_to_content_snippet"] = snippet
         # else: print(f"Referenced message {message.reference.message_id} not resolved.") # Optional debug
+    # --- End Reply Processing ---
 
     return formatted_msg
 
 def update_relationship(cog: 'GurtCog', user_id_1: str, user_id_2: str, change: float):
     """Updates the relationship score between two users."""
+    # Ensure consistent key order
     if user_id_1 > user_id_2: user_id_1, user_id_2 = user_id_2, user_id_1
+    # Initialize user_id_1's dict if not present
     if user_id_1 not in cog.user_relationships: cog.user_relationships[user_id_1] = {}
 
     current_score = cog.user_relationships[user_id_1].get(user_id_2, 0.0)
@@ -81,8 +122,17 @@ async def simulate_human_typing(cog: 'GurtCog', channel, text: str):
     # Minimal delay to ensure the typing indicator shows up reliably
     # but doesn't add noticeable latency to the response.
     # The actual sending of the message happens immediately after this.
-    async with channel.typing():
-        await asyncio.sleep(0.1) # Very short sleep, just to ensure typing shows
+    # Check if the bot has permissions to send messages and type
+    perms = channel.permissions_for(channel.guild.me) if isinstance(channel, discord.TextChannel) else None
+    if perms is None or (perms.send_messages and perms.send_tts_messages): # send_tts_messages often implies typing allowed
+        try:
+            async with channel.typing():
+                await asyncio.sleep(0.1) # Very short sleep, just to ensure typing shows
+        except discord.Forbidden:
+            print(f"Warning: Missing permissions to type in channel {channel.id}")
+        except Exception as e:
+            print(f"Warning: Error during typing simulation in {channel.id}: {e}")
+    # else: print(f"Skipping typing simulation in {channel.id} due to missing permissions.") # Optional debug
 
 async def log_internal_api_call(cog: 'GurtCog', task_description: str, payload: Dict[str, Any], response_data: Optional[Dict[str, Any]], error: Optional[Exception] = None):
     """Helper function to log internal API calls to a file."""
@@ -117,6 +167,8 @@ async def log_internal_api_call(cog: 'GurtCog', task_description: str, payload: 
         if error: log_entry += f"Error: {str(error)}\n"
         log_entry += "---\n\n"
 
+        # Use async file writing if in async context, but this helper might be called from sync code?
+        # Sticking to sync file I/O for simplicity here, assuming logging isn't performance critical path.
         with open(log_file, "a", encoding="utf-8") as f: f.write(log_entry)
     except Exception as log_e: print(f"!!! Failed to write to internal API log file {log_file}: {log_e}")
 
