@@ -232,46 +232,36 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         ])
 
         # --- 2. Prepare Tools ---
-        # Create wrappers for tools to include the 'cog' instance
+        # Collect decorated tool functions from the TOOL_MAPPING
+        # The @tool decorator handles schema generation and description.
+        # We still need to bind the 'cog' instance to each tool call.
         prepared_tools = []
         for tool_name, tool_func in TOOL_MAPPING.items():
+            # Check if the function is actually decorated (optional, but good practice)
+            # The @tool decorator adds attributes like .name, .description, .args_schema
+            if not hasattr(tool_func, 'is_lc_tool') and not hasattr(tool_func, 'name'):
+                 # Skip functions not decorated with @tool, or internal/experimental ones
+                 if tool_name not in ["create_new_tool", "execute_internal_command", "_check_command_safety"]:
+                     logger.warning(f"Tool function '{tool_name}' in TOOL_MAPPING is missing the @tool decorator. Skipping.")
+                 continue
+
             try:
-                # Define a wrapper function that captures cog and calls the original tool
-                # This wrapper will have the correct signature for Langchain to inspect
-                def create_wrapper(func_to_wrap, current_cog):
-                    # Define the actual wrapper that Langchain will call
-                    # It accepts the arguments Langchain extracts based on the original function's signature
-                    def tool_wrapper(*args, **kwargs):
-                        # Call the original tool function with cog as the first argument
-                        # Pass through the arguments received from Langchain
-                        return func_to_wrap(current_cog, *args, **kwargs)
-                    # Copy metadata for Langchain schema generation from the original function
-                    functools.update_wrapper(tool_wrapper, func_to_wrap)
-                    # Ensure the wrapper has the correct name for the tool mapping/introspection
-                    # Note: Langchain might use the name attribute if wrapped in LangchainTool later
-                    tool_wrapper.__name__ = func_to_wrap.__name__
-                    return tool_wrapper
+                # Create a partial function that includes the 'cog' instance
+                # Langchain agents can often handle partial functions directly.
+                # The agent will call this partial, which in turn calls the original tool with 'cog'.
+                # The @tool decorator ensures Langchain gets the correct signature from the *original* func.
+                tool_with_cog = functools.partial(tool_func, cog)
 
-                # Create the specific wrapper for this tool, capturing the current cog
-                wrapped_tool_func = create_wrapper(tool_func, cog)
+                # Copy essential attributes from the original decorated tool function to the partial
+                # This helps ensure the agent framework recognizes it correctly.
+                functools.update_wrapper(tool_with_cog, tool_func)
 
-                # Pass the wrapped function directly to the agent's tool list.
-                # LangchainAgent should be able to handle functions directly.
-                # We explicitly provide the name in the LangchainTool wrapper below for clarity if needed.
-                # For now, let's try passing the function itself, relying on Langchain's introspection.
-                # If issues persist, wrap in LangchainTool:
-                prepared_tools.append(LangchainTool(
-                     name=tool_name, # Use the key from TOOL_MAPPING as the definitive name
-                     func=wrapped_tool_func, # Pass the wrapper function
-                     description=tool_func.__doc__ or f"Executes the {tool_name} tool.", # Use original docstring
-                     # LangChain should infer args_schema from the *original* tool_func's type hints
-                     # because functools.update_wrapper copies the signature.
-                 ))
-                # Simpler alternative (try if the above fails):
-                # prepared_tools.append(wrapped_tool_func)
+                # Add the partial function (which now includes cog) to the list
+                prepared_tools.append(tool_with_cog)
+                logger.debug(f"Prepared tool '{tool_name}' with cog instance bound.")
 
             except Exception as tool_prep_e:
-                 logger.error(f"Error preparing tool '{tool_name}': {tool_prep_e}", exc_info=True)
+                 logger.error(f"Error preparing tool '{tool_name}' with functools.partial: {tool_prep_e}", exc_info=True)
                  # Optionally skip this tool
 
         # --- 3. Prepare Chat History Factory ---
