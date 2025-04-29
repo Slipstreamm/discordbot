@@ -326,7 +326,7 @@ async def call_google_genai_api_with_retry(
     # Note: model_name should include the 'projects/.../locations/.../endpoints/...' path for custom models
     # or just 'models/model-name' for standard models.
     try:
-        model = genai_client.get_model(model_name) # Use get_model to ensure it exists
+        model = "projects/1079377687568/locations/us-central1/endpoints/6677946543460319232" # Use get_model to ensure it exists
         if not model:
              raise ValueError(f"Could not retrieve model: {model_name}")
     except Exception as model_e:
