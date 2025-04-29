@@ -116,24 +116,43 @@ def _preprocess_schema_for_vertex(schema: Dict[str, Any]) -> Dict[str, Any]:
 # --- Helper Function to Safely Extract Text ---
 def _get_response_text(response: Optional['GenerationResponse']) -> Optional[str]:
     """Safely extracts the text content from the first text part of a GenerationResponse."""
-    if not response or not response.candidates:
+    if not response:
+        print("[_get_response_text] Received None response object.")
         return None
+    if not response.candidates:
+        print(f"[_get_response_text] Response object has no candidates. Response: {response}")
+        return None
+
     try:
+        candidate = response.candidates[0]
+        if not hasattr(candidate, 'content') or not candidate.content:
+            print(f"[_get_response_text] Candidate 0 has no 'content'. Candidate: {candidate}")
+            return None
+        if not hasattr(candidate.content, 'parts') or not candidate.content.parts:
+            print(f"[_get_response_text] Candidate 0 content has no 'parts' or parts list is empty. Content: {candidate.content}")
+            return None
+
+        # Log all parts for debugging
+        print(f"[_get_response_text] Inspecting parts: {candidate.content.parts}")
+
         # Iterate through parts to find the first text part
-        for part in response.candidates[0].content.parts:
+        for i, part in enumerate(candidate.content.parts):
+            print(f"[_get_response_text] Checking part {i}: Type={type(part)}, Attributes={dir(part)}")
             # Check if the part has a 'text' attribute and it's not empty
             if hasattr(part, 'text') and part.text:
+                print(f"[_get_response_text] Found text in part {i}.")
                 return part.text
-        # If no text part is found (e.g., only function call or empty text parts)
-        print(f"[_get_response_text] No text part found in candidate parts: {response.candidates[0].content.parts}") # Log parts structure
+
+        # If no text part is found after checking all parts
+        print(f"[_get_response_text] No usable text part found after iterating through all parts.")
         return None
     except (AttributeError, IndexError) as e:
-        # Handle cases where structure is unexpected or parts list is empty
-        print(f"Error accessing response parts: {type(e).__name__}: {e}")
+        # Handle cases where structure is unexpected or parts list is empty during access
+        print(f"[_get_response_text] Error accessing response structure: {type(e).__name__}: {e}")
         return None
     except Exception as e:
         # Catch unexpected errors during access
-        print(f"Unexpected error extracting text from response part: {e}")
+        print(f"[_get_response_text] Unexpected error extracting text: {e}")
         return None
 
 
@@ -1214,15 +1233,21 @@ async def get_internal_ai_json_response(
              final_parsed_data = None
              # We might still have the raw text if the API provided it despite blocking
         else:
+             # --- Log the entire response object BEFORE attempting to parse ---
+             print(f"--- Full response_obj received for {task_description} ---")
+             print(response_obj)
+             print(f"--- End Full response_obj ---")
+             # --- End Logging ---
+
              # --- Parse and Validate ---
              # Use the helper function to safely extract text, even from structured parts
              final_response_text = _get_response_text(response_obj) # Store raw text
-             # --- Add detailed logging for raw response text ---
-             print(f"--- Raw AI Safety Check Response Text ---") # Keep consistent log message
-             print(response_obj)
-             print(f"--- End Raw AI Safety Check Response Text ---") # Keep consistent log message
+             # --- Add detailed logging for raw response text (now using the extracted text) ---
+             print(f"--- Extracted Text for {task_description} (via _get_response_text) ---")
+             print(final_response_text)
+             print(f"--- End Extracted Text ---")
              # --- End detailed logging ---
-             print(f"Parsing ({task_description}): Using AI Safety Check Response Text for JSON.")
+             print(f"Parsing ({task_description}): Using Extracted Text for JSON.")
 
              final_parsed_data = parse_and_validate_json_response(
                  final_response_text, response_schema_dict, f"internal task ({task_description})"
