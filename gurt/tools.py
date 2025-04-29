@@ -296,13 +296,15 @@ async def get_conversation_summary(cog: commands.Cog, channel_id: str = None, me
             temperature=0.3,
             max_tokens=200 # Adjust as needed
         )
+        # Unpack the tuple, we only need the parsed data here
+        summary_parsed_data, _ = summary_data if summary_data else (None, None)
 
         summary = "Error generating summary."
-        if summary_data and isinstance(summary_data.get("summary"), str):
-            summary = summary_data["summary"].strip()
+        if summary_parsed_data and isinstance(summary_parsed_data.get("summary"), str):
+            summary = summary_parsed_data["summary"].strip()
             print(f"Summary generated for {target_channel_id}: {summary[:100]}...")
         else:
-            error_detail = f"Invalid format or missing 'summary' key. Response: {summary_data}"
+            error_detail = f"Invalid format or missing 'summary' key. Parsed Response: {summary_parsed_data}" # Log parsed data on error
             summary = f"Failed summary for {target_channel_id}. Error: {error_detail}"
             print(summary)
 
@@ -1055,15 +1057,17 @@ async def create_new_tool(cog: commands.Cog, tool_name: str, description: str, p
         temperature=0.3, # Lower temperature for more predictable code
         max_tokens=1500 # Allow ample space for code generation
     )
+    # Unpack the tuple, we only need the parsed data here
+    generated_parsed_data, _ = generated_data if generated_data else (None, None)
 
-    if not generated_data or "python_function_code" not in generated_data or "function_declaration_params" not in generated_data:
-        error_msg = f"Failed to generate code for tool '{tool_name}'. LLM response invalid: {generated_data}"
+    if not generated_parsed_data or "python_function_code" not in generated_parsed_data or "function_declaration_params" not in generated_parsed_data:
+        error_msg = f"Failed to generate code for tool '{tool_name}'. LLM response invalid: {generated_parsed_data}" # Log parsed data on error
         print(error_msg)
         return {"error": error_msg}
 
-    python_code = generated_data["python_function_code"].strip()
-    declaration_params_str = generated_data["function_declaration_params"].strip()
-    declaration_desc = generated_data["function_declaration_desc"].strip()
+    python_code = generated_parsed_data["python_function_code"].strip()
+    declaration_params_str = generated_parsed_data["function_declaration_params"].strip()
+    declaration_desc = generated_parsed_data["function_declaration_desc"].strip()
     # Escape quotes in the description *before* using it in the f-string
     escaped_declaration_desc = declaration_desc.replace('"', '\\"')
 

@@ -6,7 +6,7 @@ import base64
 import re
 import time
 import datetime
-from typing import TYPE_CHECKING, Optional, List, Dict, Any, Union, AsyncIterable
+from typing import TYPE_CHECKING, Optional, List, Dict, Any, Union, AsyncIterable, Tuple # Import Tuple
 import jsonschema # For manual JSON validation
 from .tools import get_conversation_summary
 
@@ -913,12 +913,16 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
             temperature=0.5,
             max_tokens=300
         )
+        # Unpack the tuple, we only need the parsed data (plan) here
+        plan_parsed_data, _ = plan if plan else (None, None)
 
-        if not plan or not plan.get("should_respond"):
-            reason = plan.get('reasoning', 'Planning failed or decided against responding.') if plan else 'Planning failed.'
+        if not plan_parsed_data or not plan_parsed_data.get("should_respond"):
+            reason = plan_parsed_data.get('reasoning', 'Planning failed or decided against responding.') if plan_parsed_data else 'Planning failed.'
             print(f"Proactive response aborted by plan: {reason}")
             return {"should_respond": False, "content": None, "react_with_emoji": None, "note": f"Plan: {reason}"}
 
+        # Use the parsed data going forward
+        plan = plan_parsed_data
         print(f"Proactive Plan Generated: Goal='{plan.get('response_goal', 'N/A')}', Reasoning='{plan.get('reasoning', 'N/A')}'")
 
         # --- Build Final Proactive Prompt using Plan ---
