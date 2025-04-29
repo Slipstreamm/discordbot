@@ -235,10 +235,9 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         # Create LangchainTool objects from decorated functions, ensuring 'cog' is passed.
         prepared_tools = []
         for tool_name, original_tool_func in TOOL_MAPPING.items():
-            # Check if the function is decorated and has the necessary attributes
-            if not hasattr(original_tool_func, 'is_lc_tool') and not hasattr(original_tool_func, 'name'):
-                if tool_name not in ["create_new_tool", "execute_internal_command", "_check_command_safety"]:
-                    logger.warning(f"Tool function '{tool_name}' in TOOL_MAPPING is missing the @tool decorator or required attributes. Skipping.")
+            # Skip internal/experimental tools explicitly
+            if tool_name in ["create_new_tool", "execute_internal_command", "_check_command_safety"]:
+                logger.debug(f"Skipping internal/experimental tool: {tool_name}")
                 continue
 
             try:
