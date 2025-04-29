@@ -36,7 +36,10 @@ class GurtMessageCacheHistory(BaseChatMessageHistory):
     """Chat message history that reads from and potentially writes to GurtCog's message cache."""
 
     def __init__(self, cog: 'GurtCog', channel_id: int):
-        from .cog import GurtCog # Local import for type check
+        # Use relative import for type checking within the function scope if needed,
+        # or rely solely on the TYPE_CHECKING block if sufficient.
+        # For runtime check, a local relative import is safer.
+        from .cog import GurtCog # Use relative import here
         if not isinstance(cog, GurtCog):
              raise TypeError("GurtMessageCacheHistory requires a GurtCog instance.")
         self.cog = cog
