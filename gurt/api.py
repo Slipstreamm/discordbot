@@ -343,7 +343,7 @@ async def call_google_genai_api_with_retry(
             print(f"Sending API request for {request_desc} using {model_name} (Attempt {attempt + 1}/{API_RETRY_ATTEMPTS + 1})...")
 
             # Use the non-streaming async call - config now contains all settings
-            response = await genai_client.models.generate_content(
+            response = await genai_client.aio.models.generate_content(
                 model=model,
                 contents=contents,
                 config=generation_config, # Pass the combined config object
