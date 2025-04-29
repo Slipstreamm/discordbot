@@ -125,6 +125,10 @@ GOAL_CHECK_INTERVAL = int(os.getenv("GOAL_CHECK_INTERVAL", 300)) # Check for pen
 GOAL_EXECUTION_INTERVAL = int(os.getenv("GOAL_EXECUTION_INTERVAL", 60)) # Check for active goals to execute every 1 min
 PROACTIVE_GOAL_CHECK_INTERVAL = int(os.getenv("PROACTIVE_GOAL_CHECK_INTERVAL", 900)) # Check if Gurt should create its own goals every 15 mins
 
+# --- Internal Random Action Config ---
+INTERNAL_ACTION_INTERVAL_SECONDS = int(os.getenv("INTERNAL_ACTION_INTERVAL_SECONDS", 600)) # How often to *consider* a random action (10 mins)
+INTERNAL_ACTION_PROBABILITY = float(os.getenv("INTERNAL_ACTION_PROBABILITY", 0.1)) # Chance of performing an action each interval (10%)
+
 # --- Topic Tracking Config ---
 TOPIC_UPDATE_INTERVAL = 300 # Update topics every 5 minutes
 TOPIC_RELEVANCE_DECAY = 0.2

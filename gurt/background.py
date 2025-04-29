@@ -16,7 +16,9 @@ from .config import (
     INTEREST_FACT_BOOST, PROACTIVE_GOAL_CHECK_INTERVAL, STATS_PUSH_INTERVAL, # Added stats interval
     MOOD_OPTIONS, MOOD_CATEGORIES, MOOD_CHANGE_INTERVAL_MIN, MOOD_CHANGE_INTERVAL_MAX, # Mood change imports
     BASELINE_PERSONALITY, # For default traits
-    REFLECTION_INTERVAL_SECONDS # Import reflection interval
+    REFLECTION_INTERVAL_SECONDS, # Import reflection interval
+    # Internal Action Config
+    INTERNAL_ACTION_INTERVAL_SECONDS, INTERNAL_ACTION_PROBABILITY
 )
 # Assuming analysis functions are moved
 from .analysis import (
@@ -289,6 +291,67 @@ async def background_processing_task(cog: 'GurtCog'):
                     print(f"Error during proactive goal check: {proactive_e}")
                     traceback.print_exc()
                     cog.last_proactive_goal_check = now # Update timestamp even on error
+
+            # --- Random Internal Action (Runs periodically based on probability) ---
+            if now - cog.last_internal_action_check > INTERNAL_ACTION_INTERVAL_SECONDS:
+                if random.random() < INTERNAL_ACTION_PROBABILITY:
+                    print("Considering random internal action...")
+                    # --- Select Action ---
+                    # For now, only use get_general_facts
+                    selected_tool_name = "get_general_facts"
+                    tool_func = TOOL_MAPPING.get(selected_tool_name)
+                    tool_args = {"query": None, "limit": 5} # Example: Get 5 recent general facts
+
+                    if tool_func:
+                        print(f"  - Attempting internal action: {selected_tool_name} with args: {tool_args}")
+                        tool_result = None
+                        tool_error = None
+                        try:
+                            start_time = time.monotonic()
+                            # Execute the tool function directly
+                            tool_result = await tool_func(cog, **tool_args)
+                            end_time = time.monotonic()
+                            exec_time = end_time - start_time
+
+                            if isinstance(tool_result, dict) and "error" in tool_result:
+                                tool_error = tool_result["error"]
+                                result_summary = f"Error: {tool_error}"
+                                print(f"  - Internal action '{selected_tool_name}' reported error: {tool_error}")
+                            else:
+                                # Create a concise summary of the result
+                                if isinstance(tool_result, dict) and "facts" in tool_result:
+                                    fact_count = tool_result.get("count", len(tool_result.get("facts", [])))
+                                    result_summary = f"Success: Retrieved {fact_count} general facts."
+                                    # Optionally include first fact if available
+                                    if fact_count > 0 and tool_result.get("facts"):
+                                        first_fact = str(tool_result["facts"][0])[:100] # Truncate first fact
+                                        result_summary += f" First: '{first_fact}...'"
+                                else:
+                                    result_summary = f"Success: Result type {type(tool_result)}. {str(tool_result)[:200]}" # Generic success summary
+                                print(f"  - Internal action '{selected_tool_name}' completed successfully in {exec_time:.3f}s.")
+
+                        except Exception as exec_e:
+                            tool_error = f"Exception during internal execution: {str(exec_e)}"
+                            result_summary = f"Exception: {tool_error}"
+                            print(f"  - Internal action '{selected_tool_name}' raised exception: {exec_e}")
+                            traceback.print_exc()
+
+                        # --- Log Action to Memory ---
+                        try:
+                            log_result = await cog.memory_manager.add_internal_action_log(
+                                tool_name=selected_tool_name,
+                                arguments=tool_args,
+                                result_summary=result_summary
+                            )
+                            if log_result.get("status") != "logged":
+                                print(f"  - Warning: Failed to log internal action to memory: {log_result.get('error')}")
+                        except Exception as log_e:
+                            print(f"  - Error logging internal action to memory: {log_e}")
+                            traceback.print_exc()
+                    else:
+                        print(f"  - Error: Selected internal tool '{selected_tool_name}' not found in TOOL_MAPPING.")
+                # Update check timestamp regardless of whether an action was performed
+                cog.last_internal_action_check = now
 
     except asyncio.CancelledError:
         print("Background processing task cancelled")

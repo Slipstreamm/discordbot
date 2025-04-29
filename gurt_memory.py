@@ -222,6 +222,21 @@ class MemoryManager:
             logger.info("Goals table created/verified.")
             # --- End Goals Table ---
 
+            # --- Add Internal Actions Log Table ---
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS internal_actions (
+                    action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL DEFAULT (unixepoch('now')),
+                    tool_name TEXT NOT NULL,
+                    arguments_json TEXT, -- Store arguments as JSON string
+                    result_summary TEXT -- Store a summary of the result or error message
+                );
+            """)
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_internal_actions_timestamp ON internal_actions (timestamp);")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_internal_actions_tool_name ON internal_actions (tool_name);")
+            logger.info("Internal Actions Log table created/verified.")
+            # --- End Internal Actions Log Table ---
+
             await db.commit()
             logger.info(f"SQLite database initialized/verified at {self.db_path}")
 
@@ -1003,3 +1018,33 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"Error deleting goal ID {goal_id}: {e}", exc_info=True)
             return {"error": f"Database error deleting goal: {str(e)}"}
+
+    # --- Internal Action Log Methods ---
+
+    async def add_internal_action_log(self, tool_name: str, arguments: Optional[Dict[str, Any]], result_summary: str) -> Dict[str, Any]:
+        """Logs the execution of an internal background action."""
+        if not tool_name:
+            return {"error": "Tool name is required for logging internal action."}
+        logger.info(f"Logging internal action: Tool='{tool_name}', Args={arguments}, Result='{result_summary[:100]}...'")
+        args_json = json.dumps(arguments) if arguments else None
+        # Truncate result summary if too long for DB
+        max_summary_len = 1000
+        truncated_summary = result_summary[:max_summary_len] + ('...' if len(result_summary) > max_summary_len else '')
+
+        try:
+            async with self.db_lock:
+                async with aiosqlite.connect(self.db_path) as db:
+                    cursor = await db.execute(
+                        """
+                        INSERT INTO internal_actions (tool_name, arguments_json, result_summary, timestamp)
+                        VALUES (?, ?, ?, unixepoch('now'))
+                        """,
+                        (tool_name, args_json, truncated_summary)
+                    )
+                    await db.commit()
+                    action_id = cursor.lastrowid
+            logger.info(f"Internal action logged successfully (ID: {action_id}): Tool='{tool_name}'")
+            return {"status": "logged", "action_id": action_id}
+        except Exception as e:
+            logger.error(f"Error logging internal action '{tool_name}': {e}", exc_info=True)
+            return {"error": f"Database error logging internal action: {str(e)}"}
