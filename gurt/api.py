@@ -296,7 +296,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             chat_history=chat_history_factory, # Pass the factory function
             prompt=prompt_template, # Pass the constructed prompt template
             model_kwargs=model_kwargs,
-            verbose=True, # Enable for debugging agent steps
+            # verbose=True, # Enable for debugging agent steps
             # handle_parsing_errors=True, # Let the agent try to recover from parsing errors
             # max_iterations=10, # Limit tool execution loops
         )
