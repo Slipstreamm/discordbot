@@ -148,7 +148,7 @@ from google.api_core import exceptions as google_exceptions # Keep for retry log
 
 # Relative imports for components within the 'gurt' package
 from .config import (
-    PROJECT_ID, LOCATION, DEFAULT_MODEL, FALLBACK_MODEL,
+    PROJECT_ID, LOCATION, DEFAULT_MODEL, FALLBACK_MODEL, CUSTOM_TUNED_MODEL_ENDPOINT, # Import the new endpoint
     API_TIMEOUT, API_RETRY_ATTEMPTS, API_RETRY_DELAY, TOOLS, RESPONSE_SCHEMA,
     PROACTIVE_PLAN_SCHEMA, # Import the new schema
     TAVILY_API_KEY, PISTON_API_URL, PISTON_API_KEY, BASELINE_PERSONALITY # Import other needed configs
@@ -344,11 +344,13 @@ async def call_google_genai_api_with_retry(
 
     for attempt in range(API_RETRY_ATTEMPTS + 1):
         try:
+            # Use the actual model name string passed to the function for logging
             print(f"Sending API request for {request_desc} using {model_name} (Attempt {attempt + 1}/{API_RETRY_ATTEMPTS + 1})...")
 
             # Use the non-streaming async call - config now contains all settings
+            # The 'model' parameter here should be the actual model name string
             response = await genai_client.aio.models.generate_content(
-                model=model,
+                model=model_name, # Use the model_name string directly
                 contents=contents,
                 config=generation_config, # Pass the combined config object
                 # stream=False is implicit for generate_content
@@ -652,9 +654,13 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
          print(f"Error in get_ai_response: {error_msg}")
          return {"final_response": None, "error": error_msg}
 
-    # Use the specific custom model endpoint provided by the user
-    target_model_name = model_name or "projects/1079377687568/locations/us-central1/endpoints/6677946543460319232"
-    print(f"Using model: {target_model_name}")
+    # Determine the model for the final response generation (custom tuned)
+    # Use the override if provided, otherwise default to the custom tuned endpoint
+    final_response_model = model_name or CUSTOM_TUNED_MODEL_ENDPOINT
+    # Model for tool checking will be DEFAULT_MODEL
+    tool_check_model = DEFAULT_MODEL
+    print(f"Using model for final response: {final_response_model}")
+    print(f"Using model for tool checks: {tool_check_model}")
 
     channel_id = message.channel.id
     user_id = message.author.id
@@ -846,7 +852,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
             current_response_obj = await call_google_genai_api_with_retry(
                 cog=cog,
-                model_name=target_model_name, # Pass the model name string
+                model_name=tool_check_model, # Use DEFAULT_MODEL for tool checks
                 contents=contents,
                 generation_config=current_gen_config, # Pass the combined config
                 request_desc=f"Tool Check {tool_calls_made + 1} for message {message.id}",
@@ -963,7 +969,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                     # Make the final call *without* tools enabled (handled by config)
                     final_json_response_obj = await call_google_genai_api_with_retry(
                         cog=cog,
-                        model_name=target_model_name, # Use the target model
+                        model_name=final_response_model, # Use the CUSTOM_TUNED_MODEL for final response
                         contents=contents, # Pass the accumulated history
                         generation_config=generation_config_final_json, # Use combined JSON config
                         request_desc=f"Final JSON Generation (dedicated call) for message {message.id}",
@@ -1157,7 +1163,7 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
         # Use the new API call helper
         response_obj = await call_google_genai_api_with_retry(
             cog=cog,
-            model_name=DEFAULT_MODEL, # Use the default model for proactive responses
+            model_name=CUSTOM_TUNED_MODEL_ENDPOINT, # Use the custom tuned model for final proactive responses
             contents=proactive_contents, # Pass the constructed contents
             generation_config=generation_config_final, # Pass combined config
             request_desc=f"Final proactive response for channel {channel_id} ({trigger_reason})",
