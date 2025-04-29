@@ -223,11 +223,12 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         # We just need to provide the system message part.
         # Note: The exact structure might depend on the agent type used by LangchainAgent.
         # Assuming a standard structure:
+        # Use the variable names provided by the agent ('history', 'intermediate_steps')
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", system_prompt_text),
-            MessagesPlaceholder(variable_name="chat_history"), # Standard placeholder
+            MessagesPlaceholder(variable_name="history"), # Matches agent input
             ("user", "{input}"), # User input placeholder
-            MessagesPlaceholder(variable_name="agent_scratchpad"), # Tool execution placeholder
+            MessagesPlaceholder(variable_name="intermediate_steps"), # Matches agent input
         ])
 
         # --- 2. Prepare Tools ---
