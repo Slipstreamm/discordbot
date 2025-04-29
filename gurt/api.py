@@ -228,7 +228,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             ("system", system_prompt_text),
             MessagesPlaceholder(variable_name="history"), # Matches agent input
             ("user", "{input}"), # User input placeholder
-            MessagesPlaceholder(variable_name="intermediate_steps"), # Matches agent input
+            # MessagesPlaceholder(variable_name="intermediate_steps"), # Removed as per LangChain troubleshooting
         ])
 
         # --- 2. Prepare Tools ---
