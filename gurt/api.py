@@ -318,7 +318,8 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         logger.info(f"Querying LangchainAgent for message {message.id}...")
         # The agent handles retries, tool calls, history management internally.
         # We pass the channel_id as the session_id for history persistence.
-        agent_response = await agent.query(
+        # NOTE: agent.query() appears to be synchronous, removed await.
+        agent_response = agent.query(
             input=final_input_string,
             config={"configurable": {"session_id": str(channel_id)}}
         )
