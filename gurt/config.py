@@ -2,22 +2,8 @@ import os
 import random
 import json
 from dotenv import load_dotenv
-
-# Import necessary types from google.generativeai
-try:
-    # Import the specific type needed for tool definitions
-    from google.generativeai.types import FunctionDeclaration
-except ImportError:
-    # Define a dummy class if the library isn't installed,
-    # so the rest of the file can load without immediate error.
-    print("WARNING: google-generativeai not installed. Tool definitions may be incomplete.")
-    class DummyFunctionDeclaration:
-        def __init__(self, name, description, parameters):
-            self.name = name
-            self.description = description
-            self.parameters = parameters
-    FunctionDeclaration = DummyFunctionDeclaration
-
+from google import genai
+from google.genai.types import FunctionDeclaration
 
 # Load environment variables
 load_dotenv()
