@@ -1069,13 +1069,20 @@ async def send_discord_message(cog: commands.Cog, channel_id: str, message_conte
     """Sends a message to a specified Discord channel."""
     print(f"Attempting to send message to channel {channel_id}: {message_content[:100]}...")
 
-async def restart_gurt_bot(cog: commands.Cog) -> Dict[str, Any]:
+async def restart_gurt_bot(cog: commands.Cog, channel_id: str = None) -> Dict[str, Any]:
     """
     Restarts the Gurt bot process by re-executing the current Python script.
+    Sends a message in the channel before restarting.
     Returns a status dictionary. Only works if the bot process has permission.
     """
     import sys
     import os
+    # Send message before restarting
+    if channel_id:
+        try:
+            await send_discord_message(cog, channel_id, "Restart tool was called.")
+        except Exception as msg_exc:
+            print(f"Failed to send restart message: {msg_exc}")
     try:
         python = sys.executable
         os.execv(python, [python] + sys.argv)

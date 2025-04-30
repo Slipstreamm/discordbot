@@ -950,7 +950,12 @@ def create_tools_list():
             description="Restarts the Gurt bot process by re-executing the current Python script. Use with caution.",
             parameters={
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "channel_id": {
+                        "type": "string",
+                        "description": "The ID of the channel to send the restart message in. If not provided, no message is sent."
+                    }
+                },
                 "required": []
             }
         )
