@@ -747,39 +747,31 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 filename = attachment.filename
 
                 # Check if MIME type is supported for URI input by Gemini
-                # Expand this list based on Gemini documentation for supported types via URI
                 supported_mime_prefixes = ["image/", "video/", "audio/", "text/plain", "application/pdf"]
                 is_supported = False
-                if mime_type:
-                    for prefix in supported_mime_prefixes:
-                        if mime_type.startswith(prefix):
-                            is_supported = True
-                            break
-                    # Add specific non-prefixed types if needed
-                    # if mime_type in ["application/vnd.google-apps.document", ...]:
-                    #     is_supported = True
+                detected_mime_type = mime_type if mime_type else "application/octet-stream"
+                for prefix in supported_mime_prefixes:
+                    if detected_mime_type.startswith(prefix):
+                        is_supported = True
+                        break
+
+                # Always add a text instruction for every attachment
+                instruction_text = f"User attached a file: '{filename}' (Type: {detected_mime_type}). Analyze this file from the following URI and incorporate your understanding into your response."
+                current_message_parts.append(types.Part(text=instruction_text))
+                print(f"Added text instruction for attachment: {filename}")
 
                 if is_supported and file_url:
                     try:
-                        # 1. Add text part instructing AI about the file
-                        instruction_text = f"User attached a file: '{filename}' (Type: {mime_type}). Analyze this file from the following URI and incorporate your understanding into your response."
-                        current_message_parts.append(types.Part(text=instruction_text))
-                        print(f"Added text instruction for attachment: {filename}")
-
-                        # 2. Add the URI part
-                        # Ensure mime_type doesn't contain parameters like '; charset=...' if the API doesn't like them
-                        clean_mime_type = mime_type.split(';')[0]
-                        current_message_parts.append(types.Part(uri=file_url, mime_type=clean_mime_type))
+                        # Add the URI part with a cleaned/fallback MIME type using from_uri
+                        clean_mime_type = detected_mime_type.split(';')[0] if detected_mime_type else "application/octet-stream"
+                        current_message_parts.append(types.Part.from_uri(file_url, clean_mime_type))
                         print(f"Added URI part for attachment: {filename} ({clean_mime_type}) using URL: {file_url}")
-
                     except Exception as e:
-                        print(f"Error creating types.Part for attachment {filename} ({mime_type}): {e}")
-                        # Optionally add a text part indicating the error
+                        print(f"Error creating types.Part for attachment {filename} ({detected_mime_type}): {e}")
                         current_message_parts.append(types.Part(text=f"(System Note: Failed to process attachment '{filename}' - {e})"))
                 else:
-                    print(f"Skipping unsupported or invalid attachment: {filename} (Type: {mime_type}, URL: {file_url})")
-                    # Optionally inform the AI that an unsupported file was attached
-                    current_message_parts.append(types.Part(text=f"(System Note: User attached an unsupported file '{filename}' of type '{mime_type}' which cannot be processed.)"))
+                    print(f"Skipping unsupported or invalid attachment: {filename} (Type: {detected_mime_type}, URL: {file_url})")
+                    current_message_parts.append(types.Part(text=f"(System Note: User attached an unsupported file '{filename}' of type '{detected_mime_type}' which cannot be processed.)"))
 
 
         # Ensure there's always *some* content part, even if only text or errors
