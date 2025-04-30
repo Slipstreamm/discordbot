@@ -2324,51 +2324,81 @@ async def fetch_random_image(cog: commands.Cog, query: Optional[str] = None) -> 
 # --- Random System/Meme Tools ---
 
 async def read_temps(cog: commands.Cog) -> Dict[str, Any]:
-    """Reads the system temperatures (Windows: returns meme if not available)."""
+    """Reads the system temperatures using the 'sensors' command (Linux/Unix)."""
     import platform
     import subprocess
+    import asyncio # Ensure asyncio is imported
+
     try:
         if platform.system() == "Windows":
-            # Windows doesn't expose CPU temp easily; return meme
+            # Windows doesn't have 'sensors' command typically
             return {
-                "status": "meme",
-                "cpu_temp": None,
-                "quip": "yo ngl i tried to read ur cpu temps but windows said nah 💀"
+                "status": "not_supported",
+                "output": None,
+                "error": "The 'sensors' command is typically not available on Windows."
             }
         else:
-            # Try to read from /sys/class/thermal or use sensors
+            # Try to run the 'sensors' command
             try:
                 proc = await asyncio.create_subprocess_shell(
                     "sensors",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                stdout, stderr = await proc.communicate()
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=10) # Add timeout
+                stdout = stdout_bytes.decode(errors="replace").strip()
+                stderr = stderr_bytes.decode(errors="replace").strip()
+
                 if proc.returncode == 0:
-                    output = stdout.decode(errors="replace")
-                    # Try to extract a temp value
-                    import re
-                    match = re.search(r"(?i)cpu.*?(\d{2,3}\.\d)\s*°?C", output)
-                    temp = float(match.group(1)) if match else None
+                    # Command succeeded, return the full stdout
+                    max_len = 1800 # Limit output length slightly
+                    stdout_trunc = stdout[:max_len] + ('...' if len(stdout) > max_len else '')
                     return {
-                        "status": "success" if temp else "unknown",
-                        "cpu_temp": temp,
-                        "quip": f"yo i just checked ur cpu temp, it's {temp}°C, u good bro" if temp else "couldn't find cpu temp but i tried fr"
+                        "status": "success",
+                        "output": stdout_trunc, # Return truncated stdout
+                        "error": None
                     }
                 else:
+                    # Command failed
+                    error_msg = f"'sensors' command failed with exit code {proc.returncode}."
+                    if stderr:
+                        error_msg += f" Stderr: {stderr[:200]}" # Include some stderr
+                    print(f"read_temps error: {error_msg}")
                     return {
-                        "status": "error",
-                        "cpu_temp": None,
-                        "quip": "couldn't read cpu temp, sensors command failed"
+                        "status": "execution_error",
+                        "output": None,
+                        "error": error_msg
                     }
-            except Exception:
+            except FileNotFoundError:
+                 print("read_temps error: 'sensors' command not found.")
+                 return {
+                    "status": "error",
+                    "output": None,
+                    "error": "'sensors' command not found. Is lm-sensors installed and in PATH?"
+                 }
+            except asyncio.TimeoutError:
+                print("read_temps error: 'sensors' command timed out.")
+                return {
+                    "status": "timeout",
+                    "output": None,
+                    "error": "'sensors' command timed out after 10 seconds."
+                }
+            except Exception as cmd_e:
+                # Catch other potential errors during subprocess execution
+                error_msg = f"Error running 'sensors' command: {str(cmd_e)}"
+                print(f"read_temps error: {error_msg}")
+                traceback.print_exc()
                 return {
                     "status": "error",
-                    "cpu_temp": None,
-                    "quip": "couldn't read cpu temp, sensors not found"
+                    "output": None,
+                    "error": error_msg
                 }
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        # Catch unexpected errors in the function itself
+        error_msg = f"Unexpected error in read_temps: {str(e)}"
+        print(error_msg)
+        traceback.print_exc()
+        return {"status": "error", "output": None, "error": error_msg}
 
 async def check_disk_space(cog: commands.Cog) -> Dict[str, Any]:
     """Checks disk space on the main drive."""
@@ -2383,7 +2413,7 @@ async def check_disk_space(cog: commands.Cog) -> Dict[str, Any]:
             "used_gb": round(used / gb, 2),
             "free_gb": round(free / gb, 2),
             "percent_used": percent,
-            "quip": f"yo ur disk is {percent}% full, {'might wanna clean up' if percent > 85 else 'lookin decent'}"
+            "msg": None
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}
