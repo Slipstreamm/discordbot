@@ -273,6 +273,49 @@ def _get_response_text(response: Optional[types.GenerateContentResponse]) -> Opt
         return None
 
 
+# --- Helper Function to Format Embeds for Prompt ---
+def _format_embeds_for_prompt(embed_content: List[Dict[str, Any]]) -> Optional[str]:
+    """Formats embed data into a string for the AI prompt."""
+    if not embed_content:
+        return None
+
+    formatted_strings = []
+    for i, embed in enumerate(embed_content):
+        parts = [f"--- Embed {i+1} ---"]
+        if embed.get("author") and embed["author"].get("name"):
+            parts.append(f"Author: {embed['author']['name']}")
+        if embed.get("title"):
+            parts.append(f"Title: {embed['title']}")
+        if embed.get("description"):
+            # Limit description length
+            desc = embed['description']
+            max_desc_len = 200
+            if len(desc) > max_desc_len:
+                desc = desc[:max_desc_len] + "..."
+            parts.append(f"Description: {desc}")
+        if embed.get("fields"):
+            field_parts = []
+            for field in embed["fields"]:
+                fname = field.get('name', 'Field')
+                fvalue = field.get('value', '')
+                # Limit field value length
+                max_field_len = 100
+                if len(fvalue) > max_field_len:
+                    fvalue = fvalue[:max_field_len] + "..."
+                field_parts.append(f"- {fname}: {fvalue}")
+            if field_parts:
+                parts.append("Fields:\n" + "\n".join(field_parts))
+        if embed.get("footer") and embed["footer"].get("text"):
+            parts.append(f"Footer: {embed['footer']['text']}")
+        if embed.get("image_url"):
+             parts.append(f"[Image Attached: {embed.get('image_url')}]") # Indicate image presence
+        if embed.get("thumbnail_url"):
+             parts.append(f"[Thumbnail Attached: {embed.get('thumbnail_url')}]") # Indicate thumbnail presence
+
+        formatted_strings.append("\n".join(parts))
+
+    return "\n".join(formatted_strings) if formatted_strings else None
+
 # --- Initialize Google Generative AI Client for Vertex AI ---
 # No explicit genai.configure(api_key=...) needed when using Vertex AI backend
 try:
@@ -709,8 +752,29 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                  parts = [p for p in parts if p] # Filter out None parts
                  if parts:
                      contents.append(types.Content(role=role, parts=parts))
-            elif isinstance(msg.get("content"), str):
-                 contents.append(types.Content(role=role, parts=[types.Part(text=msg["content"])]))
+            # Combine text, embeds, and attachments for history messages
+            elif isinstance(msg.get("content"), str) or msg.get("embed_content") or msg.get("attachment_descriptions"):
+                 text_parts = []
+                 # Add original text content if it exists and is not empty
+                 if isinstance(msg.get("content"), str) and msg["content"].strip():
+                     text_parts.append(msg["content"])
+                 # Add formatted embed content if present
+                 embed_str = _format_embeds_for_prompt(msg.get("embed_content", []))
+                 if embed_str:
+                     text_parts.append(f"\n[Embed Content]:\n{embed_str}")
+                 # Add attachment descriptions if present
+                 if msg.get("attachment_descriptions"):
+                     # Ensure descriptions are strings before joining
+                     attach_desc_list = [a['description'] for a in msg['attachment_descriptions'] if isinstance(a.get('description'), str)]
+                     if attach_desc_list:
+                         attach_desc_str = "\n".join(attach_desc_list)
+                         text_parts.append(f"\n[Attachments]:\n{attach_desc_str}")
+
+                 full_text = "\n".join(text_parts).strip()
+                 if full_text: # Only add if there's some text content
+                     # Use the new author_string here
+                     author_string = msg.get("author_string", msg.get("author", {}).get("display_name", "Unknown User"))
+                     contents.append(types.Content(role=role, parts=[types.Part(text=f"{author_string}: {full_text}")]))
 
 
         # --- Prepare the current message content (potentially multimodal) ---
@@ -729,10 +793,25 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             text_content += f"(Replying to {reply_author}: \"{reply_content}\")\n"
 
         # Add current message author and content
-        text_content += f"{formatted_current_message['author']['display_name']}: {formatted_current_message['content']}"
+        # Use the new author_string here for the current message
+        current_author_string = formatted_current_message.get("author_string", formatted_current_message.get("author", {}).get("display_name", "Unknown User"))
+        text_content += f"{current_author_string}: {formatted_current_message['content']}" # Keep original content
+
+        # Add formatted embed content if present for the *current* message
+        current_embed_str = _format_embeds_for_prompt(formatted_current_message.get("embed_content", []))
+        if current_embed_str:
+            text_content += f"\n[Embed Content]:\n{current_embed_str}"
+
+        # Add attachment descriptions for the *current* message
+        if formatted_current_message.get("attachment_descriptions"):
+            # Ensure descriptions are strings before joining
+            current_attach_desc_list = [a['description'] for a in formatted_current_message['attachment_descriptions'] if isinstance(a.get('description'), str)]
+            if current_attach_desc_list:
+                current_attach_desc_str = "\n".join(current_attach_desc_list)
+                text_content += f"\n[Attachments]:\n{current_attach_desc_str}"
 
         # Add mention details
-        if formatted_current_message.get("mentioned_users_details"):
+        if formatted_current_message.get("mentioned_users_details"): # This key might not exist, adjust if needed
             mentions_str = ", ".join([f"{m['display_name']}(id:{m['id']})" for m in formatted_current_message["mentioned_users_details"]])
             text_content += f"\n(Message Details: Mentions=[{mentions_str}])"
 

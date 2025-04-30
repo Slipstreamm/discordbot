@@ -73,10 +73,12 @@ def format_message(cog: 'GurtCog', message: discord.Message) -> Dict[str, Any]:
             "bot": message.author.bot
         },
         "content": processed_content, # Use processed content
+        "author_string": f"{message.author.display_name}{' (BOT)' if message.author.bot else ''}", # Add formatted author string
         "created_at": message.created_at.isoformat(),
         "attachment_descriptions": attachment_descriptions, # Use new descriptions list
         # "attachments": [{"filename": a.filename, "url": a.url} for a in message.attachments], # REMOVED old field
-        "embeds": len(message.embeds) > 0,
+        # "embeds": len(message.embeds) > 0, # Replaced by embed_content below
+        "embed_content": [], # Initialize embed content list
         "mentions": [{"id": str(m.id), "name": m.name, "display_name": m.display_name} for m in message.mentions], # Keep detailed mentions
         # Reply fields initialized
         "replied_to_message_id": None,
@@ -102,6 +104,30 @@ def format_message(cog: 'GurtCog', message: discord.Message) -> Dict[str, Any]:
             formatted_msg["replied_to_content_snippet"] = snippet
         # else: print(f"Referenced message {message.reference.message_id} not resolved.") # Optional debug
     # --- End Reply Processing ---
+
+    # --- Embed Processing ---
+    for embed in message.embeds:
+        embed_data = {
+            "title": embed.title if embed.title else None,
+            "description": embed.description if embed.description else None,
+            "url": embed.url if embed.url else None,
+            "color": embed.color.value if embed.color else None,
+            "timestamp": embed.timestamp.isoformat() if embed.timestamp else None,
+            "fields": [],
+            "footer": None,
+            "author": None,
+            "thumbnail_url": embed.thumbnail.url if embed.thumbnail else None,
+            "image_url": embed.image.url if embed.image else None,
+        }
+        if embed.footer and embed.footer.text:
+            embed_data["footer"] = {"text": embed.footer.text, "icon_url": embed.footer.icon_url}
+        if embed.author and embed.author.name:
+            embed_data["author"] = {"name": embed.author.name, "url": embed.author.url, "icon_url": embed.author.icon_url}
+        for field in embed.fields:
+            embed_data["fields"].append({"name": field.name, "value": field.value, "inline": field.inline})
+
+        formatted_msg["embed_content"].append(embed_data)
+    # --- End Embed Processing ---
 
     return formatted_msg
 
