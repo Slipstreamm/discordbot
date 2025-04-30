@@ -366,7 +366,9 @@ async def background_processing_task(cog: 'GurtCog'):
                         genai_tool = types.Tool(function_declarations=preprocessed_declarations) if preprocessed_declarations else None
                         tools_list = [genai_tool] if genai_tool else None
 
-                        # System prompt remains largely the same, just ensure it guides towards function calling
+                        # --- Revised System Prompt ---
+                        # Explicitly instruct the model to ONLY use function calls for actions
+                        # and ONLY text response for inaction reasoning.
                         system_prompt = (
                             "yo you Gurt. u vibin in the bg, thinkin if u should do sum wild shi or just chill. "
                             "you write/speak like this prompt is written, all lowercase, slang, emojis, etc. "
@@ -374,11 +376,12 @@ async def background_processing_task(cog: 'GurtCog'):
                             "use slang like 'ts', 'ngl', 'fr', 'bro', '💀', 'ong', 'lowkey', 'highkey', 'pmo', 'icl', 'sybau', etc. "
                             "do random or goofy actions for the vibes, not just for goals. "
                             "CRITICAL: You are EXTREMELY encouraged to do random, pointless, or meme-heavy actions for the vibes, not just goal-driven stuff. "
-                            "if u act, call one of the available functions. if not, just respond normally explaining why not (in ur voice). "
-                            "CRITICAL: ur reasoning/response gotta be in ur actual voice (max slang, informal, like ur inner monologue, maybe a lil unhinged or sassy). "
+                            "\n\n**HOW TO RESPOND:**\n"
+                            "1.  **IF YOU DECIDE TO ACT:** Call the appropriate function using the provided tools. DO NOT describe the action in text. Your response should ONLY contain the function call.\n"
+                            "2.  **IF YOU DECIDE NOT TO ACT:** Respond ONLY with text explaining *why* you're not acting, in your usual voice (max slang, informal, like ur inner monologue, maybe a lil unhinged or sassy). DO NOT call any functions, especially not 'no_operation'.\n\n"
                             "don't just call functions for goals, call em for fun too. be unpredictable."
                         )
-                        user_prompt = f"Context rn:\n{context_summary}\n\nu finna do sum or nah? if so, call a function. if not, why not? (say it how u actually would, slang maxed)"
+                        user_prompt = f"Context rn:\n{context_summary}\n\nu finna do sum or nah? If yes, call a function. If no, explain why (in ur voice)." # Simplified user prompt
 
                         # 3. Prepare Contents and Config for google.generativeai
                         contents: List[types.Content] = [
@@ -398,7 +401,7 @@ async def background_processing_task(cog: 'GurtCog'):
                             # Set tool config to ANY mode
                             gen_config_dict["tool_config"] = types.ToolConfig(
                                 function_calling_config=types.FunctionCallingConfig(
-                                    mode=types.FunctionCallingConfig.Mode.ANY # Use ANY mode
+                                    mode=types.FunctionCallingConfigMode.ANY # Use ANY mode
                                 )
                             )
                         generation_config = types.GenerateContentConfig(**gen_config_dict)
