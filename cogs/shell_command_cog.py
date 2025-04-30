@@ -116,15 +116,11 @@ class ShellCommandCog(commands.Cog):
         # Log the command execution
         logger.info(f"Executing {'docker ' if use_docker else ''}shell command: {command_str}")
 
-        try:
-            if use_docker:
-                return await self._execute_docker_command(command_str, session_id)
-            else:
-                return await self._execute_local_command(command_str, session_id)
+        if use_docker:
+            return await self._execute_docker_command(command_str, session_id)
+        else:
+            return await self._execute_local_command(command_str, session_id)
 
-        except Exception as e:
-            logger.error(f"Error executing command: {e}")
-            return f"❌ Error executing command: {str(e)}"
 
     async def _execute_local_command(self, command_str, session_id=None):
         """

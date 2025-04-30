@@ -1436,6 +1436,19 @@ def create_tools_list():
         )
     )
 
+    # --- Tool Listing Tool ---
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="list_tools",
+            description="Lists all available tools with their names and descriptions.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+
     return tool_declarations
 
 # Initialize TOOLS list, handling potential ImportError if library not installed

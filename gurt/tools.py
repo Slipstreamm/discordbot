@@ -22,6 +22,7 @@ from asteval import Interpreter # Added for calculate tool
 # Relative imports from within the gurt package and parent
 from .memory import MemoryManager # Import from local memory.py
 from .config import (
+    TOOLS, # Import the TOOLS list
     TAVILY_API_KEY, PISTON_API_URL, PISTON_API_KEY, SAFETY_CHECK_MODEL,
     DOCKER_EXEC_IMAGE, DOCKER_COMMAND_TIMEOUT, DOCKER_CPU_LIMIT, DOCKER_MEM_LIMIT,
     SUMMARY_CACHE_TTL, SUMMARY_API_TIMEOUT, DEFAULT_MODEL,
@@ -2510,6 +2511,24 @@ async def list_guild_channels(cog: commands.Cog, guild_id: str) -> Dict[str, Any
         print(error_message); traceback.print_exc()
         return {"error": error_message}
 
+async def list_tools(cog: commands.Cog) -> Dict[str, Any]:
+    """Lists all available tools with their names and descriptions."""
+    print("Executing list_tools tool.")
+    try:
+        # TOOLS is imported from .config
+        tool_list = [{"name": tool.name, "description": tool.description} for tool in TOOLS]
+        return {
+            "status": "success",
+            "tools": tool_list,
+            "count": len(tool_list),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except Exception as e:
+        error_message = f"Error listing tools: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+
 # --- Tool Mapping ---
 # This dictionary maps tool names (used in the AI prompt) to their implementation functions.
 TOOL_MAPPING = {
@@ -2582,4 +2601,6 @@ TOOL_MAPPING = {
     # --- Guild/Channel Listing Tools ---
     "list_bot_guilds": list_bot_guilds,
     "list_guild_channels": list_guild_channels,
+    # --- Tool Listing Tool ---
+    "list_tools": list_tools,
 }
