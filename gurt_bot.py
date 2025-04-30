@@ -35,8 +35,13 @@ async def on_ready():
         import traceback
         traceback.print_exc()
 
-async def main():
+async def main(minimal_prompt: bool = False):
     """Main async function to load the gurt cog and start the bot."""
+    # Store the flag on the bot instance so the cog can access it
+    bot.minimal_prompt = minimal_prompt
+    if minimal_prompt:
+        print("Minimal prompt mode enabled.")
+
     # Check for required environment variables
     TOKEN = os.getenv('DISCORD_TOKEN_GURT')
 
