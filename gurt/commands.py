@@ -287,29 +287,6 @@ def setup_commands(cog: 'GurtCog'):
         """Handles the /gurtforget command."""
         await interaction.response.defer(ephemeral=True)
 
-    # --- Gurt Force Autonomous Action Command (Owner Only) ---
-    @cog.bot.tree.command(name="gurtforceauto", description="Force Gurt to execute an autonomous action immediately. (Owner only)")
-    async def gurtforceauto(interaction: discord.Interaction):
-        """Handles the /gurtforceauto command."""
-        if interaction.user.id != cog.bot.owner_id:
-            await interaction.response.send_message("⛔ Only the bot owner can force autonomous actions.", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True)
-        try:
-            result = await cog.force_autonomous_action()
-            summary = (
-                f"**Autonomous Action Forced:**\n"
-                f"**Tool:** {result.get('tool')}\n"
-                f"**Args:** `{result.get('args')}`\n"
-                f"**Reasoning:** {result.get('reasoning')}\n"
-                f"**Result:** {result.get('result')}"
-            )
-            await interaction.followup.send(summary, ephemeral=True)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            await interaction.followup.send(f"❌ Error forcing autonomous action: {e}", ephemeral=True)
-
         scope_value = scope.value
         target_user_id = str(user.id) if user else None
 
@@ -358,6 +335,31 @@ def setup_commands(cog: 'GurtCog'):
                 await interaction.followup.send(f"⚠️ Error forgetting general fact: {result.get('error', 'Unknown error')}", ephemeral=True)
 
     command_functions.append(gurtforget)
+
+    # --- Gurt Force Autonomous Action Command (Owner Only) ---
+    @cog.bot.tree.command(name="gurtforceauto", description="Force Gurt to execute an autonomous action immediately. (Owner only)")
+    async def gurtforceauto(interaction: discord.Interaction):
+        """Handles the /gurtforceauto command."""
+        if interaction.user.id != cog.bot.owner_id:
+            await interaction.response.send_message("⛔ Only the bot owner can force autonomous actions.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            result = await cog.force_autonomous_action()
+            summary = (
+                f"**Autonomous Action Forced:**\n"
+                f"**Tool:** {result.get('tool')}\n"
+                f"**Args:** `{result.get('args')}`\n"
+                f"**Reasoning:** {result.get('reasoning')}\n"
+                f"**Result:** {result.get('result')}"
+            )
+            await interaction.followup.send(summary, ephemeral=True)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ Error forcing autonomous action: {e}", ephemeral=True)
+
+    command_functions.append(gurtforceauto) # Add gurtforceauto to the list
 
     # --- Gurt Goal Command Group ---
     gurtgoal_group = app_commands.Group(name="gurtgoal", description="Manage Gurt's long-term goals (Owner only)")
