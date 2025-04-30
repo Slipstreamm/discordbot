@@ -682,6 +682,15 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         # Contents will be built progressively within the loop
         contents: List[types.Content] = []
 
+        # --- CRITICAL: Prepend the system prompt ---
+        # Ensure the system prompt is the first element in the contents list
+        if final_system_prompt:
+            contents.insert(0, types.Content(role="system", parts=[types.Part(text=final_system_prompt)]))
+            print("Prepended system prompt to contents list.")
+        else:
+            print("Warning: final_system_prompt was empty or None, not prepended.")
+
+
         # Add memory context if available
         if memory_context:
             # System messages aren't directly supported in the 'contents' list for multi-turn like OpenAI.
