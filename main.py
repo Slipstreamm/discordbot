@@ -248,6 +248,28 @@ async def main():
                 print(f"Error sharing GurtCog instance: {e}")
             # ------------------------------------------------
 
+            # --- Manually Load FreakTetoCog ---
+            try:
+                freak_teto_cog_path = "discordbot.freak_teto.cog"
+                await bot.load_extension(freak_teto_cog_path)
+                print(f"Successfully loaded FreakTetoCog from {freak_teto_cog_path}")
+                # Optional: Share FreakTetoCog instance if needed later, similar to GurtCog
+                # freak_teto_cog_instance = bot.get_cog("FreakTetoCog")
+                # if freak_teto_cog_instance:
+                #     # Share instance logic here if required by other modules
+                #     print("Successfully shared FreakTetoCog instance.")
+                # else:
+                #     print("Warning: FreakTetoCog not found after loading.")
+            except commands.ExtensionAlreadyLoaded:
+                print(f"FreakTetoCog ({freak_teto_cog_path}) already loaded.")
+            except commands.ExtensionNotFound:
+                print(f"Error: FreakTetoCog not found at {freak_teto_cog_path}")
+            except Exception as e:
+                print(f"Failed to load FreakTetoCog: {e}")
+                import traceback
+                traceback.print_exc()
+            # ------------------------------------
+
             # Start the bot using start() for async context
             await bot.start(TOKEN)
     finally:
