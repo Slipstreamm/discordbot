@@ -2321,6 +2321,109 @@ async def fetch_random_image(cog: commands.Cog, query: Optional[str] = None) -> 
     }
 
 
+# --- Random System/Meme Tools ---
+
+async def read_temps(cog: commands.Cog) -> Dict[str, Any]:
+    """Reads the system temperatures (Windows: returns meme if not available)."""
+    import platform
+    import subprocess
+    try:
+        if platform.system() == "Windows":
+            # Windows doesn't expose CPU temp easily; return meme
+            return {
+                "status": "meme",
+                "cpu_temp": None,
+                "quip": "yo ngl i tried to read ur cpu temps but windows said nah 💀"
+            }
+        else:
+            # Try to read from /sys/class/thermal or use sensors
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    "sensors",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode == 0:
+                    output = stdout.decode(errors="replace")
+                    # Try to extract a temp value
+                    import re
+                    match = re.search(r"(?i)cpu.*?(\d{2,3}\.\d)\s*°?C", output)
+                    temp = float(match.group(1)) if match else None
+                    return {
+                        "status": "success" if temp else "unknown",
+                        "cpu_temp": temp,
+                        "quip": f"yo i just checked ur cpu temp, it's {temp}°C, u good bro" if temp else "couldn't find cpu temp but i tried fr"
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "cpu_temp": None,
+                        "quip": "couldn't read cpu temp, sensors command failed"
+                    }
+            except Exception:
+                return {
+                    "status": "error",
+                    "cpu_temp": None,
+                    "quip": "couldn't read cpu temp, sensors not found"
+                }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+async def check_disk_space(cog: commands.Cog) -> Dict[str, Any]:
+    """Checks disk space on the main drive."""
+    import shutil
+    try:
+        total, used, free = shutil.disk_usage("/")
+        gb = 1024 ** 3
+        percent = round(used / total * 100, 1)
+        return {
+            "status": "success",
+            "total_gb": round(total / gb, 2),
+            "used_gb": round(used / gb, 2),
+            "free_gb": round(free / gb, 2),
+            "percent_used": percent,
+            "quip": f"yo ur disk is {percent}% full, {'might wanna clean up' if percent > 85 else 'lookin decent'}"
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+async def random_vibe_check(cog: commands.Cog) -> Dict[str, Any]:
+    """Returns a random vibe/meme message."""
+    vibes = [
+        "vibe check: passed ✅",
+        "vibe check: failed 💀",
+        "vibe check: ur pc is haunted",
+        "vibe check: cpu's chillin, u chillin?",
+        "vibe check: ngl ur vibes immaculate rn",
+        "vibe check: system's sus, keep an eye out 👀",
+        "vibe check: all systems go, but are YOU ok?",
+        "vibe check: ur fans sound like a jet, u good?",
+        "vibe check: i detected 0 vibes, try again later"
+    ]
+    import random
+    return {"status": "success", "vibe": random.choice(vibes)}
+
+async def fetch_random_joke(cog: commands.Cog) -> Dict[str, Any]:
+    """Fetches a random joke from an API."""
+    url = "https://official-joke-api.appspot.com/random_joke"
+    try:
+        if not cog.session:
+            return {"status": "error", "error": "aiohttp session not initialized"}
+        async with cog.session.get(url, timeout=8) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                setup = data.get("setup", "")
+                punchline = data.get("punchline", "")
+                return {
+                    "status": "success",
+                    "joke": f"{setup} ... {punchline}"
+                }
+            else:
+                return {"status": "error", "error": f"API returned {resp.status}"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 # --- Tool Mapping ---
 # This dictionary maps tool names (used in the AI prompt) to their implementation functions.
 TOOL_MAPPING = {
@@ -2385,4 +2488,9 @@ TOOL_MAPPING = {
     "remind_user": remind_user,
     "fetch_random_image": fetch_random_image,
     # --- End Batch 4 ---
+    # --- Random System/Meme Tools ---
+    "read_temps": read_temps,
+    "check_disk_space": check_disk_space,
+    "random_vibe_check": random_vibe_check,
+    "fetch_random_joke": fetch_random_joke,
 }

@@ -1361,6 +1361,52 @@ def create_tools_list():
     )
     # --- End Batch 4 ---
 
+    # --- Random System/Meme Tools ---
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="read_temps",
+            description="Reads the System temperatures (returns a meme if not available). Use for random system checks or to make fun of the user's thermal paste.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="check_disk_space",
+            description="Checks disk space on the main drive and returns a meme/quip about how full it is.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="random_vibe_check",
+            description="Returns a random vibe/meme message. Use for chaotic or pointless autonomous actions.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="fetch_random_joke",
+            description="Fetches a random joke from a public API. Use for random humor or to break the ice.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+
     return tool_declarations
 
 # Initialize TOOLS list, handling potential ImportError if library not installed
