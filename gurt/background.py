@@ -21,11 +21,7 @@ from .config import (
     INTEREST_FACT_BOOST, PROACTIVE_GOAL_CHECK_INTERVAL, STATS_PUSH_INTERVAL, # Added stats interval
     MOOD_OPTIONS, MOOD_CATEGORIES, MOOD_CHANGE_INTERVAL_MIN, MOOD_CHANGE_INTERVAL_MAX, # Mood change imports
     BASELINE_PERSONALITY, # For default traits
-    REFLECTION_INTERVAL_SECONDS, # Import reflection interval
-    # Internal Action Config
-    INTERNAL_ACTION_INTERVAL_SECONDS, INTERNAL_ACTION_PROBABILITY,
-    # Add this:
-    AUTONOMOUS_ACTION_REPORT_CHANNEL_ID
+    REFLECTION_INTERVAL_SECONDS # Import reflection interval
 )
 # Assuming analysis functions are moved
 from .analysis import (
@@ -105,7 +101,7 @@ async def background_processing_task(cog: 'GurtCog'):
                 except Exception as e:
                     print(f"Unexpected error pushing Gurt stats: {e}")
                     traceback.print_exc()
-                    cog.last_stats_push = now # Update timestamp to avoid spamming logs
+                    cog.last_stats_push = now # Update timestamp even on error
 
             # --- Learning Analysis (Runs less frequently) ---
             if now - cog.last_learning_update > LEARNING_UPDATE_INTERVAL:
@@ -326,7 +322,6 @@ async def background_processing_task(cog: 'GurtCog'):
                     traceback.print_exc()
                     cog.last_goal_execution_time = now # Update timestamp even on error
 
-
             # --- Automatic Mood Change (Runs based on its own interval check) ---
             # await maybe_change_mood(cog) # Call the mood change logic
 
@@ -342,244 +337,7 @@ async def background_processing_task(cog: 'GurtCog'):
                     traceback.print_exc()
                     cog.last_proactive_goal_check = now # Update timestamp even on error
 
-            # --- LLM-Driven Autonomous Action (Runs periodically based on probability) ---
-            if now - cog.last_internal_action_check > INTERNAL_ACTION_INTERVAL_SECONDS:
-                if random.random() < INTERNAL_ACTION_PROBABILITY:
-                    print("--- Considering Autonomous Action ---")
-                    # --- Refactored Autonomous Action Logic ---
-                    selected_tool_name = None
-                    tool_args = None
-                    tool_result = None
-                    action_reasoning = "No decision made." # Default reasoning
-                    result_summary = "No action taken."
-                    final_response_obj = None # Store the last response object from the loop
-                    max_tool_calls = 2 # Limit autonomous sequential calls
-                    tool_calls_made = 0
-                    action_error = None
-
-                    try:
-                        # 1. Gather Context
-                        context_summary = "Gurt is considering an autonomous action.\n"
-                        context_summary += f"Current Mood: {cog.current_mood}\n"
-                        active_goals = await cog.memory_manager.get_goals(status='active', limit=3)
-                        if active_goals: context_summary += f"Active Goals:\n" + json.dumps(active_goals, indent=2)[:500] + "...\n"
-                        recent_actions = await cog.memory_manager.get_internal_action_logs(limit=5)
-                        if recent_actions: context_summary += f"Recent Internal Actions:\n" + json.dumps(recent_actions, indent=2)[:500] + "...\n"
-                        traits = await cog.memory_manager.get_all_personality_traits()
-                        if traits: context_summary += f"Personality Snippet: { {k: round(v, 2) for k, v in traits.items() if k in ['mischief', 'curiosity', 'chattiness']} }\n"
-
-                        # 2. Prepare Tools
-                        excluded_tools = {"create_new_tool"}
-                        preprocessed_declarations = []
-                        if TOOLS:
-                            for decl in TOOLS:
-                                if decl.name in excluded_tools: continue
-                                preprocessed_params = _preprocess_schema_for_vertex(decl.parameters) if isinstance(decl.parameters, dict) else decl.parameters
-                                preprocessed_declarations.append(types.FunctionDeclaration(name=decl.name, description=decl.description, parameters=preprocessed_params))
-                        genai_tool = types.Tool(function_declarations=preprocessed_declarations) if preprocessed_declarations else None
-                        tools_list = [genai_tool] if genai_tool else None
-
-                        # 3. Define Prompt
-                        system_prompt = (
-                            "You are the decision-making module for Gurt's autonomous actions. Evaluate the context and decide if an action is appropriate. "
-                            "Your goal is natural, proactive engagement aligned with Gurt's persona (informal, slang, tech/internet savvy, sometimes mischievous). "
-                            "Actions can be random, goal-related, or contextually relevant. Avoid repetitive patterns.\n\n"
-                            "**RESPONSE PROTOCOL (CRITICAL):**\n"
-                            "Based on the context, determine if an autonomous action is necessary or desirable. Your response MUST be a native function call to one of the provided tools.\n"
-                            "   - If you decide to perform a specific action, call the relevant tool function.\n"
-                            "   - If you decide NOT to perform any specific action, call the `no_operation` tool. Do NOT output any text other than a function call."
-                        )
-                        user_prompt = f"Context:\n{context_summary}\n\nBased on the context, should Gurt perform an autonomous action now? If yes, call the appropriate tool function. If no, respond with 'NO_ACTION' and reasoning."
-
-                        # 4. Prepare Initial Contents
-                        contents: List[types.Content] = [types.Content(role="user", parts=[types.Part(text=user_prompt)])]
-
-                        # 5. Tool Execution Loop (Limited Iterations)
-                        while tool_calls_made < max_tool_calls:
-                            print(f"Autonomous Action: Making API call (Iteration {tool_calls_made + 1}/{max_tool_calls})...")
-
-                            # Prepare Generation Config for this iteration
-                            current_gen_config_dict = {
-                                "temperature": 0.7, "max_output_tokens": 4096,
-                                "safety_settings": STANDARD_SAFETY_SETTINGS, "system_instruction": system_prompt,
-                            }
-                            if tools_list:
-                                current_gen_config_dict["tools"] = tools_list
-                                current_gen_config_dict["tool_config"] = types.ToolConfig(
-                                    function_calling_config=types.FunctionCallingConfig(mode=types.FunctionCallingConfigMode.ANY)
-                                )
-                            current_gen_config = types.GenerateContentConfig(**current_gen_config_dict)
-
-                            # Call API
-                            current_response_obj = await call_google_genai_api_with_retry(
-                                cog=cog, model_name=cog.default_model, contents=contents,
-                                generation_config=current_gen_config, request_desc=f"Autonomous Action Loop {tool_calls_made + 1}"
-                            )
-                            final_response_obj = current_response_obj # Store the latest response
-
-                            if not current_response_obj or not current_response_obj.candidates:
-                                action_error = "API call failed to return candidates."
-                                print(f"  - Error: {action_error}")
-                                break # Exit loop on critical API failure
-
-                            candidate = current_response_obj.candidates[0]
-
-                            # --- Check for Native Function Call(s) and Text Parts in this turn's response ---
-                            function_calls_found_in_turn = []
-                            text_parts_in_turn = []
-                            if candidate.content and candidate.content.parts:
-                                function_calls_found_in_turn = [part.function_call for part in candidate.content.parts if hasattr(part, 'function_call') and isinstance(part.function_call, types.FunctionCall) and part.function_call.name]
-                                text_parts_in_turn = [part.text for part in candidate.content.parts if hasattr(part, 'text') and part.text is not None and isinstance(part.text, str) and part.text.strip()]
-
-                            if text_parts_in_turn:
-                                # Log a warning if unexpected text is present alongside potential function calls
-                                all_text_from_parts = " ".join(text_parts_in_turn)
-                                print(f"⚠️ WARNING: Autonomous action model response included text alongside function calls ({[fc.name for fc in function_calls_found_in_turn]}). Text: '{all_text_from_parts[:200]}...'")
-                                # Note: The text content is NOT processed or acted upon here, only logged.
-
-                            if function_calls_found_in_turn:
-                                # Append model's response (containing calls and possibly text)
-                                contents.append(candidate.content)
-                                # Count this turn as making tool requests (even if it also had text)
-                                tool_calls_made += 1
-
-                                # Check if the ONLY call is no_operation - this signals sequence end
-                                if len(function_calls_found_in_turn) == 1 and function_calls_found_in_turn[0].name == "no_operation":
-                                    print("  - AI called only no_operation. Ending action sequence.")
-                                    action_reasoning = "AI explicitly chose no_operation."
-                                    # Process the no_operation call to get its standard result format for logging
-                                    no_op_response_part = await process_requested_tools(cog, function_calls_found_in_turn[0])
-                                    # Append the function response part
-                                    contents.append(types.Content(role="function", parts=[no_op_response_part]))
-                                    result_summary = _create_result_summary(no_op_response_part.function_response.response)
-                                    selected_tool_name = "no_operation" # Log the tool name
-                                    tool_args = {} # no_operation usually has no args
-                                    break # Exit loop after processing no_operation
-
-                                # Process all tool calls found in this turn (excluding no_operation if others are present)
-                                print(f"  - AI requested {len(function_calls_found_in_turn)} tool(s): {[fc.name for fc in function_calls_found_in_turn]} (Turn {tool_calls_made}/{max_tool_calls})")
-
-                                function_response_parts = []
-                                # Execute all requested tools in this turn
-                                for func_call in function_calls_found_in_turn:
-                                     # Only process if it's not a solitary no_operation (handled above)
-                                     if not (len(function_calls_found_in_turn) == 1 and func_call.name == "no_operation"):
-                                         print(f"    - Executing tool: {func_call.name}")
-                                         response_part = await process_requested_tools(cog, func_call)
-                                         function_response_parts.append(response_part)
-                                         # Store details of the *last* executed tool for logging/reporting AFTER the loop
-                                         selected_tool_name = func_call.name
-                                         tool_args = dict(func_call.args) if func_call.args else {}
-                                         tool_result = response_part.function_response.response # Store the result dict
-                                         # Check if the tool itself returned an error
-                                         if isinstance(tool_result, dict) and "error" in tool_result:
-                                             print(f"  - Tool execution failed: {tool_result['error']}. Ending sequence.")
-                                             action_error = f"Tool {selected_tool_name} failed: {tool_result['error']}"
-                                             # Append the function response part even on error
-                                             if function_response_parts:
-                                                contents.append(types.Content(role="function", parts=function_response_parts))
-                                             break # Stop processing tools in this turn and exit the main loop
-
-                                # Append a single function role turn containing ALL executed tool response parts
-                                if function_response_parts:
-                                    contents.append(types.Content(role="function", parts=function_response_parts))
-                                    result_summary = _create_result_summary(tool_result) # Use the result of the last executed tool
-                                    # If we broke due to tool error, action_error is already set.
-                                    if action_error:
-                                        break # Exit main loop if a tool failed execution
-
-                                # Continue loop if tool limit not reached and no tool execution error
-                                if not action_error and tool_calls_made < max_tool_calls:
-                                    print("  - Tools processed. Continuing tool execution loop.")
-                                    continue # Continue to the next iteration
-                                else:
-                                    break # Exit loop (either hit max calls or tool error)
-
-                            else: # No function calls found in this turn's response
-                                # No function call found - check if any text was present (already logged above)
-                                print("  - No function calls requested by AI in this turn. Exiting loop.")
-                                # If there was text, it's already logged. If not, the model might have outputted nothing actionable.
-                                # Action reasoning will be set below based on loop exit condition.
-                                break # Exit loop
-
-                        # End of while loop
-
-                        # Determine final reasoning if not set by NO_ACTION or explicit call reasoning
-                        if action_reasoning == "No decision made." and selected_tool_name:
-                             action_reasoning = f"Executed tool '{selected_tool_name}' based on autonomous decision."
-                        elif action_reasoning == "No decision made.":
-                             # This case is reached if the loop finished without any function calls being requested
-                             # The model might have outputted text instead, or nothing actionable.
-                             # The text presence is logged.
-                             if text_parts_in_turn:
-                                 # Use the logged text as the reasoning if available
-                                 action_reasoning = f"Autonomous sequence ended. Model outputted text: '{all_text_from_parts[:100]}...'"
-                                 result_summary = action_reasoning
-                             else:
-                                action_reasoning = "Autonomous sequence completed without specific action or reasoning provided (model outputted no function call)."
-                                result_summary = "No action taken."
-
-
-                        # Handle loop limit reached
-                        if tool_calls_made >= max_tool_calls:
-                            print(f"  - Reached max tool call limit ({max_tool_calls}).")
-                            if not action_error: # If no error occurred on the last call
-                                action_error = "Max tool call limit reached."
-                                if not action_reasoning or action_reasoning == "No decision made.":
-                                     action_reasoning = action_error
-                                if result_summary == "No action taken.":
-                                    result_summary = action_error
-
-
-                    except Exception as auto_e:
-                        print(f"  - Error during autonomous action processing: {auto_e}")
-                        traceback.print_exc()
-                        action_error = f"Error during processing: {type(auto_e).__name__}: {auto_e}"
-                        result_summary = action_error
-                        # Ensure these are None if an error occurred before execution
-                        selected_tool_name = selected_tool_name or ("Error" if action_error else "None")
-                        tool_args = tool_args or {}
-
-                    # 7. Log Action (always log the attempt/decision)
-                    try:
-                        # Use the state determined by the loop/error handling
-                        await cog.memory_manager.add_internal_action_log(
-                            # Log the tool name that was *intended* or *executed* if any, otherwise indicate None/Error
-                            tool_name= selected_tool_name,
-                            arguments=tool_args,
-                            reasoning=action_reasoning,
-                            result_summary=result_summary
-                        )
-                    except Exception as log_e:
-                        print(f"  - Error logging autonomous action attempt to memory: {log_e}")
-                        traceback.print_exc()
-
-                    # 8. Report Initial Action (Optional) - Report only if a tool was successfully called AND it wasn't no_operation
-                    if AUTONOMOUS_ACTION_REPORT_CHANNEL_ID and selected_tool_name and selected_tool_name != "no_operation" and not action_error:
-                        try:
-                            report_channel_id = int(AUTONOMOUS_ACTION_REPORT_CHANNEL_ID)
-                            channel = cog.bot.get_channel(report_channel_id)
-                            if channel and isinstance(channel, discord.TextChannel):
-                                report_content = (
-                                    f"⚙️ Gurt autonomously executed **{selected_tool_name}**.\n"
-                                    f"**Reasoning:** {action_reasoning}\n"
-                                    f"**Args:** `{json.dumps(tool_args)}`\n"
-                                    f"**Result:** `{result_summary}`"
-                                )
-                                if len(report_content) > 2000: report_content = report_content[:1997] + "..."
-                                await channel.send(report_content)
-                                print(f"  - Reported autonomous action to channel {report_channel_id}.")
-                            # ... (rest of reporting error handling) ...
-                        except Exception as report_e:
-                            print(f"  - Error reporting autonomous action to Discord: {report_e}")
-                            traceback.print_exc()
-
-                    print("--- Autonomous Action Cycle Complete ---")
-                    # --- End Refactored Autonomous Action Logic ---
-
-                # Update check timestamp regardless of whether probability was met or action occurred
-                cog.last_internal_action_check = now
-
+    # Ensure these except blocks match the initial 'try' at the function start
     except asyncio.CancelledError:
         print("Background processing task cancelled")
     except Exception as e:
@@ -619,109 +377,9 @@ def _create_result_summary(tool_result: Any, max_len: int = 200) -> str:
 
 
 # --- Automatic Mood Change Logic ---
-
+# (Commented out or removed if not needed)
 # async def maybe_change_mood(cog: 'GurtCog'):
-#     """Checks if enough time has passed and changes mood based on context."""
-#     now = time.time()
-#     time_since_last_change = now - cog.last_mood_change
-#     next_change_interval = random.uniform(MOOD_CHANGE_INTERVAL_MIN, MOOD_CHANGE_INTERVAL_MAX)
-#
-#     if time_since_last_change > next_change_interval:
-#         print(f"Time for a mood change (interval: {next_change_interval:.0f}s). Analyzing context...")
-#         try:
-#             # 1. Analyze Sentiment
-#             positive_sentiment_score = 0
-#             negative_sentiment_score = 0
-#             neutral_sentiment_score = 0
-#             sentiment_channels_count = 0
-#             for channel_id, sentiment_data in cog.conversation_sentiment.items():
-#                 # Consider only channels active recently (e.g., within the last hour)
-#                 if now - cog.channel_activity.get(channel_id, 0) < 3600:
-#                     if sentiment_data["overall"] == "positive":
-#                         positive_sentiment_score += sentiment_data["intensity"]
-#                     elif sentiment_data["overall"] == "negative":
-#                         negative_sentiment_score += sentiment_data["intensity"]
-#                     else:
-#                         neutral_sentiment_score += sentiment_data["intensity"]
-#                     sentiment_channels_count += 1
-#
-#             avg_pos_intensity = positive_sentiment_score / sentiment_channels_count if sentiment_channels_count > 0 else 0
-#             avg_neg_intensity = negative_sentiment_score / sentiment_channels_count if sentiment_channels_count > 0 else 0
-#             avg_neu_intensity = neutral_sentiment_score / sentiment_channels_count if sentiment_channels_count > 0 else 0
-#             print(f"  - Sentiment Analysis: Pos={avg_pos_intensity:.2f}, Neg={avg_neg_intensity:.2f}, Neu={avg_neu_intensity:.2f}")
-#
-#             # Determine dominant sentiment category
-#             dominant_sentiment = "neutral"
-#             if avg_pos_intensity > avg_neg_intensity and avg_pos_intensity > avg_neu_intensity:
-#                 dominant_sentiment = "positive"
-#             elif avg_neg_intensity > avg_pos_intensity and avg_neg_intensity > avg_neu_intensity:
-#                 dominant_sentiment = "negative"
-#
-#             # 2. Get Personality Traits
-#             personality_traits = await cog.memory_manager.get_all_personality_traits()
-#             if not personality_traits:
-#                 personality_traits = BASELINE_PERSONALITY.copy()
-#                 print("  - Warning: Using baseline personality traits for mood change.")
-#             else:
-#                 print(f"  - Personality Traits: Mischief={personality_traits.get('mischief', 0):.2f}, Sarcasm={personality_traits.get('sarcasm_level', 0):.2f}, Optimism={personality_traits.get('optimism', 0.5):.2f}")
-#
-#             # 3. Calculate Mood Weights
-#             mood_weights = {mood: 1.0 for mood in MOOD_OPTIONS} # Start with base weight
-#
-#             # Apply Sentiment Bias (e.g., boost factor of 2)
-#             sentiment_boost = 2.0
-#             if dominant_sentiment == "positive":
-#                 for mood in MOOD_CATEGORIES.get("positive", []):
-#                     mood_weights[mood] *= sentiment_boost
-#             elif dominant_sentiment == "negative":
-#                 for mood in MOOD_CATEGORIES.get("negative", []):
-#                     mood_weights[mood] *= sentiment_boost
-#             else: # Neutral sentiment
-#                  for mood in MOOD_CATEGORIES.get("neutral", []):
-#                     mood_weights[mood] *= (sentiment_boost * 0.75) # Slightly boost neutral too
-#
-#             # Apply Personality Bias
-#             mischief_trait = personality_traits.get('mischief', 0.5)
-#             sarcasm_trait = personality_traits.get('sarcasm_level', 0.3)
-#             optimism_trait = personality_traits.get('optimism', 0.5)
-#
-#             if mischief_trait > 0.6: # If high mischief
-#                 mood_weights["mischievous"] *= (1.0 + mischief_trait) # Boost mischievous based on trait level
-#             if sarcasm_trait > 0.5: # If high sarcasm
-#                 mood_weights["sarcastic"] *= (1.0 + sarcasm_trait)
-#                 mood_weights["sassy"] *= (1.0 + sarcasm_trait * 0.5) # Also boost sassy a bit
-#             if optimism_trait > 0.7: # If very optimistic
-#                 for mood in MOOD_CATEGORIES.get("positive", []):
-#                     mood_weights[mood] *= (1.0 + (optimism_trait - 0.5)) # Boost positive moods
-#             elif optimism_trait < 0.3: # If pessimistic
-#                  for mood in MOOD_CATEGORIES.get("negative", []):
-#                     mood_weights[mood] *= (1.0 + (0.5 - optimism_trait)) # Boost negative moods
-#
-#             # Ensure current mood has very low weight to avoid picking it again
-#             mood_weights[cog.current_mood] = 0.01
-#
-#             # Filter out moods with zero weight before choices
-#             valid_moods = [mood for mood, weight in mood_weights.items() if weight > 0]
-#             valid_weights = [mood_weights[mood] for mood in valid_moods]
-#
-#             if not valid_moods:
-#                  print("  - Error: No valid moods with positive weight found. Skipping mood change.")
-#                  return # Skip change if something went wrong
-#
-#             # 4. Select New Mood
-#             new_mood = random.choices(valid_moods, weights=valid_weights, k=1)[0]
-#
-#             # 5. Update State & Log
-#             old_mood = cog.current_mood
-#             cog.current_mood = new_mood
-#             cog.last_mood_change = now
-#             print(f"Mood automatically changed: {old_mood} -> {new_mood} (Influenced by: Sentiment={dominant_sentiment}, Traits)")
-#
-#         except Exception as e:
-#             print(f"Error during automatic mood change: {e}")
-#             traceback.print_exc()
-#             # Still update timestamp to avoid retrying immediately on error
-#             cog.last_mood_change = now
+# ...
 
 # --- Interest Update Logic ---
 
@@ -757,7 +415,7 @@ async def update_interests(cog: 'GurtCog'):
                              print(f"  - Determined topic '{topic}' for reaction msg {message_id} retrospectively.")
                          else: print(f"  - Could not determine topic for reaction msg {message_id} retrospectively."); continue
                     else: print(f"  - Could not find Gurt msg {message_id} in cache for reaction analysis."); continue
-                except Exception as topic_e: print(f"  - Error determining topic for reaction msg {message_id}: {topic_e}"); continue
+                except Exception as topic_e: print(f"  - Error determining topic for reaction msg {message_id}: {topic_e}"); continue # Corrected indent
 
             if topic:
                 topic = topic.lower().strip()

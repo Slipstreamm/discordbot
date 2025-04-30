@@ -1,3 +1,4 @@
+import json
 import discord
 import time
 import datetime
@@ -54,10 +55,38 @@ def gather_conversation_context(cog: 'GurtCog', channel_id: int, current_message
                 content_parts.append(attachment_str)
 
             # Join all parts with spaces
-            content = " ".join(content_parts).strip()
+            # --- New Handling for Tool Request/Response Turns ---
+            author_id = msg_data['author'].get('id')
+            is_tool_request = author_id == str(cog.bot.user.id) and msg_data.get('tool_calls') is not None
+            is_tool_response = author_id == "FUNCTION" and msg_data.get('function_results') is not None
 
-            context_api_messages.append({"role": role, "content": content})
+            if is_tool_request:
+                # Format tool request turn
+                tool_names = ", ".join([tc['name'] for tc in msg_data['tool_calls']])
+                content = f"[System Note: Gurt requested tool(s): {tool_names}]" # Simple summary
+                role = "assistant" # Represent as part of the assistant's turn/thought process
+            elif is_tool_response:
+                # Format tool response turn
+                result_summary_parts = []
+                for res in msg_data['function_results']:
+                    res_str = json.dumps(res.get("response", {}))
+                    truncated_res = (res_str[:150] + '...') if len(res_str) > 153 else res_str
+                    result_summary_parts.append(f"Tool: {res.get('name', 'N/A')}, Result: {truncated_res}")
+                result_summary = "; ".join(result_summary_parts)
+                content = f"[System Note: Tool Execution Result: {result_summary}]"
+                role = "function" # Keep role as 'function' for API compatibility if needed, or maybe 'system'? Let's try 'function'.
+            else:
+                # --- Original Handling for User/Assistant messages ---
+                content = " ".join(content_parts).strip()
+                # Role is already determined above
+
+            # Append if content is not empty
+            if content:
+                context_api_messages.append({"role": role, "content": content})
+            # --- End Modified Handling ---
+
     return context_api_messages
+
 
 async def get_memory_context(cog: 'GurtCog', message: discord.Message) -> Optional[str]:
     """Retrieves relevant past interactions and facts to provide memory context."""

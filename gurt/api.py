@@ -1,5 +1,8 @@
+from collections import deque
 import ssl
 import certifi
+
+from discordbot.wheatley.config import CONTEXT_WINDOW_SIZE
 
 def patch_ssl_certifi():
     original_create_default_context = ssl.create_default_context
@@ -969,23 +972,79 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                 print(f"AI requested {len(function_calls_found)} tool(s): {[fc.name for fc in function_calls_found]} (Turn {tool_calls_made}/{max_tool_calls})")
 
                 # Append the model's response content (containing the function call parts)
-                contents.append(candidate.content)
+                model_request_content = candidate.content
+                contents.append(model_request_content)
+
+                # Add model request turn to cache
+                try:
+                    # Simple text representation for cache
+                    model_request_cache_entry = {
+                        "id": f"bot_tool_req_{message.id}_{int(time.time())}_{tool_calls_made}",
+                        "author": {"id": str(cog.bot.user.id), "name": cog.bot.user.name, "display_name": cog.bot.user.display_name, "bot": True},
+                        "content": f"[System Note: Gurt requested tool(s): {', '.join([fc.name for fc in function_calls_found])}]",
+                        "created_at": datetime.datetime.now().isoformat(),
+                        "attachments": [], "embeds": False, "mentions": [], "replied_to_message_id": None,
+                        "channel": message.channel, "guild": message.guild, "reference": None, "mentioned_users_details": [],
+                        # Add tool call details for potential future use in context building
+                        "tool_calls": [{"name": fc.name, "args": dict(fc.args) if fc.args else {}} for fc in function_calls_found]
+                    }
+                    cog.message_cache['by_channel'].setdefault(channel_id, deque(maxlen=CONTEXT_WINDOW_SIZE)).append(model_request_cache_entry)
+                    cog.message_cache['global_recent'].append(model_request_cache_entry)
+                    print(f"Cached model's tool request turn.")
+                except Exception as cache_err:
+                    print(f"Error caching model's tool request turn: {cache_err}")
+
 
                 # --- Execute all requested tools and gather response parts ---
                 function_response_parts = []
+                function_results_for_cache = [] # Store results for caching
                 for func_call in function_calls_found:
-                     # Execute the tool using the updated helper (which handles no_op internally if needed)
-                     response_part = await process_requested_tools(cog, func_call)
-                     function_response_parts.append(response_part)
+                    # Execute the tool using the updated helper
+                    response_part = await process_requested_tools(cog, func_call)
+                    function_response_parts.append(response_part)
+                    # Extract result for caching (assuming response_part.function_response exists)
+                    if hasattr(response_part, 'function_response') and response_part.function_response:
+                        function_results_for_cache.append({
+                            "name": response_part.function_response.name,
+                            "response": response_part.function_response.response # This is already the dict result
+                        })
 
-                # Append a single function role turn containing ALL response parts
+
+                # Append a single function role turn containing ALL response parts to the API contents
                 if function_response_parts:
-                    # Role should be 'function' for tool responses in google.generativeai
-                    contents.append(types.Content(role="function", parts=function_response_parts))
-                else:
-                     print("Warning: Function calls found, but no response parts generated.")
+                    function_response_content = types.Content(role="function", parts=function_response_parts)
+                    contents.append(function_response_content)
 
-                # Continue the loop
+                    # Add function response turn to cache
+                    try:
+                        # Simple text representation for cache
+                        # Join results for multiple calls if needed, truncate long outputs
+                        result_summary_parts = []
+                        for res in function_results_for_cache:
+                            res_str = json.dumps(res.get("response", {}))
+                            truncated_res = (res_str[:150] + '...') if len(res_str) > 153 else res_str
+                            result_summary_parts.append(f"Tool: {res.get('name', 'N/A')}, Result: {truncated_res}")
+                        result_summary = "; ".join(result_summary_parts)
+
+                        function_response_cache_entry = {
+                            "id": f"bot_tool_res_{message.id}_{int(time.time())}_{tool_calls_made}",
+                            "author": {"id": "FUNCTION", "name": "Tool Execution", "display_name": "Tool Execution", "bot": True}, # Special author ID?
+                            "content": f"[System Note: Tool Execution Result: {result_summary}]",
+                            "created_at": datetime.datetime.now().isoformat(),
+                            "attachments": [], "embeds": False, "mentions": [], "replied_to_message_id": None,
+                            "channel": message.channel, "guild": message.guild, "reference": None, "mentioned_users_details": [],
+                            # Store the full function results
+                            "function_results": function_results_for_cache
+                        }
+                        cog.message_cache['by_channel'].setdefault(channel_id, deque(maxlen=CONTEXT_WINDOW_SIZE)).append(function_response_cache_entry)
+                        cog.message_cache['global_recent'].append(function_response_cache_entry)
+                        print(f"Cached function response turn.")
+                    except Exception as cache_err:
+                        print(f"Error caching function response turn: {cache_err}")
+                else:
+                    print("Warning: Function calls found, but no response parts generated.")
+
+                # No 'continue' statement needed here; the loop naturally continues
             else:
                 # No function calls found in this response's parts
                 print("No tool calls requested by AI in this turn. Exiting loop.")
