@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 # --- Tool Mapping Import ---
 # Import the mapping to execute tools by name
 from .tools import TOOL_MAPPING
+from .config import TOOLS  # Import FunctionDeclaration list for tool metadata
 
 # --- Background Task ---
 
@@ -339,9 +340,29 @@ async def background_processing_task(cog: 'GurtCog'):
                             },
                             "required": ["should_act", "reasoning"]
                         }
-                        # Filter available tools - exclude highly dangerous/disruptive ones unless explicitly needed?
-                        # For now, let the LLM choose from all, but guide it in the prompt.
-                        available_tools_desc = "\n".join([f"- {name}" for name in TOOL_MAPPING.keys() if name not in ["create_new_tool"]]) # Exclude meta-tool for safety
+                        # Build a detailed tool list for the LLM using TOOLS metadata
+                        def _tool_signature(decl):
+                            params = decl.parameters.get("properties", {})
+                            required = set(decl.parameters.get("required", []))
+                            param_strs = []
+                            for pname, pinfo in params.items():
+                                typ = pinfo.get("type", "any")
+                                desc = pinfo.get("description", "")
+                                req = "required" if pname in required else "optional"
+                                param_strs.append(f"{pname}: {typ} ({req})")
+                            return ", ".join(param_strs)
+
+                        # Exclude meta/dangerous tools
+                        excluded_tools = {"create_new_tool"}
+                        available_tools_desc = ""
+                        for decl in TOOLS:
+                            if decl.name in excluded_tools:
+                                continue
+                            sig = _tool_signature(decl)
+                            available_tools_desc += f"- {decl.name}: {decl.description}"
+                            if sig:
+                                available_tools_desc += f" [{sig}]"
+                            available_tools_desc += "\n"
 
                         system_prompt = (
                             "yo you Gurt. u vibin in the bg, thinkin if u should do sum wild shi or just chill. "
