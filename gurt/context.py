@@ -18,9 +18,7 @@ def gather_conversation_context(cog: 'GurtCog', channel_id: int, current_message
     context_api_messages = []
     if channel_id in cog.message_cache['by_channel']:
         cached = list(cog.message_cache['by_channel'][channel_id])
-        # Ensure the current message isn't duplicated
-        if cached and cached[-1]['id'] == str(current_message_id):
-            cached = cached[:-1]
+        # The current message is now included when selecting the context window below
         context_messages_data = cached[-CONTEXT_WINDOW_SIZE:] # Use config value
 
         for msg_data in context_messages_data:

@@ -1094,7 +1094,7 @@ async def get_proactive_ai_response(cog: 'GurtCog', message: discord.Message, tr
             response_schema_dict=PROACTIVE_PLAN_SCHEMA['schema'],
             model_name=FALLBACK_MODEL, # Use a potentially faster/cheaper model for planning
             temperature=0.5,
-            max_tokens=300
+            max_tokens=2000
         )
         # Unpack the tuple, we only need the parsed data (plan) here
         plan_parsed_data, _ = plan if plan else (None, None)
