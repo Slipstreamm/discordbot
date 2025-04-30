@@ -23,7 +23,7 @@ TAVILY_DISABLE_ADVANCED = os.getenv("TAVILY_DISABLE_ADVANCED", "false").lower() 
 # --- Model Configuration ---
 DEFAULT_MODEL = os.getenv("GURT_DEFAULT_MODEL", "gemini-2.5-flash-preview-04-17")
 FALLBACK_MODEL = os.getenv("GURT_FALLBACK_MODEL", "gemini-2.5-flash-preview-04-17")
-CUSTOM_TUNED_MODEL_ENDPOINT = os.getenv("GURT_CUSTOM_TUNED_MODEL", "gemini-2.5-flash-preview-04-17") #"projects/1079377687568/locations/us-central1/endpoints/6677946543460319232")
+CUSTOM_TUNED_MODEL_ENDPOINT = os.getenv("GURT_CUSTOM_TUNED_MODEL", "projects/1079377687568/locations/us-central1/endpoints/1922145336957075456") #"")
 SAFETY_CHECK_MODEL = os.getenv("GURT_SAFETY_CHECK_MODEL", "gemini-2.5-flash-preview-04-17") # Use a Vertex AI model for safety checks
 
 # --- Database Paths ---
