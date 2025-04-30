@@ -889,7 +889,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         # --- Prepare Generation Config ---
         # Base generation config settings (will be augmented later)
         base_generation_config_dict = {
-            "temperature": 0.85, # From user example
+            "temperature": 2, # From user example
             "top_p": 0.95,      # From user example
             "max_output_tokens": 8192, # From user example
             "safety_settings": STANDARD_SAFETY_SETTINGS, # Include standard safety settings
