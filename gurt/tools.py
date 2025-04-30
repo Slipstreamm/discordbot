@@ -1093,12 +1093,17 @@ async def restart_gurt_bot(cog: commands.Cog, channel_id: str = None) -> Dict[st
     except Exception as e:
         return {"status": "error", "error": f"Failed to restart: {str(e)}"}
 
-async def run_git_pull(cog: commands.Cog) -> Dict[str, Any]:
+async def run_git_pull(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
     """
     Runs 'git pull' in the bot's current working directory on the host machine.
-    Returns the output and status.
+    Requires authorization via user_id. Returns the output and status.
     """
-    return await execute_internal_command(cog, "git pull")
+    return await execute_internal_command(cog=cog, command="git pull", user_id=user_id)
+
+async def send_discord_message(cog: commands.Cog, channel_id: str, message_content: str) -> Dict[str, Any]:
+    """Sends a message to a specified Discord channel."""
+    print(f"Attempting to send message to channel {channel_id}: {message_content[:100]}...")
+    # Ensure this function doesn't contain the logic accidentally put in the original run_git_pull
     if not message_content:
         return {"error": "Message content cannot be empty."}
     # Limit message length

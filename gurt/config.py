@@ -963,11 +963,16 @@ def create_tools_list():
     tool_declarations.append(
         FunctionDeclaration(
             name="run_git_pull",
-            description="Runs 'git pull' in the bot's current working directory on the host machine and returns the output.",
+            description="Runs 'git pull' in the bot's current working directory on the host machine. Requires authorization via user_id. Returns the output and status.",
             parameters={
                 "type": "object",
-                "properties": {},
-                "required": []
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The Discord user ID of the user requesting the git pull. Required for authorization."
+                    }
+                },
+                "required": ["user_id"]
             }
         )
     )
