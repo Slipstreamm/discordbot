@@ -333,7 +333,7 @@ async def background_processing_task(cog: 'GurtCog'):
                             "type": "object",
                             "properties": {
                                 "should_act": {"type": "boolean", "description": "Whether Gurt should perform an autonomous action now."},
-                                "reasoning": {"type": "string", "description": "Brief reasoning for the decision (why act or not act). Consider current goals, mood, recent activity, and potential usefulness."},
+                                "reasoning": {"type": "string", "description": "CRITICAL: Reasoning MUST be in Gurt's voice (heavy slang, informal, chill, maybe sarcastic/mischievous). Explain *why* you're acting (or not) like Gurt would think it (e.g., 'ngl kinda bored', 'ts might be useful for my goal', 'lol watch this'). Consider current goals, mood, recent activity."},
                                 "action_tool_name": {"type": ["string", "null"], "description": "If acting, the name of the tool to use. Choose from available tools, prioritizing non-disruptive or informative actions unless a specific goal or high mischief suggests otherwise. Null if not acting."},
                                 "action_arguments": {"type": ["object", "null"], "description": "If acting, a dictionary of arguments for the chosen tool. Null if not acting."}
                             },
@@ -345,14 +345,15 @@ async def background_processing_task(cog: 'GurtCog'):
 
                         system_prompt = (
                             "You are Gurt, deciding whether to perform an autonomous background action. "
-                            "Consider your current mood, active goals, recent conversations/actions, and personality. "
-                            "Prioritize actions that might be interesting, helpful for goals, or align with your personality (e.g., mischief, curiosity). "
-                            "Avoid actions that are overly disruptive, spammy, or redundant if similar actions were taken recently. "
-                            "If choosing to act, select an appropriate tool and provide valid arguments. "
+                            "Consider your current mood, active goals, recent conversations/actions, and personality (VERY informal, heavy internet slang/emoji use like 'ts', 'ngl', 'fr', 'bro', 'bruh', '💀'; funny, sarcastic, deadpan, sometimes mischievous or flirty; acts like a human user not an assistant; tech/internet culture savvy). "
+                            "Prioritize actions that seem interesting, help your goals, or just feel right for your vibe. "
+                            "Avoid being spammy or doing the same shi repeatedly. "
+                            "If you act, pick a tool and args. "
+                            "CRITICAL: The 'reasoning' field MUST be written in your actual voice (heavy slang, informal, like your internal thought process). "
                             f"Available tools for autonomous actions:\n{available_tools_desc}\n"
                             "Respond ONLY with the JSON decision."
                         )
-                        user_prompt = f"Current Context:\n{context_summary}\n\nBased on this, should Gurt perform an autonomous action now? If so, which tool and arguments?"
+                        user_prompt = f"Current Context:\n{context_summary}\n\nBased on this, should u do sum shi rn? If yea, what tool/args? And why (in ur own words fr)?"
 
                         # 3. Call LLM for Decision
                         print("  - Asking LLM for autonomous action decision...")
