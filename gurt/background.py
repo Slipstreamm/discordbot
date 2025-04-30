@@ -408,13 +408,9 @@ async def background_processing_task(cog: 'GurtCog'):
                             "- **Interests:** Current interests (provided in context) should subtly guide potential actions or topics for engagement.\n"
                             "- **Social Dynamics:** Consider Gurt's current mood and relationship scores with users (if available) to modulate the nature and tone of potential actions.\n"
                             "- **Communication Style (for Inaction Reasoning Only):** While Gurt typically uses heavy internet slang, the reasoning provided when *not* acting should uniquely adopt this informal, slang-heavy voice, mimicking Gurt's internal monologue.\n\n"
-                            "**Autonomous Action Directives:**\n"
-                            "- **Proactive & Random Engagement:** Actions should not be strictly goal-oriented. Encourage random, humorous, or contextually relevant actions that align with Gurt's persona (e.g., reacting to messages, sharing relevant trivia, using playful tools).\n"
-                            "- **Natural Presence:** Prioritize actions that reinforce Gurt's role as an organic participant within the Discord community.\n"
-                            "- **Avoid Predictability:** Vary the types of actions taken; do not establish repetitive patterns.\n\n"
                             "**RESPONSE PROTOCOL (CRITICAL):**\n"
-                            "1.  **Decision to Act:** If an action is chosen, the response MUST contain ONLY the function call object for the selected tool, including its name and arguments. NO additional text or explanation is permitted.\n"
-                            "2.  **Decision Not to Act:** If no action is deemed appropriate, the response MUST contain ONLY a brief text explanation. This explanation MUST be written in Gurt's characteristic informal, slang-heavy voice (simulating an internal thought). NO function calls (including 'no_operation') are permitted in this case.\n\n"
+                            "1.  **Decision to Act:** If you decide to perform an action, respond ONLY with a native function call for the chosen tool. DO NOT include any other text or JSON.\n"
+                            "2.  **Decision Not to Act:** If you decide NOT to perform an action, respond ONLY with a JSON object matching the provided schema. This JSON MUST contain `should_act: false` and your `reasoning` in Gurt's informal voice. DO NOT include a function call.\n\n"
                             "Analyze the provided context against these directives and select the appropriate response format."
                         )
                         user_prompt = f"Context:\n{context_summary}\n\nEvaluate the context based on the system guidelines. Determine if an autonomous action is appropriate. If yes, provide ONLY the function call. If no, provide ONLY the reasoning text in Gurt's informal voice." # Formalized user prompt
@@ -455,7 +451,7 @@ async def background_processing_task(cog: 'GurtCog'):
                         # 5. Process Response - Stricter Interpretation
                         if response_obj and response_obj.candidates:
                             candidate = response_obj.candidates[0]
-                            # Check *only* for a native function call
+                            # Check *only* for a native function call FIRST
                             function_call = find_function_call_in_parts(candidate.content.parts)
 
                             if function_call:
@@ -463,6 +459,7 @@ async def background_processing_task(cog: 'GurtCog'):
                                 selected_tool_name = function_call.name
                                 tool_args = dict(function_call.args) if function_call.args else {}
                                 # Get text response *only* for potential reasoning context, not for action details
+                                # In this case, text response should ideally be empty based on prompt instructions
                                 text_reasoning = _get_response_text(response_obj)
                                 action_reasoning = text_reasoning if text_reasoning else f"Model decided to call function '{selected_tool_name}' via native call."
                                 print(f"  - Model called function natively: Tool='{selected_tool_name}', Args={tool_args}, Text Reason='{action_reasoning}'")
@@ -475,13 +472,47 @@ async def background_processing_task(cog: 'GurtCog'):
                                     function_call = None # Clear function call
                                 # else: Action will proceed based on valid function_call object
                             else:
-                                # NO native function call found - definitively means NO action
-                                action_reasoning = _get_response_text(response_obj) or "Model did not call a function and provided no text."
-                                print(f"  - Model did NOT call a function natively. Text Response/Reason: {action_reasoning}")
-                                result_summary = f"No action taken. Reason: {action_reasoning}"
-                                selected_tool_name = None # Ensure no execution
-                                function_call = None    # Ensure no execution
-                                tool_args = None        # Ensure no execution
+                                # NO native function call found - attempt to parse JSON for inaction decision
+                                print("  - No native function call found. Attempting to parse JSON for inaction decision.")
+                                try:
+                                    # Use get_internal_ai_json_response's parsing logic
+                                    decision_data, _ = get_internal_ai_json_response(
+                                         cog=cog, # Pass cog for potential logging/error handling within helper
+                                         prompt_messages=[], # Not needed here, already have response_obj
+                                         task_description="Autonomous Action Inaction Parsing",
+                                         response_schema_dict=action_decision_schema,
+                                         model_name_override=None, # Not making a new API call
+                                         temperature=None, # Not making a new API call
+                                         max_tokens=None, # Not making a new API call
+                                         response_obj_override=response_obj # Pass the existing response object
+                                    )
+
+                                    if decision_data and decision_data.get("should_act") is False:
+                                        action_reasoning = decision_data.get("reasoning", "Model decided not to act.")
+                                        result_summary = f"No action taken. Reason: {action_reasoning}"
+                                        selected_tool_name = None # Ensure no execution
+                                        function_call = None    # Ensure no execution
+                                        tool_args = None        # Ensure no execution
+                                        print(f"  - Parsed JSON for inaction decision. Reason: {action_reasoning}")
+                                    else:
+                                        # API call succeeded, but neither native function call nor valid inaction JSON was found
+                                        error_msg = "Autonomous action API call returned no native function call and invalid inaction JSON."
+                                        print(f"  - Error: {error_msg}")
+                                        result_summary = error_msg
+                                        action_reasoning = error_msg
+                                        selected_tool_name = None
+                                        function_call = None
+                                        tool_args = None
+                                except Exception as parse_e:
+                                     error_msg = f"Error parsing JSON for inaction decision: {parse_e}"
+                                     print(f"  - Error: {error_msg}")
+                                     traceback.print_exc()
+                                     result_summary = error_msg
+                                     action_reasoning = error_msg
+                                     selected_tool_name = None
+                                     function_call = None
+                                     tool_args = None
+
                         else:
                              # Handle case where API call succeeded but returned no candidates/response_obj
                              error_msg = "Autonomous action API call returned no response or candidates."
@@ -490,6 +521,7 @@ async def background_processing_task(cog: 'GurtCog'):
                              action_reasoning = error_msg
                              selected_tool_name = None
                              function_call = None
+                             tool_args = None
 
                     except Exception as llm_e:
                         print(f"  - Error during Google GenAI call/processing for autonomous action: {llm_e}")
@@ -498,6 +530,7 @@ async def background_processing_task(cog: 'GurtCog'):
                         action_reasoning = f"Google GenAI call/processing failed: {llm_e}"
                         selected_tool_name = None # Ensure no execution
                         function_call = None
+                        tool_args = None
 
                     # 6. Execute Action (if function was called) - Logic remains the same
                     if function_call and selected_tool_name and tool_args is not None: # Check function_call exists
@@ -530,7 +563,7 @@ async def background_processing_task(cog: 'GurtCog'):
                                 # Update tool stats for failure
                                 if selected_tool_name in cog.tool_stats:
                                      cog.tool_stats[selected_tool_name]["count"] += 1
-                                     cog.tool_stats[selected_tool_name]["failure"] += 1
+                                     cog.tool_stats[selected_name]["failure"] += 1
                         else:
                             # Should have been caught earlier, but double-check
                             print(f"  - Error: Tool '{selected_tool_name}' function not found in mapping during execution phase.")
@@ -538,16 +571,12 @@ async def background_processing_task(cog: 'GurtCog'):
 
                     # 7. Log Action (always log the attempt/decision) - Logic remains the same
                     try:
-                        log_result = await cog.memory_manager.add_internal_action_log(
+                        await cog.memory_manager.add_internal_action_log(
                             tool_name=selected_tool_name or "None", # Log 'None' if no tool was chosen
                             arguments=tool_args if selected_tool_name else None,
                             reasoning=action_reasoning,
                             result_summary=result_summary
                         )
-                        if log_result.get("status") != "logged":
-                            print(f"  - Warning: Failed to log autonomous action attempt to memory: {log_result.get('error')}")
-                    except Exception as log_e:
-                            print(f"  - Warning: Failed to log autonomous action attempt to memory: {log_result.get('error')}")
                     except Exception as log_e:
                         print(f"  - Error logging autonomous action attempt to memory: {log_e}")
                         traceback.print_exc()
