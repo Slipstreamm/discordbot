@@ -370,9 +370,9 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
             print(f"Preparing to send {response_label} content...")
 
             # --- Handle Reply ---
-            if reply_to_id:
+            if reply_to_id and isinstance(reply_to_id, str) and reply_to_id.isdigit(): # Check if it's a valid ID string
                 try:
-                    original_reply_msg = await original_message.channel.fetch_message(int(reply_to_id))
+                    original_reply_msg = await original_message.channel.fetch_message(int(reply_to_id)) # Now safe to convert
                     if original_reply_msg:
                         message_reference = original_reply_msg.to_reference(fail_if_not_exists=False) # Don't error if deleted
                         print(f"Will reply to message ID: {reply_to_id}")
@@ -382,6 +382,8 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
                     print(f"Warning: Error fetching message {reply_to_id} to reply to: {fetch_err}")
                 except Exception as e:
                      print(f"Unexpected error fetching reply message {reply_to_id}: {e}")
+            elif reply_to_id:
+                print(f"Warning: Invalid reply_to_id format received: {reply_to_id}")
 
 
             # --- Handle Pings ---
