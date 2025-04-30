@@ -7,6 +7,7 @@ import sys
 import asyncio
 import subprocess
 import importlib.util
+import argparse # Import argparse
 from commands import load_all_cogs, reload_all_cogs
 from error_handler import handle_error, patch_discord_methods, store_interaction_content
 from utils import reload_script
@@ -147,8 +148,12 @@ bot.add_command(gitpull_restart)
 @commands.is_owner()
 async def reload_cogs(ctx):
     """Reloads all cogs. (Owner Only)"""
-    await ctx.send("Reloading all cogs...")
-    reloaded_cogs, failed_reload = await reload_all_cogs(bot)
+    # Access the disable_ai flag from the bot instance or re-parse args if needed
+    # For simplicity, assume disable_ai is accessible; otherwise, need a way to pass it.
+    # Let's add it to the bot object for easier access later.
+    skip_list = getattr(bot, 'ai_cogs_to_skip', [])
+    await ctx.send(f"Reloading all cogs... (Skipping: {', '.join(skip_list) or 'None'})")
+    reloaded_cogs, failed_reload = await reload_all_cogs(bot, skip_cogs=skip_list)
     if reloaded_cogs:
         await ctx.send(f"Successfully reloaded cogs: {', '.join(reloaded_cogs)}")
     if failed_reload:
@@ -160,7 +165,9 @@ bot.add_command(reload_cogs)
 @commands.is_owner()
 async def gitpull_reload(ctx):
     """Pulls latest code from git and reloads all cogs. (Owner Only)"""
-    await ctx.send("Pulling latest code from git...")
+    # Access the disable_ai flag from the bot instance or re-parse args if needed
+    skip_list = getattr(bot, 'ai_cogs_to_skip', [])
+    await ctx.send(f"Pulling latest code from git... (Will skip reloading: {', '.join(skip_list) or 'None'})")
     proc = await asyncio.create_subprocess_exec(
         "git", "pull",
         stdout=asyncio.subprocess.PIPE,
@@ -184,10 +191,10 @@ async def gitpull_reload(ctx):
             stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await proc.communicate()
-        output = stdout.decode().strip() + "\n" + stderr.decode().strip()
+    output = stdout.decode().strip() + "\n" + stderr.decode().strip()
     if proc.returncode == 0:
         await ctx.send(f"Git pull successful:\n```\n{output}\n```Reloading all cogs...")
-        reloaded_cogs, failed_reload = await reload_all_cogs(bot)
+        reloaded_cogs, failed_reload = await reload_all_cogs(bot, skip_cogs=skip_list)
         if reloaded_cogs:
             await ctx.send(f"Successfully reloaded cogs: {', '.join(reloaded_cogs)}")
         if failed_reload:
@@ -202,7 +209,7 @@ bot.add_command(gitpull_reload)
 
 # The unified API service is now handled by run_unified_api.py
 
-async def main():
+async def main(args): # Pass parsed args
     """Main async function to load cogs and start the bot."""
     TOKEN = os.getenv('DISCORD_TOKEN')
     if not TOKEN:
@@ -231,10 +238,25 @@ async def main():
     os.environ["DISCORD_REDIRECT_URI"] = oauth_redirect_uri
     print(f"OAuth redirect URI set to: {oauth_redirect_uri}")
 
+    # --- Define AI cogs to potentially skip ---
+    ai_cogs_to_skip = []
+    if args.disable_ai:
+        print("AI functionality disabled via command line flag.")
+        ai_cogs_to_skip = [
+            "cogs.ai_cog",
+            "cogs.multi_conversation_ai_cog",
+            # Add any other AI-related cogs from the 'cogs' folder here
+        ]
+        # Store the skip list on the bot object for reload commands
+        bot.ai_cogs_to_skip = ai_cogs_to_skip
+    else:
+        bot.ai_cogs_to_skip = [] # Ensure it exists even if empty
+
+
     try:
         async with bot:
-            # Load all cogs from the 'cogs' directory
-            await load_all_cogs(bot)
+            # Load all cogs from the 'cogs' directory, skipping AI if requested
+            await load_all_cogs(bot, skip_cogs=ai_cogs_to_skip)
 
             # --- Share GurtCog instance with the sync API ---
             try:
@@ -248,26 +270,26 @@ async def main():
                 print(f"Error sharing GurtCog instance: {e}")
             # ------------------------------------------------
 
-            # --- Manually Load FreakTetoCog ---
-            try:
-                freak_teto_cog_path = "discordbot.freak_teto.cog"
-                await bot.load_extension(freak_teto_cog_path)
-                print(f"Successfully loaded FreakTetoCog from {freak_teto_cog_path}")
-                # Optional: Share FreakTetoCog instance if needed later, similar to GurtCog
-                # freak_teto_cog_instance = bot.get_cog("FreakTetoCog")
-                # if freak_teto_cog_instance:
-                #     # Share instance logic here if required by other modules
-                #     print("Successfully shared FreakTetoCog instance.")
-                # else:
-                #     print("Warning: FreakTetoCog not found after loading.")
-            except commands.ExtensionAlreadyLoaded:
-                print(f"FreakTetoCog ({freak_teto_cog_path}) already loaded.")
-            except commands.ExtensionNotFound:
-                print(f"Error: FreakTetoCog not found at {freak_teto_cog_path}")
-            except Exception as e:
-                print(f"Failed to load FreakTetoCog: {e}")
-                import traceback
-                traceback.print_exc()
+            # --- Manually Load FreakTetoCog (only if AI is NOT disabled) ---
+            if not args.disable_ai:
+                try:
+                    freak_teto_cog_path = "discordbot.freak_teto.cog"
+                    await bot.load_extension(freak_teto_cog_path)
+                    print(f"Successfully loaded FreakTetoCog from {freak_teto_cog_path}")
+                    # Optional: Share FreakTetoCog instance if needed later
+                    # freak_teto_cog_instance = bot.get_cog("FreakTetoCog")
+                    # if freak_teto_cog_instance:
+                    #     print("Successfully shared FreakTetoCog instance.")
+                    # else:
+                    #     print("Warning: FreakTetoCog not found after loading.")
+                except commands.ExtensionAlreadyLoaded:
+                    print(f"FreakTetoCog ({freak_teto_cog_path}) already loaded.")
+                except commands.ExtensionNotFound:
+                    print(f"Error: FreakTetoCog not found at {freak_teto_cog_path}")
+                except Exception as e:
+                    print(f"Failed to load FreakTetoCog: {e}")
+                    import traceback
+                    traceback.print_exc()
             # ------------------------------------
 
             # Start the bot using start() for async context
@@ -279,8 +301,18 @@ async def main():
 
 # Run the main async function
 if __name__ == '__main__':
+    # --- Argument Parsing ---
+    parser = argparse.ArgumentParser(description="Run the Discord Bot")
+    parser.add_argument(
+        "--disable-ai",
+        action="store_true",
+        help="Disable AI-related cogs and functionality."
+    )
+    args = parser.parse_args()
+    # ------------------------
+
     try:
-        asyncio.run(main())
+        asyncio.run(main(args)) # Pass parsed args to main
     except KeyboardInterrupt:
         print("Bot stopped by user.")
     except Exception as e:

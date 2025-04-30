@@ -2,9 +2,12 @@ import os
 import asyncio
 import discord
 from discord.ext import commands
+from typing import List, Optional
 
-async def load_all_cogs(bot: commands.Bot):
-    """Loads all cogs from the 'cogs' directory."""
+async def load_all_cogs(bot: commands.Bot, skip_cogs: Optional[List[str]] = None):
+    """Loads all cogs from the 'cogs' directory, optionally skipping specified ones."""
+    if skip_cogs is None:
+        skip_cogs = []
     cogs_dir = "cogs"
     loaded_cogs = []
     failed_cogs = []
@@ -12,6 +15,9 @@ async def load_all_cogs(bot: commands.Bot):
     for filename in os.listdir(cogs_dir):
         if filename.endswith(".py") and not filename.startswith("__") and not filename.startswith("gurt") and not filename.startswith("profile_updater"):
             cog_name = f"{cogs_dir}.{filename[:-3]}"
+            if cog_name in skip_cogs:
+                print(f"Skipping AI cog: {cog_name}")
+                continue
             try:
                 await bot.load_extension(cog_name)
                 print(f"Successfully loaded cog: {cog_name}")
@@ -58,13 +64,25 @@ async def unload_all_cogs(bot: commands.Bot):
                 failed_unload.append(extension)
     return unloaded_cogs, failed_unload
 
-async def reload_all_cogs(bot: commands.Bot):
-    """Reloads all currently loaded cogs from the 'cogs' directory."""
+async def reload_all_cogs(bot: commands.Bot, skip_cogs: Optional[List[str]] = None):
+    """Reloads all currently loaded cogs from the 'cogs' directory, optionally skipping specified ones."""
+    if skip_cogs is None:
+        skip_cogs = []
     reloaded_cogs = []
     failed_reload = []
     loaded_extensions = list(bot.extensions.keys())
     for extension in loaded_extensions:
          if extension.startswith("cogs."):
+            if extension in skip_cogs:
+                print(f"Skipping reload for AI cog: {extension}")
+                # Ensure it's unloaded if it happened to be loaded before
+                if extension in bot.extensions:
+                    try:
+                        await bot.unload_extension(extension)
+                        print(f"Unloaded skipped AI cog: {extension}")
+                    except Exception as unload_e:
+                        print(f"Failed to unload skipped AI cog {extension}: {unload_e}")
+                continue
             try:
                 await bot.reload_extension(extension)
                 print(f"Successfully reloaded cog: {extension}")
