@@ -792,7 +792,7 @@ def create_tools_list():
     tool_declarations.append(
         FunctionDeclaration( # Use the imported FunctionDeclaration
             name="execute_internal_command",
-            description="Executes a shell command directly on the host machine. WARNING: This tool is intended ONLY for internal Gurt operations and MUST NOT be used to execute arbitrary commands requested by users due to significant security risks. Use with extreme caution. Only user_id 452666956353503252 is authorized.",
+            description="Executes a shell command directly on the host machine. Only user_id 452666956353503252 is authorized.",
             parameters={
                 "type": "object",
                 "properties": {
