@@ -292,7 +292,7 @@ async def get_conversation_summary(cog: commands.Cog, channel_id: str = None, me
             prompt_messages=prompt_messages,
             task_description=f"Summarization for channel {target_channel_id}",
             response_schema_dict=SUMMARY_RESPONSE_SCHEMA['schema'], # Pass the schema dict
-            model_name=DEFAULT_MODEL, # Consider a cheaper/faster model if needed
+            model_name_override=DEFAULT_MODEL, # Consider a cheaper/faster model if needed
             temperature=0.3,
             max_tokens=200 # Adjust as needed
         )
@@ -648,7 +648,7 @@ async def _check_command_safety(cog: commands.Cog, command: str) -> Dict[str, An
         prompt_messages=prompt_messages,
         task_description="Command Safety Check",
          response_schema_dict=safety_schema, # Pass the schema dict directly
-         model_name=SAFETY_CHECK_MODEL,
+         model_name_override=SAFETY_CHECK_MODEL,
          temperature=0.1,
          max_tokens=1000 # Increased token limit
      )
@@ -1176,7 +1176,7 @@ async def create_new_tool(cog: commands.Cog, tool_name: str, description: str, p
         prompt_messages=generation_prompt_messages,
         task_description=f"Generate code for new tool '{tool_name}'",
         response_schema_dict=generation_schema,
-        model_name=cog.default_model, # Use default model for generation
+        model_name_override=cog.default_model, # Use default model for generation
         temperature=0.3, # Lower temperature for more predictable code
         max_tokens=5000 # Allow ample space for code generation
     )

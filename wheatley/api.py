@@ -817,7 +817,7 @@ async def get_proactive_ai_response(cog: 'WheatleyCog', message: discord.Message
             prompt_messages=planning_prompt_messages,
             task_description=f"Proactive Planning ({trigger_reason})",
             response_schema_dict=PROACTIVE_PLAN_SCHEMA['schema'],
-            model_name=FALLBACK_MODEL, # Use a potentially faster/cheaper model for planning
+            model_name_override=FALLBACK_MODEL, # Use a potentially faster/cheaper model for planning
             temperature=0.5,
             max_tokens=300
         )

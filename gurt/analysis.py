@@ -497,7 +497,7 @@ async def reflect_on_memories(cog: 'GurtCog'):
                     prompt_messages=reflection_prompt,
                     task_description=f"User Fact Reflection ({user_name})",
                     response_schema_dict=synthesis_schema,
-                    model_name=SYNTHESIS_MODEL,
+                    model_name_override=SYNTHESIS_MODEL,
                     temperature=0.4,
                     max_tokens=SYNTHESIS_MAX_TOKENS
                 )
@@ -559,7 +559,7 @@ async def decompose_goal_into_steps(cog: 'GurtCog', goal_description: str) -> Op
             prompt_messages=decomposition_prompt_messages,
             task_description=f"Goal Decomposition ({goal_description[:30]}...)",
             response_schema_dict=GOAL_DECOMPOSITION_SCHEMA['schema'],
-            model_name=cog.fallback_model, # Use fallback model for planning potentially
+            model_name_override=cog.fallback_model, # Use fallback model for planning potentially
             temperature=0.3,
             max_tokens=1000 # Allow more tokens for potentially complex plans
         )

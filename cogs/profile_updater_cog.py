@@ -309,7 +309,7 @@ Review your current profile state (provided below) and decide if you want to mak
                 prompt_messages=prompt_messages,
                 task_description="Profile Update Decision",
                 response_schema_dict=response_schema_dict, # Pass the schema dict
-                model_name=DEFAULT_MODEL, # Use model from config
+                model_name_override=DEFAULT_MODEL, # Use model from config
                 temperature=0.5, # Keep temperature for some creativity
                 max_tokens=500 # Adjust max tokens if needed
             )
@@ -506,7 +506,7 @@ Review your current profile state (provided below) and decide if you want to mak
                 prompt_messages=role_prompt_messages,
                 task_description=f"Role Selection for Guild {guild.id}",
                 response_schema_dict=role_selection_schema_dict, # Pass the schema dict
-                model_name=DEFAULT_MODEL, # Use model from config
+                model_name_override=DEFAULT_MODEL, # Use model from config
                 temperature=0.5 # More deterministic for role selection
             )
 

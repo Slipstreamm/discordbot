@@ -487,7 +487,7 @@ async def background_processing_task(cog: 'GurtCog'):
                                 prompt_messages=[{"role": "system", "content": follow_up_system_prompt}, {"role": "user", "content": follow_up_user_prompt}],
                                 task_description="Autonomous Follow-up Action Decision",
                                 response_schema_dict=follow_up_schema,
-                                model_name=cog.default_model,
+                                model_name_override=cog.default_model,
                                 temperature=0.5
                             )
 
