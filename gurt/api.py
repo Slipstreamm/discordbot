@@ -941,6 +941,13 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             if last_response_obj:
                 print("Attempting to parse final JSON from the last response object...")
                 last_response_text = _get_response_text(last_response_obj)
+
+                # --- Log Raw Unparsed JSON (from loop exit) ---
+                print(f"--- RAW UNPARSED JSON (from loop exit) ---")
+                print(last_response_text)
+                print(f"--- END RAW UNPARSED JSON ---")
+                # --- End Log ---
+
                 if last_response_text:
                     # Try parsing directly first
                     final_parsed_data = parse_and_validate_json_response(
@@ -995,6 +1002,13 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                          else: error_message = error_msg_suffix
                     else:
                         final_response_text = _get_response_text(final_json_response_obj)
+
+                        # --- Log Raw Unparsed JSON (from dedicated call) ---
+                        print(f"--- RAW UNPARSED JSON (dedicated call) ---")
+                        print(final_response_text)
+                        print(f"--- END RAW UNPARSED JSON ---")
+                        # --- End Log ---
+
                         final_parsed_data = parse_and_validate_json_response(
                             final_response_text, RESPONSE_SCHEMA['schema'], "final response (dedicated call)"
                         )
@@ -1402,6 +1416,12 @@ async def get_internal_ai_json_response(
              print(f"--- Extracted Text for {task_description} ---")
              print(final_response_text)
              print(f"--- End Extracted Text ---")
+
+             # --- Log Raw Unparsed JSON ---
+             print(f"--- RAW UNPARSED JSON ({task_description}) ---")
+             print(final_response_text)
+             print(f"--- END RAW UNPARSED JSON ---")
+             # --- End Log ---
 
              final_parsed_data = parse_and_validate_json_response(
                  final_response_text, response_schema_dict, f"internal task ({task_description})"
