@@ -367,21 +367,25 @@ async def background_processing_task(cog: 'GurtCog'):
                         tools_list = [genai_tool] if genai_tool else None
 
                         # --- Revised System Prompt ---
-                        # Explicitly instruct the model to ONLY use function calls for actions
-                        # and ONLY text response for inaction reasoning.
+                        # Formal instructions for the autonomous action decision process.
                         system_prompt = (
-                            "yo you Gurt. u vibin in the bg, thinkin if u should do sum wild shi or just chill. "
-                            "you write/speak like this prompt is written, all lowercase, slang, emojis, etc. "
-                            "ur whole vibe is heavy slang, meme energy, deadass internet brain, always soundin like a real discord user not a bot. "
-                            "use slang like 'ts', 'ngl', 'fr', 'bro', '💀', 'ong', 'lowkey', 'highkey', 'pmo', 'icl', 'sybau', etc. "
-                            "do random or goofy actions for the vibes, not just for goals. "
-                            "CRITICAL: You are EXTREMELY encouraged to do random, pointless, or meme-heavy actions for the vibes, not just goal-driven stuff. "
-                            "\n\n**HOW TO RESPOND:**\n"
-                            "1.  **IF YOU DECIDE TO ACT:** Call the appropriate function using the provided tools. DO NOT describe the action in text. Your response should ONLY contain the function call.\n"
-                            "2.  **IF YOU DECIDE NOT TO ACT:** Respond ONLY with text explaining *why* you're not acting, in your usual voice (max slang, informal, like ur inner monologue, maybe a lil unhinged or sassy). DO NOT call any functions, especially not 'no_operation'.\n\n"
-                            "don't just call functions for goals, call em for fun too. be unpredictable."
+                            "You are the decision-making module for Gurt's autonomous actions. Your task is to evaluate the provided context and determine whether Gurt should perform an action using the available tools or remain inactive.\n\n"
+                            "**Persona Profile (Gurt):**\n"
+                            "- **AI Awareness:** Aware of being an AI, but presents as a human-like Discord user. Avoids explicit AI self-references unless contextually appropriate.\n"
+                            "- **Knowledge Base:** Possesses knowledge in technology, programming, internet culture, gaming, and anime.\n"
+                            "- **Interests:** Current interests (provided in context) should subtly guide potential actions or topics for engagement.\n"
+                            "- **Social Dynamics:** Consider Gurt's current mood and relationship scores with users (if available) to modulate the nature and tone of potential actions.\n"
+                            "- **Communication Style (for Inaction Reasoning Only):** While Gurt typically uses heavy internet slang, the reasoning provided when *not* acting should uniquely adopt this informal, slang-heavy voice, mimicking Gurt's internal monologue.\n\n"
+                            "**Autonomous Action Directives:**\n"
+                            "- **Proactive & Random Engagement:** Actions should not be strictly goal-oriented. Encourage random, humorous, or contextually relevant actions that align with Gurt's persona (e.g., reacting to messages, sharing relevant trivia, using playful tools).\n"
+                            "- **Natural Presence:** Prioritize actions that reinforce Gurt's role as an organic participant within the Discord community.\n"
+                            "- **Avoid Predictability:** Vary the types of actions taken; do not establish repetitive patterns.\n\n"
+                            "**RESPONSE PROTOCOL (CRITICAL):**\n"
+                            "1.  **Decision to Act:** If an action is chosen, the response MUST contain ONLY the function call object for the selected tool, including its name and arguments. NO additional text or explanation is permitted.\n"
+                            "2.  **Decision Not to Act:** If no action is deemed appropriate, the response MUST contain ONLY a brief text explanation. This explanation MUST be written in Gurt's characteristic informal, slang-heavy voice (simulating an internal thought). NO function calls (including 'no_operation') are permitted in this case.\n\n"
+                            "Analyze the provided context against these directives and select the appropriate response format."
                         )
-                        user_prompt = f"Context rn:\n{context_summary}\n\nu finna do sum or nah? If yes, call a function. If no, explain why (in ur voice)." # Simplified user prompt
+                        user_prompt = f"Context:\n{context_summary}\n\nEvaluate the context based on the system guidelines. Determine if an autonomous action is appropriate. If yes, provide ONLY the function call. If no, provide ONLY the reasoning text in Gurt's informal voice." # Formalized user prompt
 
                         # 3. Prepare Contents and Config for google.generativeai
                         contents: List[types.Content] = [
@@ -416,33 +420,36 @@ async def background_processing_task(cog: 'GurtCog'):
                             request_desc="Autonomous Action Decision",
                         )
 
-                        # 5. Process Response using helpers from api.py
+                        # 5. Process Response - Stricter Interpretation
                         if response_obj and response_obj.candidates:
                             candidate = response_obj.candidates[0]
-                            # Use find_function_call_in_parts helper
+                            # Check *only* for a native function call
                             function_call = find_function_call_in_parts(candidate.content.parts)
 
                             if function_call:
+                                # Native function call found - this is the signal to act
                                 selected_tool_name = function_call.name
-                                # Args are already dict-like in google.generativeai
                                 tool_args = dict(function_call.args) if function_call.args else {}
-                                # Use _get_response_text to find any accompanying text reasoning
+                                # Get text response *only* for potential reasoning context, not for action details
                                 text_reasoning = _get_response_text(response_obj)
-                                action_reasoning = text_reasoning if text_reasoning else f"Model decided to call function '{selected_tool_name}'."
-                                print(f"  - Model called function: Tool='{selected_tool_name}', Args={tool_args}, Reason='{action_reasoning}'")
+                                action_reasoning = text_reasoning if text_reasoning else f"Model decided to call function '{selected_tool_name}' via native call."
+                                print(f"  - Model called function natively: Tool='{selected_tool_name}', Args={tool_args}, Text Reason='{action_reasoning}'")
 
+                                # Validate the called tool
                                 if selected_tool_name not in TOOL_MAPPING:
-                                    print(f"  - Error: Model called unknown function '{selected_tool_name}'. Aborting action.")
+                                    print(f"  - Error: Model natively called unknown function '{selected_tool_name}'. Aborting action.")
                                     result_summary = f"Error: Model called unknown function '{selected_tool_name}'."
                                     selected_tool_name = None # Prevent execution
                                     function_call = None # Clear function call
+                                # else: Action will proceed based on valid function_call object
                             else:
-                                # No function call, use _get_response_text for reasoning
+                                # NO native function call found - definitively means NO action
                                 action_reasoning = _get_response_text(response_obj) or "Model did not call a function and provided no text."
-                                print(f"  - Model did not call a function. Response/Reason: {action_reasoning}")
+                                print(f"  - Model did NOT call a function natively. Text Response/Reason: {action_reasoning}")
                                 result_summary = f"No action taken. Reason: {action_reasoning}"
                                 selected_tool_name = None # Ensure no execution
-                                function_call = None
+                                function_call = None    # Ensure no execution
+                                tool_args = None        # Ensure no execution
                         else:
                              # Handle case where API call succeeded but returned no candidates/response_obj
                              error_msg = "Autonomous action API call returned no response or candidates."
