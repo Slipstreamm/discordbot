@@ -831,7 +831,7 @@ async def execute_internal_command(cog: commands.Cog, command: str, timeout_seco
     Only user ID 452666956353503252 is allowed to execute this command.
     """
     if user_id != "452666956353503252":
-        return {"error": "You are not authorized to execute internal commands.", "status": "unauthorized"}
+        return {"error": "The requesting user is not authorized to execute commands.", "status": "unauthorized"}
     print(f"--- INTERNAL EXECUTION (UNSAFE): Running command: {command} ---")
     try:
         process = await asyncio.create_subprocess_shell(
