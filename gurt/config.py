@@ -1407,6 +1407,35 @@ def create_tools_list():
         )
     )
 
+    # --- Guild/Channel Listing Tools ---
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="list_bot_guilds",
+            description="Lists all guilds (servers) the bot is currently connected to.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="list_guild_channels",
+            description="Lists all channels (text, voice, category, etc.) in a specified guild by its ID.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "guild_id": {
+                        "type": "string",
+                        "description": "The ID of the guild to list channels for."
+                    }
+                },
+                "required": ["guild_id"]
+            }
+        )
+    )
+
     return tool_declarations
 
 # Initialize TOOLS list, handling potential ImportError if library not installed

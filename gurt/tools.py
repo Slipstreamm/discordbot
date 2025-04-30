@@ -2455,6 +2455,61 @@ async def fetch_random_joke(cog: commands.Cog) -> Dict[str, Any]:
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+
+# --- New Tools: Guild/Channel Listing ---
+
+async def list_bot_guilds(cog: commands.Cog) -> Dict[str, Any]:
+    """Lists all guilds (servers) the bot is currently connected to."""
+    print("Executing list_bot_guilds tool.")
+    try:
+        guilds_list = [{"id": str(guild.id), "name": guild.name} for guild in cog.bot.guilds]
+        return {
+            "status": "success",
+            "guilds": guilds_list,
+            "count": len(guilds_list),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except Exception as e:
+        error_message = f"Error listing bot guilds: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+async def list_guild_channels(cog: commands.Cog, guild_id: str) -> Dict[str, Any]:
+    """Lists all channels (text, voice, category, etc.) in a specified guild."""
+    print(f"Executing list_guild_channels tool for guild ID: {guild_id}.")
+    try:
+        guild_id_int = int(guild_id)
+        guild = cog.bot.get_guild(guild_id_int)
+        if not guild:
+            return {"error": f"Guild with ID {guild_id} not found or bot is not in it."}
+
+        channels_list = []
+        for channel in guild.channels:
+            channels_list.append({
+                "id": str(channel.id),
+                "name": channel.name,
+                "type": str(channel.type),
+                "position": channel.position,
+                "category_id": str(channel.category_id) if channel.category_id else None
+            })
+        # Sort by position for better readability
+        channels_list.sort(key=lambda x: x.get('position', 0))
+
+        return {
+            "status": "success",
+            "guild_id": guild_id,
+            "guild_name": guild.name,
+            "channels": channels_list,
+            "count": len(channels_list),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except ValueError:
+        return {"error": f"Invalid guild ID format: {guild_id}."}
+    except Exception as e:
+        error_message = f"Error listing channels for guild {guild_id}: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
 # --- Tool Mapping ---
 # This dictionary maps tool names (used in the AI prompt) to their implementation functions.
 TOOL_MAPPING = {
@@ -2524,4 +2579,7 @@ TOOL_MAPPING = {
     "check_disk_space": check_disk_space,
     "random_vibe_check": random_vibe_check,
     "fetch_random_joke": fetch_random_joke,
+    # --- Guild/Channel Listing Tools ---
+    "list_bot_guilds": list_bot_guilds,
+    "list_guild_channels": list_guild_channels,
 }
