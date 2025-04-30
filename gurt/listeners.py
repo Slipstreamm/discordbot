@@ -417,7 +417,7 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
                 try:
                     with open(filepath, 'w', encoding='utf-8') as f: f.write(response_text)
                     # Send file with reference if applicable
-                    await original_message.channel.send(f"{response_label.capitalize()} response too long:", file=discord.File(filepath), reference=message_reference, mention_author=False)
+                    await original_message.channel.send(f"{response_label.capitalize()} response too long:", file=discord.File(filepath), reference=message_reference, mention_author=True) # Also mention when sending as file
                     sent_any_message = True
                     print(f"Sent {response_label} content as file (Reply: {bool(message_reference)}).")
                     return True
@@ -430,7 +430,7 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
                     async with original_message.channel.typing():
                         await simulate_human_typing(cog, original_message.channel, response_text) # Use simulation
                     # Send message with reference if applicable
-                    sent_msg = await original_message.channel.send(response_text, reference=message_reference, mention_author=False) # mention_author=False is usually preferred for bots
+                    sent_msg = await original_message.channel.send(response_text, reference=message_reference, mention_author=True) # mention_author=True to ping the user being replied to
                     sent_any_message = True
                     # Cache this bot response
                     bot_response_cache_entry = format_message(cog, sent_msg) # Pass cog
