@@ -1091,3 +1091,17 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"Error retrieving internal action logs: {e}", exc_info=True)
             return []
+
+    # --- Add the new method below ---
+    async def clear_internal_action_logs(self) -> Dict[str, Any]:
+        """Deletes all records from the internal_actions table."""
+        logger.info("Attempting to clear all internal action logs.")
+        try:
+            await self._db_execute("DELETE FROM internal_actions")
+            # Optionally, reset the autoincrement sequence if using SQLite
+            # await self._db_execute("DELETE FROM sqlite_sequence WHERE name='internal_actions'")
+            logger.info("Successfully cleared all internal action logs.")
+            return {"status": "cleared"}
+        except Exception as e:
+            logger.error(f"Error clearing internal action logs: {e}", exc_info=True)
+            return {"error": f"Database error clearing internal action logs: {str(e)}"}

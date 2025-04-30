@@ -361,6 +361,27 @@ def setup_commands(cog: 'GurtCog'):
 
     command_functions.append(gurtforceauto) # Add gurtforceauto to the list
 
+    # --- Gurt Clear Action History Command (Owner Only) ---
+    @cog.bot.tree.command(name="gurtclearhistory", description="Clear Gurt's internal autonomous action history. (Owner only)")
+    async def gurtclearhistory(interaction: discord.Interaction):
+        """Handles the /gurtclearhistory command."""
+        if interaction.user.id != cog.bot.owner_id:
+            await interaction.response.send_message("⛔ Only the bot owner can clear the action history.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            result = await cog.memory_manager.clear_internal_action_logs()
+            if "error" in result:
+                await interaction.followup.send(f"⚠️ Error clearing action history: {result['error']}", ephemeral=True)
+            else:
+                await interaction.followup.send("✅ Gurt's autonomous action history has been cleared.", ephemeral=True)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ An unexpected error occurred while clearing history: {e}", ephemeral=True)
+
+    command_functions.append(gurtclearhistory) # Add the new command
+
     # --- Gurt Goal Command Group ---
     gurtgoal_group = app_commands.Group(name="gurtgoal", description="Manage Gurt's long-term goals (Owner only)")
 
