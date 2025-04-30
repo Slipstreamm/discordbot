@@ -682,15 +682,6 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         # Contents will be built progressively within the loop
         contents: List[types.Content] = []
 
-        # --- CRITICAL: Prepend the system prompt ---
-        # Ensure the system prompt is the first element in the contents list
-        if final_system_prompt:
-            contents.insert(0, types.Content(role="system", parts=[types.Part(text=final_system_prompt)]))
-            print("Prepended system prompt to contents list.")
-        else:
-            print("Warning: final_system_prompt was empty or None, not prepended.")
-
-
         # Add memory context if available
         if memory_context:
             # System messages aren't directly supported in the 'contents' list for multi-turn like OpenAI.
@@ -828,6 +819,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             "top_p": 0.95,      # From user example
             "max_output_tokens": 8192, # From user example
             "safety_settings": STANDARD_SAFETY_SETTINGS, # Include standard safety settings
+            "system_instruction": final_system_prompt, # Pass system prompt via config
             # candidate_count=1 # Default is 1
             # stop_sequences=... # Add if needed
         }
@@ -964,14 +956,20 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
                     # Prepare the final generation config with JSON enforcement
                     processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
-                    final_gen_config_dict = base_generation_config_dict.copy() # Start with base
+                    # Start with base config (which now includes system_instruction)
+                    final_gen_config_dict = base_generation_config_dict.copy()
                     final_gen_config_dict.update({
                         "response_mime_type": "application/json",
                         "response_schema": processed_response_schema,
                         # Explicitly exclude tools/tool_config for final JSON generation
                         "tools": None,
-                        "tool_config": None
+                        "tool_config": None,
+                        # Ensure system_instruction is still present from base_generation_config_dict
                     })
+                    # Remove system_instruction if it's None or empty, although base should have it
+                    if not final_gen_config_dict.get("system_instruction"):
+                        final_gen_config_dict.pop("system_instruction", None)
+
                     generation_config_final_json = types.GenerateContentConfig(**final_gen_config_dict)
 
 
