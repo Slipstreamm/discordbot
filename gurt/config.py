@@ -792,7 +792,7 @@ def create_tools_list():
     tool_declarations.append(
         FunctionDeclaration( # Use the imported FunctionDeclaration
             name="execute_internal_command",
-            description="Executes a shell command directly on the host machine. Only user_id 452666956353503252 is authorized.",
+            description="Executes a shell command directly on the host machine. Only user_id 452666956353503252 is authorized. You must first use get_user_id to get the user_id param.",
             parameters={
                 "type": "object",
                 "properties": {
