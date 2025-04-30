@@ -1065,6 +1065,27 @@ async def execute_python_unsafe(cog: commands.Cog, code: str, timeout_seconds: i
 async def send_discord_message(cog: commands.Cog, channel_id: str, message_content: str) -> Dict[str, Any]:
     """Sends a message to a specified Discord channel."""
     print(f"Attempting to send message to channel {channel_id}: {message_content[:100]}...")
+
+async def restart_gurt_bot(cog: commands.Cog) -> Dict[str, Any]:
+    """
+    Restarts the Gurt bot process by re-executing the current Python script.
+    Returns a status dictionary. Only works if the bot process has permission.
+    """
+    import sys
+    import os
+    try:
+        python = sys.executable
+        os.execv(python, [python] + sys.argv)
+        return {"status": "restarting", "message": "Gurt bot is restarting..."}
+    except Exception as e:
+        return {"status": "error", "error": f"Failed to restart: {str(e)}"}
+
+async def run_git_pull(cog: commands.Cog) -> Dict[str, Any]:
+    """
+    Runs 'git pull' in the bot's current working directory on the host machine.
+    Returns the output and status.
+    """
+    return await execute_internal_command(cog, "git pull")
     if not message_content:
         return {"error": "Message content cannot be empty."}
     # Limit message length
@@ -1376,5 +1397,7 @@ TOOL_MAPPING = {
     "create_new_tool": create_new_tool, # Added the meta-tool
     "execute_internal_command": execute_internal_command, # Added internal command execution
     "get_user_id": get_user_id, # Added user ID lookup tool
-    "no_operation": no_operation # Added no-op tool
+    "no_operation": no_operation, # Added no-op tool
+    "restart_gurt_bot": restart_gurt_bot, # Tool to restart the Gurt bot
+    "run_git_pull": run_git_pull # Tool to run git pull on the host
 }

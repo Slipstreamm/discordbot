@@ -940,6 +940,28 @@ def create_tools_list():
         )
     )
 
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="restart_gurt_bot",
+            description="Restarts the Gurt bot process by re-executing the current Python script. Use with caution.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="run_git_pull",
+            description="Runs 'git pull' in the bot's current working directory on the host machine and returns the output.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
     return tool_declarations
 
 # Initialize TOOLS list, handling potential ImportError if library not installed
