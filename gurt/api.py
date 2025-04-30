@@ -955,6 +955,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
                     # Prepare the final generation config with JSON enforcement
                     processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
+                    print(processed_response_schema)
                     # Start with base config (which now includes system_instruction)
                     final_gen_config_dict = base_generation_config_dict.copy()
                     final_gen_config_dict.update({
@@ -1440,3 +1441,6 @@ async def get_internal_ai_json_response(
 
     # Return both parsed data and raw text
     return final_parsed_data, final_response_text
+
+if __name__ == "__main__":
+   print(_preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema']))
