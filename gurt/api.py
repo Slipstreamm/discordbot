@@ -2,7 +2,7 @@ from collections import deque
 import ssl
 import certifi
 
-from discordbot.wheatley.config import CONTEXT_WINDOW_SIZE
+from .config import CONTEXT_WINDOW_SIZE
 
 def patch_ssl_certifi():
     original_create_default_context = ssl.create_default_context
