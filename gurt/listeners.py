@@ -69,13 +69,18 @@ async def on_message_listener(cog: 'GurtCog', message: discord.Message):
         thread_id = message.channel.id if isinstance(message.channel, discord.Thread) else None
 
         # Update caches (accessing cog's state)
-        cog.message_cache['by_channel'][channel_id].append(formatted_message)
-        cog.message_cache['by_user'][user_id].append(formatted_message)
-        cog.message_cache['global_recent'].append(formatted_message)
+        # Deduplicate by message ID before appending
+        def _dedup_and_append(cache_deque, msg):
+            if not any(m.get("id") == msg.get("id") for m in cache_deque):
+                cache_deque.append(msg)
+
+        _dedup_and_append(cog.message_cache['by_channel'][channel_id], formatted_message)
+        _dedup_and_append(cog.message_cache['by_user'][user_id], formatted_message)
+        _dedup_and_append(cog.message_cache['global_recent'], formatted_message)
         if thread_id:
-            cog.message_cache['by_thread'][thread_id].append(formatted_message)
+            _dedup_and_append(cog.message_cache['by_thread'][thread_id], formatted_message)
         if cog.bot.user.mentioned_in(message):
-             cog.message_cache['mentioned'].append(formatted_message)
+            _dedup_and_append(cog.message_cache['mentioned'], formatted_message)
 
         cog.conversation_history[channel_id].append(formatted_message)
         if thread_id:
