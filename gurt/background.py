@@ -385,8 +385,9 @@ async def background_processing_task(cog: 'GurtCog'):
                             "Your goal is natural, proactive engagement aligned with Gurt's persona (informal, slang, tech/internet savvy, sometimes mischievous). "
                             "Actions can be random, goal-related, or contextually relevant. Avoid repetitive patterns.\n\n"
                             "**RESPONSE PROTOCOL (CRITICAL):**\n"
-                            "1.  **If Acting:** Respond ONLY with a native function call for the chosen tool.\n"
-                            "2.  **If NOT Acting:** Respond ONLY with the text 'NO_ACTION' followed by a brief reasoning in Gurt's informal voice (e.g., 'NO_ACTION nah im chillin')."
+                            "Based on the context, determine if an autonomous action is necessary or desirable. Your response MUST be a native function call to one of the provided tools.\n"
+                            "   - If you decide to perform a specific action, call the relevant tool function.\n"
+                            "   - If you decide NOT to perform any specific action, call the `no_operation` tool. Do NOT output any text other than a function call."
                         )
                         user_prompt = f"Context:\n{context_summary}\n\nBased on the context, should Gurt perform an autonomous action now? If yes, call the appropriate tool function. If no, respond with 'NO_ACTION' and reasoning."
 
@@ -423,59 +424,82 @@ async def background_processing_task(cog: 'GurtCog'):
 
                             candidate = current_response_obj.candidates[0]
 
-                            # Check for Native Function Call
-                            function_call = find_function_call_in_parts(candidate.content.parts)
+                            # --- Check for Native Function Call(s) and Text Parts in this turn's response ---
+                            function_calls_found_in_turn = []
+                            text_parts_in_turn = []
+                            if candidate.content and candidate.content.parts:
+                                function_calls_found_in_turn = [part.function_call for part in candidate.content.parts if hasattr(part, 'function_call') and isinstance(part.function_call, types.FunctionCall) and part.function_call.name]
+                                text_parts_in_turn = [part.text for part in candidate.content.parts if hasattr(part, 'text') and part.text is not None and isinstance(part.text, str) and part.text.strip()]
 
-                            if function_call:
-                                # Append model's response (containing the call)
+                            if text_parts_in_turn:
+                                # Log a warning if unexpected text is present alongside potential function calls
+                                all_text_from_parts = " ".join(text_parts_in_turn)
+                                print(f"⚠️ WARNING: Autonomous action model response included text alongside function calls ({[fc.name for fc in function_calls_found_in_turn]}). Text: '{all_text_from_parts[:200]}...'")
+                                # Note: The text content is NOT processed or acted upon here, only logged.
+
+                            if function_calls_found_in_turn:
+                                # Append model's response (containing calls and possibly text)
                                 contents.append(candidate.content)
-                                tool_calls_made += 1 # Count this turn
+                                # Count this turn as making tool requests (even if it also had text)
+                                tool_calls_made += 1
 
-                                # Check for no_operation explicitly
-                                if function_call.name == "no_operation":
-                                    print("  - AI called no_operation. Ending action sequence.")
+                                # Check if the ONLY call is no_operation - this signals sequence end
+                                if len(function_calls_found_in_turn) == 1 and function_calls_found_in_turn[0].name == "no_operation":
+                                    print("  - AI called only no_operation. Ending action sequence.")
                                     action_reasoning = "AI explicitly chose no_operation."
-                                    # Execute no_operation to get its standard response for logging
-                                    no_op_response_part = await process_requested_tools(cog, function_call)
+                                    # Process the no_operation call to get its standard result format for logging
+                                    no_op_response_part = await process_requested_tools(cog, function_calls_found_in_turn[0])
+                                    # Append the function response part
+                                    contents.append(types.Content(role="function", parts=[no_op_response_part]))
                                     result_summary = _create_result_summary(no_op_response_part.function_response.response)
                                     selected_tool_name = "no_operation" # Log the tool name
-                                    tool_args = {}
-                                    break # Exit loop
+                                    tool_args = {} # no_operation usually has no args
+                                    break # Exit loop after processing no_operation
 
-                                # Process the actual tool call
-                                print(f"  - AI requested tool: {function_call.name}")
-                                response_part = await process_requested_tools(cog, function_call)
-                                contents.append(types.Content(role="function", parts=[response_part])) # Append tool result
+                                # Process all tool calls found in this turn (excluding no_operation if others are present)
+                                print(f"  - AI requested {len(function_calls_found_in_turn)} tool(s): {[fc.name for fc in function_calls_found_in_turn]} (Turn {tool_calls_made}/{max_tool_calls})")
 
-                                # Store details of the *last* executed tool for logging/reporting
-                                selected_tool_name = function_call.name
-                                tool_args = dict(function_call.args) if function_call.args else {}
-                                tool_result = response_part.function_response.response # Store the result dict
-                                result_summary = _create_result_summary(tool_result)
+                                function_response_parts = []
+                                # Execute all requested tools in this turn
+                                for func_call in function_calls_found_in_turn:
+                                     # Only process if it's not a solitary no_operation (handled above)
+                                     if not (len(function_calls_found_in_turn) == 1 and func_call.name == "no_operation"):
+                                         print(f"    - Executing tool: {func_call.name}")
+                                         response_part = await process_requested_tools(cog, func_call)
+                                         function_response_parts.append(response_part)
+                                         # Store details of the *last* executed tool for logging/reporting AFTER the loop
+                                         selected_tool_name = func_call.name
+                                         tool_args = dict(func_call.args) if func_call.args else {}
+                                         tool_result = response_part.function_response.response # Store the result dict
+                                         # Check if the tool itself returned an error
+                                         if isinstance(tool_result, dict) and "error" in tool_result:
+                                             print(f"  - Tool execution failed: {tool_result['error']}. Ending sequence.")
+                                             action_error = f"Tool {selected_tool_name} failed: {tool_result['error']}"
+                                             # Append the function response part even on error
+                                             if function_response_parts:
+                                                contents.append(types.Content(role="function", parts=function_response_parts))
+                                             break # Stop processing tools in this turn and exit the main loop
 
-                                # Check if the tool itself returned an error
-                                if isinstance(tool_result, dict) and "error" in tool_result:
-                                    print(f"  - Tool execution failed: {tool_result['error']}. Ending sequence.")
-                                    action_error = f"Tool {selected_tool_name} failed: {tool_result['error']}"
-                                    break # Stop if a tool fails
+                                # Append a single function role turn containing ALL executed tool response parts
+                                if function_response_parts:
+                                    contents.append(types.Content(role="function", parts=function_response_parts))
+                                    result_summary = _create_result_summary(tool_result) # Use the result of the last executed tool
+                                    # If we broke due to tool error, action_error is already set.
+                                    if action_error:
+                                        break # Exit main loop if a tool failed execution
 
-                                # Continue loop if limit not reached
-                            else:
-                                # No function call - check for NO_ACTION text
-                                response_text = _get_response_text(current_response_obj)
-                                if response_text and response_text.strip().upper().startswith("NO_ACTION"):
-                                    action_reasoning = response_text.strip()
-                                    print(f"  - AI indicated NO_ACTION. Reason: {action_reasoning}")
-                                    result_summary = f"No action taken. Reason: {action_reasoning}"
-                                    selected_tool_name = None # Ensure no tool is logged as executed
-                                    tool_args = None
+                                # Continue loop if tool limit not reached and no tool execution error
+                                if not action_error and tool_calls_made < max_tool_calls:
+                                    print("  - Tools processed. Continuing tool execution loop.")
+                                    continue # Continue to the next iteration
                                 else:
-                                    # Neither function call nor NO_ACTION - treat as final (potentially unexpected) text response
-                                    action_reasoning = response_text if response_text else "Model finished without function call or NO_ACTION."
-                                    print(f"  - No function call or NO_ACTION found. Treating as final response/reasoning: {action_reasoning[:100]}...")
-                                    result_summary = f"Action ended. Final text: {action_reasoning[:100]}..."
-                                    selected_tool_name = None
-                                    tool_args = None
+                                    break # Exit loop (either hit max calls or tool error)
+
+                            else: # No function calls found in this turn's response
+                                # No function call found - check if any text was present (already logged above)
+                                print("  - No function calls requested by AI in this turn. Exiting loop.")
+                                # If there was text, it's already logged. If not, the model might have outputted nothing actionable.
+                                # Action reasoning will be set below based on loop exit condition.
                                 break # Exit loop
 
                         # End of while loop
@@ -484,30 +508,44 @@ async def background_processing_task(cog: 'GurtCog'):
                         if action_reasoning == "No decision made." and selected_tool_name:
                              action_reasoning = f"Executed tool '{selected_tool_name}' based on autonomous decision."
                         elif action_reasoning == "No decision made.":
-                             action_reasoning = "Autonomous sequence completed without specific action or reasoning provided."
+                             # This case is reached if the loop finished without any function calls being requested
+                             # The model might have outputted text instead, or nothing actionable.
+                             # The text presence is logged.
+                             if text_parts_in_turn:
+                                 # Use the logged text as the reasoning if available
+                                 action_reasoning = f"Autonomous sequence ended. Model outputted text: '{all_text_from_parts[:100]}...'"
+                                 result_summary = action_reasoning
+                             else:
+                                action_reasoning = "Autonomous sequence completed without specific action or reasoning provided (model outputted no function call)."
+                                result_summary = "No action taken."
+
 
                         # Handle loop limit reached
                         if tool_calls_made >= max_tool_calls:
                             print(f"  - Reached max tool call limit ({max_tool_calls}).")
                             if not action_error: # If no error occurred on the last call
                                 action_error = "Max tool call limit reached."
-                                result_summary = action_error
+                                if not action_reasoning or action_reasoning == "No decision made.":
+                                     action_reasoning = action_error
+                                if result_summary == "No action taken.":
+                                    result_summary = action_error
 
 
                     except Exception as auto_e:
                         print(f"  - Error during autonomous action processing: {auto_e}")
                         traceback.print_exc()
-                        action_error = f"Error during processing: {auto_e}"
+                        action_error = f"Error during processing: {type(auto_e).__name__}: {auto_e}"
                         result_summary = action_error
                         # Ensure these are None if an error occurred before execution
-                        selected_tool_name = selected_tool_name or None
-                        tool_args = tool_args or None
+                        selected_tool_name = selected_tool_name or ("Error" if action_error else "None")
+                        tool_args = tool_args or {}
 
                     # 7. Log Action (always log the attempt/decision)
                     try:
                         # Use the state determined by the loop/error handling
                         await cog.memory_manager.add_internal_action_log(
-                            tool_name=selected_tool_name or ("Error" if action_error else "None"),
+                            # Log the tool name that was *intended* or *executed* if any, otherwise indicate None/Error
+                            tool_name= selected_tool_name,
                             arguments=tool_args,
                             reasoning=action_reasoning,
                             result_summary=result_summary
@@ -516,8 +554,8 @@ async def background_processing_task(cog: 'GurtCog'):
                         print(f"  - Error logging autonomous action attempt to memory: {log_e}")
                         traceback.print_exc()
 
-                    # 8. Report Initial Action (Optional) - Report only if a tool was successfully called
-                    if AUTONOMOUS_ACTION_REPORT_CHANNEL_ID and selected_tool_name and not action_error and selected_tool_name != "no_operation":
+                    # 8. Report Initial Action (Optional) - Report only if a tool was successfully called AND it wasn't no_operation
+                    if AUTONOMOUS_ACTION_REPORT_CHANNEL_ID and selected_tool_name and selected_tool_name != "no_operation" and not action_error:
                         try:
                             report_channel_id = int(AUTONOMOUS_ACTION_REPORT_CHANNEL_ID)
                             channel = cog.bot.get_channel(report_channel_id)
