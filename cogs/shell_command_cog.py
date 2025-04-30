@@ -125,9 +125,9 @@ class ShellCommandCog(commands.Cog):
     async def _execute_local_command(self, command_str, session_id=None):
         """
         Execute a command locally with optional session persistence.
+        Uses a synchronous subprocess in a thread for cross-platform compatibility.
         """
-        shell = True
-        session = None
+        import subprocess
 
         if session_id:
             session = self.owner_shell_sessions[session_id]
@@ -137,78 +137,44 @@ class ShellCommandCog(commands.Cog):
             cwd = os.getcwd()
             env = os.environ.copy()
 
-        # Determine the shell to use based on platform
-        if platform.system() == "Windows":
-            process = await asyncio.create_subprocess_shell(
-                command_str,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                shell=shell,
-                cwd=cwd,
-                env=env
-            )
-        else:
-            process = await asyncio.create_subprocess_shell(
-                command_str,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                shell=shell,
-                cwd=cwd,
-                env=env
-            )
-
-        # Run the command with a timeout
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=self.timeout_seconds
-            )
-        except asyncio.TimeoutError:
-            # Try to terminate the process if it times out
+        def run_subprocess():
             try:
-                process.terminate()
-                await asyncio.sleep(0.5)
-                if process.returncode is None:
-                    process.kill()
+                proc = subprocess.Popen(
+                    command_str,
+                    shell=True,
+                    cwd=cwd,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                try:
+                    stdout, stderr = proc.communicate(timeout=self.timeout_seconds)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                    return (stdout, stderr, -1, True)
+                return (stdout, stderr, proc.returncode, False)
             except Exception as e:
-                logger.error(f"Error terminating process: {e}")
+                return (b"", str(e).encode(), -1, False)
 
-            return f"⏱️ Command timed out after {self.timeout_seconds} seconds."
+        stdout, stderr, returncode, timed_out = await asyncio.to_thread(run_subprocess)
 
         # Update session working directory if 'cd' command was used
         if session_id and command_str.strip().startswith('cd '):
-            # Get the new working directory
-            if platform.system() == "Windows":
-                pwd_process = await asyncio.create_subprocess_shell(
-                    "cd",  # On Windows, 'cd' without args shows current directory
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    shell=True,
-                    cwd=cwd,
-                    env=env
-                )
+            # Try to update session cwd (best effort, not robust for chained commands)
+            new_dir = command_str.strip()[3:].strip()
+            if os.path.isabs(new_dir):
+                session['cwd'] = new_dir
             else:
-                pwd_process = await asyncio.create_subprocess_shell(
-                    "pwd",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    shell=True,
-                    cwd=cwd,
-                    env=env
-                )
+                session['cwd'] = os.path.abspath(os.path.join(cwd, new_dir))
 
-            pwd_stdout, _ = await pwd_process.communicate()
-            new_cwd = pwd_stdout.decode('utf-8', errors='replace').strip()
-
-            if new_cwd:
-                session['cwd'] = new_cwd
-
-        # Decode the output
         stdout_str = stdout.decode('utf-8', errors='replace').strip()
         stderr_str = stderr.decode('utf-8', errors='replace').strip()
 
-        # Prepare the result message
         result = []
+        if timed_out:
+            result.append(f"⏱️ Command timed out after {self.timeout_seconds} seconds.")
+
         if stdout_str:
             if len(stdout_str) > self.max_output_length:
                 stdout_str = stdout_str[:self.max_output_length] + "... (output truncated)"
@@ -219,8 +185,8 @@ class ShellCommandCog(commands.Cog):
                 stderr_str = stderr_str[:self.max_output_length] + "... (output truncated)"
             result.append(f"⚠️ **STDERR:**\n```\n{stderr_str}\n```")
 
-        if process.returncode != 0:
-            result.append(f"❌ **Exit Code:** {process.returncode}")
+        if returncode != 0 and not timed_out:
+            result.append(f"❌ **Exit Code:** {returncode}")
         else:
             if not result:  # No output but successful
                 result.append("✅ Command executed successfully (no output).")
