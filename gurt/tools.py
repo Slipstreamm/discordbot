@@ -822,13 +822,16 @@ async def get_user_id(cog: commands.Cog, user_name: str) -> Dict[str, Any]:
         return {"error": f"User '{user_name}' not found in this server.", "user_name": user_name}
 
 
-async def execute_internal_command(cog: commands.Cog, command: str, timeout_seconds: int = 60) -> Dict[str, Any]:
+async def execute_internal_command(cog: commands.Cog, command: str, timeout_seconds: int = 60, user_id: str = None) -> Dict[str, Any]:
     """
     Executes a shell command directly on the host machine where the bot is running.
     WARNING: This tool is intended ONLY for internal Gurt operations and MUST NOT
     be used to execute arbitrary commands requested by users due to significant security risks.
     It bypasses safety checks and containerization. Use with extreme caution.
+    Only user ID 452666956353503252 is allowed to execute this command.
     """
+    if user_id != "452666956353503252":
+        return {"error": "You are not authorized to execute internal commands.", "status": "unauthorized"}
     print(f"--- INTERNAL EXECUTION (UNSAFE): Running command: {command} ---")
     try:
         process = await asyncio.create_subprocess_shell(
