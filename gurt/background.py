@@ -567,7 +567,7 @@ async def background_processing_task(cog: 'GurtCog'):
                                     "should_follow_up": {"type": "boolean", "description": "Whether Gurt should perform a follow-up action based on the previous action's result."},
                                     "reasoning": {"type": "string", "description": "Brief reasoning for the follow-up decision."},
                                     "follow_up_tool_name": {"type": ["string", "null"], "description": "If following up, the name of the tool to use (e.g., 'send_discord_message', 'remember_general_fact'). Null otherwise."},
-                                    "follow_up_arguments": {"type": ["object", "null"], "description": "If following up, arguments for the follow-up tool. Null otherwise."}
+                                    "follow_up_arguments": {"type": ["object", "null"], "description": "If following up, arguments for the follow_up tool. Null otherwise."}
                                 },
                                 "required": ["should_follow_up", "reasoning"]
                             }

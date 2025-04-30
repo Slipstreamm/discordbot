@@ -225,6 +225,27 @@ class MemoryManager:
             logger.info("Goals table created/verified.")
             # --- End Goals Table ---
 
+            # Add ALTER TABLE statements here to ensure columns exist
+            try:
+                # Check if guild_id column exists
+                cursor = await db.execute("PRAGMA table_info(gurt_goals)")
+                columns = await cursor.fetchall()
+                column_names = [column[1] for column in columns]
+
+                if 'guild_id' not in column_names:
+                    logger.info("Adding guild_id column to gurt_goals table")
+                    await db.execute("ALTER TABLE gurt_goals ADD COLUMN guild_id TEXT")
+                if 'channel_id' not in column_names:
+                    logger.info("Adding channel_id column to gurt_goals table")
+                    await db.execute("ALTER TABLE gurt_goals ADD COLUMN channel_id TEXT")
+                if 'user_id' not in column_names:
+                    logger.info("Adding user_id column to gurt_goals table")
+                    await db.execute("ALTER TABLE gurt_goals ADD COLUMN user_id TEXT")
+
+            except Exception as e:
+                logger.error(f"Error checking/adding columns to gurt_goals table: {e}", exc_info=True)
+
+
             # --- Add Internal Actions Log Table ---
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS internal_actions (
