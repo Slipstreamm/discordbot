@@ -361,7 +361,7 @@ async def background_processing_task(cog: 'GurtCog'):
                             prompt_messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
                             task_description="Autonomous Action Decision",
                             response_schema_dict=action_decision_schema,
-                            model_name=cog.default_model, # Use default model
+                            model_name_override=cog.default_model, # Use default model
                             temperature=0.6 # Allow some creativity
                         )
 
