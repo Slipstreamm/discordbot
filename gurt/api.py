@@ -738,14 +738,10 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
 
         # Add conversation history
+        # The current message is already included in conversation_context_messages
         for msg in conversation_context_messages:
-            role = msg.get("role", "user") # Default to user if role missing
-            # Map roles if necessary (e.g., 'assistant' -> 'model')
-            if role == "assistant":
-                role = "model"
-            elif role == "system":
-                 # Skip system messages here, handled by system_instruction
-                 continue
+            role = "assistant" if msg.get('author', {}).get('id') == str(cog.bot.user.id) else "user" # Use get for safety
+
             # Handle potential multimodal content in history (if stored that way)
             if isinstance(msg.get("content"), list):
                  parts = [types.Part(text=part["text"]) if part["type"] == "text" else types.Part(uri=part["image_url"]["url"], mime_type=part["image_url"]["url"].split(";")[0].split(":")[1]) if part["type"] == "image_url" else None for part in msg["content"]]
@@ -778,87 +774,91 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
 
 
         # --- Prepare the current message content (potentially multimodal) ---
-        current_message_parts = []
-        formatted_current_message = format_message(cog, message) # Pass cog if needed
+        # This section is no longer needed as the current message is included in conversation_context_messages
+        # current_message_parts = []
+        # formatted_current_message = format_message(cog, message) # Pass cog if needed
 
         # --- Construct text content, including reply context if applicable ---
-        text_content = ""
-        if formatted_current_message.get("is_reply") and formatted_current_message.get("replied_to_author_name"):
-            reply_author = formatted_current_message["replied_to_author_name"]
-            reply_content = formatted_current_message.get("replied_to_content", "...") # Use ellipsis if content missing
-            # Truncate long replied content to keep context concise
-            max_reply_len = 150
-            if len(reply_content) > max_reply_len:
-                reply_content = reply_content[:max_reply_len] + "..."
-            text_content += f"(Replying to {reply_author}: \"{reply_content}\")\n"
+        # This section is now handled within the conversation history loop
+        # text_content = ""
+        # if formatted_current_message.get("is_reply") and formatted_current_message.get("replied_to_author_name"):
+        #     reply_author = formatted_current_message["replied_to_author_name"]
+        #     reply_content = formatted_current_message.get("replied_to_content", "...") # Use ellipsis if content missing
+        #     # Truncate long replied content to keep context concise
+        #     max_reply_len = 150
+        #     if len(reply_content) > max_reply_len:
+        #         reply_content = reply_content[:max_reply_len] + "..."
+        #     text_content += f"(Replying to {reply_author}: \"{reply_content}\")\n"
 
-        # Add current message author and content
-        # Use the new author_string here for the current message
-        current_author_string = formatted_current_message.get("author_string", formatted_current_message.get("author", {}).get("display_name", "Unknown User"))
-        text_content += f"{current_author_string}: {formatted_current_message['content']}" # Keep original content
+        # # Add current message author and content
+        # # Use the new author_string here for the current message
+        # current_author_string = formatted_current_message.get("author_string", formatted_current_message.get("author", {}).get("display_name", "Unknown User"))
+        # text_content += f"{current_author_string}: {formatted_current_message['content']}" # Keep original content
 
-        # Add formatted embed content if present for the *current* message
-        current_embed_str = _format_embeds_for_prompt(formatted_current_message.get("embed_content", []))
-        if current_embed_str:
-            text_content += f"\n[Embed Content]:\n{current_embed_str}"
+        # # Add formatted embed content if present for the *current* message
+        # current_embed_str = _format_embeds_for_prompt(formatted_current_message.get("embed_content", []))
+        # if current_embed_str:
+        #     text_content += f"\n[Embed Content]:\n{current_embed_str}"
 
-        # Add attachment descriptions for the *current* message
-        if formatted_current_message.get("attachment_descriptions"):
-            # Ensure descriptions are strings before joining
-            current_attach_desc_list = [a['description'] for a in formatted_current_message['attachment_descriptions'] if isinstance(a.get('description'), str)]
-            if current_attach_desc_list:
-                current_attach_desc_str = "\n".join(current_attach_desc_list)
-                text_content += f"\n[Attachments]:\n{current_attach_desc_str}"
+        # # Add attachment descriptions for the *current* message
+        # if formatted_current_message.get("attachment_descriptions"):
+        #     # Ensure descriptions are strings before joining
+        #     current_attach_desc_list = [a['description'] for a in formatted_current_message['attachment_descriptions'] if isinstance(a.get('description'), str)]
+        #     if current_attach_desc_list:
+        #         current_attach_desc_str = "\n".join(current_attach_desc_list)
+        #         text_content += f"\n[Attachments]:\n{current_attach_desc_str}"
 
-        # Add mention details
-        if formatted_current_message.get("mentioned_users_details"): # This key might not exist, adjust if needed
-            mentions_str = ", ".join([f"{m['display_name']}(id:{m['id']})" for m in formatted_current_message["mentioned_users_details"]])
-            text_content += f"\n(Message Details: Mentions=[{mentions_str}])"
+        # # Add mention details
+        # if formatted_current_message.get("mentioned_users_details"): # This key might not exist, adjust if needed
+        #     mentions_str = ", ".join([f"{m['display_name']}(id:{m['id']})" for m in formatted_current_message["mentioned_users_details"]])
+        #     text_content += f"\n(Message Details: Mentions=[{mentions_str}])"
 
-        current_message_parts.append(types.Part(text=text_content))
+        # current_message_parts.append(types.Part(text=text_content))
         # --- End text content construction ---
 
-        if message.attachments:
-            print(f"Processing {len(message.attachments)} attachments for message {message.id}")
-            for attachment in message.attachments:
-                mime_type = attachment.content_type
-                file_url = attachment.url
-                filename = attachment.filename
+        # The attachment processing for the current message is now handled within gather_conversation_context
+        # if message.attachments:
+        #     print(f"Processing {len(message.attachments)} attachments for message {message.id}")
+        #     for attachment in message.attachments:
+        #         mime_type = attachment.content_type
+        #         file_url = attachment.url
+        #         filename = attachment.filename
 
-                # Check if MIME type is supported for URI input by Gemini
-                supported_mime_prefixes = ["image/", "video/", "audio/", "text/plain", "application/pdf"]
-                is_supported = False
-                detected_mime_type = mime_type if mime_type else "application/octet-stream"
-                for prefix in supported_mime_prefixes:
-                    if detected_mime_type.startswith(prefix):
-                        is_supported = True
-                        break
+        #         # Check if MIME type is supported for URI input by Gemini
+        #         supported_mime_prefixes = ["image/", "video/", "audio/", "text/plain", "application/pdf"]
+        #         is_supported = False
+        #         detected_mime_type = mime_type if mime_type else "application/octet-stream"
+        #         for prefix in supported_mime_prefixes:
+        #             if detected_mime_type.startswith(prefix):
+        #                 is_supported = True
+        #                 break
 
-                # Always add a text instruction for every attachment
-                instruction_text = f"User attached a file: '{filename}' (Type: {detected_mime_type}). Analyze this file from the following URI and incorporate your understanding into your response."
-                current_message_parts.append(types.Part(text=instruction_text))
-                print(f"Added text instruction for attachment: {filename}")
+        #         # Always add a text instruction for every attachment
+        #         instruction_text = f"User attached a file: '{filename}' (Type: {detected_mime_type}). Analyze this file from the following URI and incorporate your understanding into your response."
+        #         current_message_parts.append(types.Part(text=instruction_text))
+        #         print(f"Added text instruction for attachment: {filename}")
 
-                if is_supported and file_url:
-                    try:
-                        # Add the URI part with a cleaned/fallback MIME type using from_uri
-                        clean_mime_type = detected_mime_type.split(';')[0] if detected_mime_type else "application/octet-stream"
-                        current_message_parts.append(types.Part.from_uri(file_url, clean_mime_type))
-                        print(f"Added URI part for attachment: {filename} ({clean_mime_type}) using URL: {file_url}")
-                    except Exception as e:
-                        print(f"Error creating types.Part for attachment {filename} ({detected_mime_type}): {e}")
-                        current_message_parts.append(types.Part(text=f"(System Note: Failed to process attachment '{filename}' - {e})"))
-                else:
-                    print(f"Skipping unsupported or invalid attachment: {filename} (Type: {detected_mime_type}, URL: {file_url})")
-                    current_message_parts.append(types.Part(text=f"(System Note: User attached an unsupported file '{filename}' of type '{detected_mime_type}' which cannot be processed.)"))
+        #         if is_supported and file_url:
+        #             try:
+        #                 # Add the URI part with a cleaned/fallback MIME type using from_uri
+        #                 clean_mime_type = detected_mime_type.split(';')[0] if detected_mime_type else "application/octet-stream"
+        #                 current_message_parts.append(types.Part.from_uri(file_url, clean_mime_type))
+        #                 print(f"Added URI part for attachment: {filename} ({clean_mime_type}) using URL: {file_url}")
+        #             except Exception as e:
+        #                 print(f"Error creating types.Part for attachment {filename} ({detected_mime_type}): {e}")
+        #                 current_message_parts.append(types.Part(text=f"(System Note: Failed to process attachment '{filename}' - {e})"))
+        #         else:
+        #             print(f"Skipping unsupported or invalid attachment: {filename} (Type: {detected_mime_type}, URL: {file_url})")
+        #             current_message_parts.append(types.Part(text=f"(System Note: User attached an unsupported file '{filename}' of type '{detected_mime_type}' which cannot be processed.)"))
 
 
         # Ensure there's always *some* content part, even if only text or errors
-        if current_message_parts:
-            contents.append(types.Content(role="user", parts=current_message_parts))
-        else:
-            print("Warning: No content parts generated for user message.")
-            contents.append(types.Content(role="user", parts=[types.Part(text="")])) # Ensure content list isn't empty
+        # This section is also no longer needed as the current message is included in conversation_context_messages
+        # if current_message_parts:
+        #     contents.append(types.Content(role="user", parts=current_message_parts))
+        # else:
+        #     print("Warning: No content parts generated for user message.")
+        #     contents.append(types.Content(role="user", parts=[types.Part(text="")])) # Ensure content list isn't empty
 
         # --- Prepare Tools ---
         # Preprocess tool parameter schemas before creating the Tool object
