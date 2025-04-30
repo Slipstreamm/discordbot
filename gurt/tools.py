@@ -1072,17 +1072,18 @@ async def send_discord_message(cog: commands.Cog, channel_id: str, message_conte
 async def restart_gurt_bot(cog: commands.Cog, channel_id: str = None) -> Dict[str, Any]:
     """
     Restarts the Gurt bot process by re-executing the current Python script.
-    Sends a message in the channel before restarting.
+    Sends a message in the specified channel before restarting.
+    The caller MUST provide a valid channel_id where the restart was invoked.
     Returns a status dictionary. Only works if the bot process has permission.
     """
     import sys
     import os
-    # Send message before restarting
-    if channel_id:
-        try:
-            await send_discord_message(cog, channel_id, "Restart tool was called.")
-        except Exception as msg_exc:
-            print(f"Failed to send restart message: {msg_exc}")
+    if not channel_id:
+        return {"error": "channel_id must be provided to send the restart message in the correct channel."}
+    try:
+        await send_discord_message(cog, channel_id, "Restart tool was called.")
+    except Exception as msg_exc:
+        print(f"Failed to send restart message: {msg_exc}")
     try:
         python = sys.executable
         os.execv(python, [python] + sys.argv)
@@ -1375,6 +1376,29 @@ async def no_operation(cog: commands.Cog) -> Dict[str, Any]:
     return {"status": "success", "message": "No operation performed."}
 
 
+async def get_channel_id(cog: commands.Cog, channel_name: str = None) -> Dict[str, Any]:
+    """
+    Returns the Discord channel ID for a given channel name in the current guild.
+    If no channel_name is provided, returns the ID of the current channel.
+    """
+    try:
+        if channel_name:
+            if not cog.current_channel or not cog.current_channel.guild:
+                return {"error": "No guild context to search for channel."}
+            guild = cog.current_channel.guild
+            # Try to find by name (case-insensitive)
+            for channel in guild.channels:
+                if hasattr(channel, "name") and channel.name.lower() == channel_name.lower():
+                    return {"status": "success", "channel_id": str(channel.id), "channel_name": channel.name}
+            return {"error": f"Channel '{channel_name}' not found in this server."}
+        else:
+            channel = cog.current_channel
+            if not channel:
+                return {"error": "No current channel context."}
+            return {"status": "success", "channel_id": str(channel.id), "channel_name": getattr(channel, "name", "DM Channel")}
+    except Exception as e:
+        return {"error": f"Error getting channel ID: {str(e)}"}
+
 # --- Tool Mapping ---
 # This dictionary maps tool names (used in the AI prompt) to their implementation functions.
 TOOL_MAPPING = {
@@ -1409,5 +1433,6 @@ TOOL_MAPPING = {
     "get_user_id": get_user_id, # Added user ID lookup tool
     "no_operation": no_operation, # Added no-op tool
     "restart_gurt_bot": restart_gurt_bot, # Tool to restart the Gurt bot
-    "run_git_pull": run_git_pull # Tool to run git pull on the host
+    "run_git_pull": run_git_pull, # Tool to run git pull on the host
+    "get_channel_id": get_channel_id # Tool to get channel id
 }

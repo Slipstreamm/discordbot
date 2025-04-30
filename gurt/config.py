@@ -971,6 +971,22 @@ def create_tools_list():
             }
         )
     )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_channel_id",
+            description="Returns the Discord channel ID for a given channel name in the current server. If no channel_name is provided, returns the ID of the current channel.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "channel_name": {
+                        "type": "string",
+                        "description": "The name of the channel to look up. If omitted, uses the current channel."
+                    }
+                },
+                "required": []
+            }
+        )
+    )
     return tool_declarations
 
 # Initialize TOOLS list, handling potential ImportError if library not installed
