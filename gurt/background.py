@@ -345,7 +345,6 @@ async def background_processing_task(cog: 'GurtCog'):
             if now - cog.last_internal_action_check > INTERNAL_ACTION_INTERVAL_SECONDS:
                 if random.random() < INTERNAL_ACTION_PROBABILITY:
                     print("--- Considering Autonomous Action ---")
-                    action_decision = None # Keep for logging/reporting structure? Or remove? Let's remove for now.
                     selected_tool_name = None
                     tool_args = None
                     tool_result = None
@@ -357,49 +356,38 @@ async def background_processing_task(cog: 'GurtCog'):
                         # 1. Gather Context for LLM (Same as before)
                         context_summary = "Gurt is considering an autonomous action.\n"
                         context_summary += f"Current Mood: {cog.current_mood}\n"
-                        # Add recent messages summary (optional, could be large)
-                        # recent_msgs = list(cog.message_cache['global_recent'])[-10:] # Last 10 global msgs
-                        # context_summary += f"Recent Messages (sample):\n" + json.dumps(recent_msgs, indent=2)[:500] + "...\n"
-                        # Add active goals
                         active_goals = await cog.memory_manager.get_goals(status='active', limit=3)
                         if active_goals:
                             context_summary += f"Active Goals:\n" + json.dumps(active_goals, indent=2)[:500] + "...\n"
-                        # Add recent internal action logs
                         recent_actions = await cog.memory_manager.get_internal_action_logs(limit=5)
                         if recent_actions:
                             context_summary += f"Recent Internal Actions:\n" + json.dumps(recent_actions, indent=2)[:500] + "...\n"
-                        # Add key personality traits
                         traits = await cog.memory_manager.get_all_personality_traits()
                         if traits:
                               context_summary += f"Personality Snippet: { {k: round(v, 2) for k, v in traits.items() if k in ['mischief', 'curiosity', 'chattiness']} }\n"
 
                         # 2. Define Prompt and Tools for google.generativeai
-                        # Exclude meta/dangerous tools
                         excluded_tools = {"create_new_tool"}
-                        # Preprocess tool schemas using the helper from api.py
                         preprocessed_declarations = []
                         if TOOLS:
                             for decl in TOOLS:
                                 if decl.name in excluded_tools: continue
-                                # Ensure decl.parameters is a dict before preprocessing
                                 preprocessed_params = _preprocess_schema_for_vertex(decl.parameters) if isinstance(decl.parameters, dict) else decl.parameters
                                 preprocessed_declarations.append(
                                     types.FunctionDeclaration(
                                         name=decl.name,
                                         description=decl.description,
-                                        parameters=preprocessed_params # Use the preprocessed schema
+                                        parameters=preprocessed_params
                                     )
                                 )
                             print(f"Preprocessed {len(preprocessed_declarations)} tool declarations for autonomous action.")
                         else:
                             print("No tools found in config (TOOLS list is empty or None) for autonomous action.")
 
-                        # Create the Tool object using the preprocessed declarations
                         genai_tool = types.Tool(function_declarations=preprocessed_declarations) if preprocessed_declarations else None
                         tools_list = [genai_tool] if genai_tool else None
 
                         # --- Revised System Prompt ---
-                        # Formal instructions for the autonomous action decision process.
                         system_prompt = (
                             "You are the decision-making module for Gurt's autonomous actions. Your task is to evaluate the provided context and determine whether Gurt should perform an action using the available tools or remain inactive.\n\n"
                             "**Persona Profile (Gurt):**\n"
@@ -408,32 +396,32 @@ async def background_processing_task(cog: 'GurtCog'):
                             "- **Interests:** Current interests (provided in context) should subtly guide potential actions or topics for engagement.\n"
                             "- **Social Dynamics:** Consider Gurt's current mood and relationship scores with users (if available) to modulate the nature and tone of potential actions.\n"
                             "- **Communication Style (for Inaction Reasoning Only):** While Gurt typically uses heavy internet slang, the reasoning provided when *not* acting should uniquely adopt this informal, slang-heavy voice, mimicking Gurt's internal monologue.\n\n"
-                            "**RESPONSE PROTOCOL (CRITICAL):**\n"
-                            "1.  **Decision to Act:** If you decide to perform an action, respond ONLY with a native function call for the chosen tool. DO NOT include any other text or JSON.\n"
-                            "2.  **Decision Not to Act:** If you decide NOT to perform an action, respond ONLY with a JSON object matching the provided schema. This JSON MUST contain `should_act: false` and your `reasoning` in Gurt's informal voice. DO NOT include a function call.\n\n"
-                            "Analyze the provided context against these directives and select the appropriate response format."
+                            "**RESPONSE PROTOCOL (ABSOLUTELY CRITICAL - FOLLOW EXACTLY):**\n"
+                            "1.  **IF YOU DECIDE TO ACT:** Your response MUST contain *ONLY* the native function call for the selected tool. NO other text, NO JSON, NO explanations.\n"
+                            "    Example of a valid response if acting: (A single FunctionCall object)\n"
+                            "2.  **IF YOU DECIDE NOT TO ACT:** Your response MUST contain *ONLY* a JSON object with exactly two keys: `\"should_act\": false` and `\"reasoning\": \"...your reasoning in Gurt's informal voice...\"`. NO other keys, NO function calls, NO extra text.\n"
+                            "    Example of a valid response if NOT acting: `{\"should_act\": false, \"reasoning\": \"nah im good rn, vibes r off\"}`\n"
+                            "3.  **INVALID RESPONSES:** Any other response format (e.g., JSON containing a tool name, text explaining an action) is INVALID and will be ignored.\n\n"
+                            "Analyze the context. Choose to act (native function call) OR not act (specific JSON). Provide ONLY the chosen valid response format."
                         )
-                        user_prompt = f"Context:\n{context_summary}\n\nEvaluate the context based on the system guidelines. Determine if an autonomous action is appropriate. If yes, provide ONLY the function call. If no, provide ONLY the reasoning text in Gurt's informal voice." # Formalized user prompt
+                        user_prompt = f"Context:\n{context_summary}\n\nEvaluate the context based on the system guidelines. Determine if an autonomous action is appropriate. If yes, provide ONLY the function call. If no, provide ONLY the specific inaction JSON."
 
                         # 3. Prepare Contents and Config for google.generativeai
                         contents: List[types.Content] = [
-                            # System prompt handled by generation_config
                             types.Content(role="user", parts=[types.Part(text=user_prompt)])
                         ]
 
-                        # Build generation config
                         gen_config_dict = {
                             "temperature": 0.7,
-                            "max_output_tokens": 4096, # Adjust as needed
+                            "max_output_tokens": 4096,
                             "safety_settings": STANDARD_SAFETY_SETTINGS,
-                            "system_instruction": system_prompt, # Pass system prompt here
+                            "system_instruction": system_prompt,
                         }
                         if tools_list:
                             gen_config_dict["tools"] = tools_list
-                            # Set tool config to ANY mode
                             gen_config_dict["tool_config"] = types.ToolConfig(
                                 function_calling_config=types.FunctionCallingConfig(
-                                    mode=types.FunctionCallingConfigMode.ANY # Use ANY mode
+                                    mode=types.FunctionCallingConfigMode.ANY
                                 )
                             )
                         generation_config = types.GenerateContentConfig(**gen_config_dict)
@@ -442,24 +430,23 @@ async def background_processing_task(cog: 'GurtCog'):
                         print("  - Asking Google GenAI model for autonomous action decision...")
                         response_obj = await call_google_genai_api_with_retry(
                             cog=cog,
-                            model_name=cog.default_model, # Use default model name string
+                            model_name=cog.default_model,
                             contents=contents,
                             generation_config=generation_config,
                             request_desc="Autonomous Action Decision",
                         )
 
-                        # 5. Process Response - Stricter Interpretation
+                        # 5. Process Response - Stricter Interpretation v3
                         if response_obj and response_obj.candidates:
                             candidate = response_obj.candidates[0]
-                            # Check *only* for a native function call FIRST
+                            # Priority 1: Check for Native Function Call
                             function_call = find_function_call_in_parts(candidate.content.parts)
 
                             if function_call:
                                 # Native function call found - this is the signal to act
                                 selected_tool_name = function_call.name
                                 tool_args = dict(function_call.args) if function_call.args else {}
-                                # Get text response *only* for potential reasoning context, not for action details
-                                # In this case, text response should ideally be empty based on prompt instructions
+                                # Reasoning might be empty if model strictly follows instructions
                                 text_reasoning = _get_response_text(response_obj)
                                 action_reasoning = text_reasoning if text_reasoning else f"Model decided to call function '{selected_tool_name}' via native call."
                                 print(f"  - Model called function natively: Tool='{selected_tool_name}', Args={tool_args}, Text Reason='{action_reasoning}'")
@@ -471,47 +458,52 @@ async def background_processing_task(cog: 'GurtCog'):
                                     selected_tool_name = None # Prevent execution
                                     function_call = None # Clear function call
                                 # else: Action will proceed based on valid function_call object
-                            else:
-                                # NO native function call found - attempt to parse JSON for inaction decision
-                                print("  - No native function call found. Attempting to parse JSON for inaction decision.")
-                                try:
-                                    # Use get_internal_ai_json_response's parsing logic
-                                    decision_data, _ = get_internal_ai_json_response(
-                                         cog=cog, # Pass cog for potential logging/error handling within helper
-                                         prompt_messages=[], # Not needed here, already have response_obj
-                                         task_description="Autonomous Action Inaction Parsing",
-                                         response_schema_dict=action_decision_schema,
-                                         model_name_override=None, # Not making a new API call
-                                         temperature=None, # Not making a new API call
-                                         max_tokens=None, # Not making a new API call
-                                         response_obj_override=response_obj # Pass the existing response object
-                                    )
 
-                                    if decision_data and decision_data.get("should_act") is False:
-                                        action_reasoning = decision_data.get("reasoning", "Model decided not to act.")
-                                        result_summary = f"No action taken. Reason: {action_reasoning}"
-                                        selected_tool_name = None # Ensure no execution
-                                        function_call = None    # Ensure no execution
-                                        tool_args = None        # Ensure no execution
-                                        print(f"  - Parsed JSON for inaction decision. Reason: {action_reasoning}")
-                                    else:
-                                        # API call succeeded, but neither native function call nor valid inaction JSON was found
-                                        error_msg = "Autonomous action API call returned no native function call and invalid inaction JSON."
-                                        print(f"  - Error: {error_msg}")
-                                        result_summary = error_msg
-                                        action_reasoning = error_msg
-                                        selected_tool_name = None
-                                        function_call = None
-                                        tool_args = None
-                                except Exception as parse_e:
-                                     error_msg = f"Error parsing JSON for inaction decision: {parse_e}"
-                                     print(f"  - Error: {error_msg}")
-                                     traceback.print_exc()
-                                     result_summary = error_msg
-                                     action_reasoning = error_msg
-                                     selected_tool_name = None
-                                     function_call = None
-                                     tool_args = None
+                            else:
+                                # Priority 2: Check for Explicit Inaction JSON
+                                raw_text_response = _get_response_text(response_obj)
+                                is_valid_inaction = False
+                                selected_tool_name = None # Ensure these are reset if no native call
+                                function_call = None
+                                tool_args = None
+
+                                if raw_text_response:
+                                    try:
+                                        # Attempt to strip potential markdown code blocks
+                                        cleaned_response = raw_text_response.strip()
+                                        if cleaned_response.startswith("```json"):
+                                            cleaned_response = cleaned_response[7:]
+                                        if cleaned_response.endswith("```"):
+                                            cleaned_response = cleaned_response[:-3]
+                                        cleaned_response = cleaned_response.strip()
+
+                                        decision_data = json.loads(cleaned_response)
+                                        # Check for exact structure: {"should_act": false, "reasoning": "..."}
+                                        if isinstance(decision_data, dict) and \
+                                           decision_data.get("should_act") is False and \
+                                           "reasoning" in decision_data and \
+                                           len(decision_data) == 2:
+                                            action_reasoning = decision_data.get("reasoning", "Model decided not to act.")
+                                            result_summary = f"No action taken. Reason: {action_reasoning}"
+                                            print(f"  - Valid inaction JSON received. Reason: {action_reasoning}")
+                                            is_valid_inaction = True
+                                        else:
+                                            print(f"  - JSON received, but not valid inaction format: {cleaned_response[:200]}")
+                                    except json.JSONDecodeError:
+                                        print(f"  - Text response received, but not valid JSON: {raw_text_response[:200]}")
+                                    except Exception as e:
+                                        print(f"  - Error processing text response: {e}")
+
+                                # Fallback: Invalid Response
+                                if not is_valid_inaction:
+                                    error_msg = f"Invalid response format. Expected native function call or specific inaction JSON. Received: {raw_text_response[:200]}"
+                                    print(f"  - Error: {error_msg}")
+                                    result_summary = error_msg
+                                    action_reasoning = error_msg
+                                    # Ensure action is prevented
+                                    selected_tool_name = None
+                                    function_call = None
+                                    tool_args = None
 
                         else:
                              # Handle case where API call succeeded but returned no candidates/response_obj
@@ -532,7 +524,7 @@ async def background_processing_task(cog: 'GurtCog'):
                         function_call = None
                         tool_args = None
 
-                    # 6. Execute Action (if function was called) - Logic remains the same
+                    # 6. Execute Action (if function_call is valid)
                     if function_call and selected_tool_name and tool_args is not None: # Check function_call exists
                         tool_func = TOOL_MAPPING.get(selected_tool_name)
                         if tool_func:
@@ -563,17 +555,17 @@ async def background_processing_task(cog: 'GurtCog'):
                                 # Update tool stats for failure
                                 if selected_tool_name in cog.tool_stats:
                                      cog.tool_stats[selected_tool_name]["count"] += 1
-                                     cog.tool_stats[selected_name]["failure"] += 1
+                                     cog.tool_stats[selected_tool_name]["failure"] += 1 # Corrected key
                         else:
                             # Should have been caught earlier, but double-check
                             print(f"  - Error: Tool '{selected_tool_name}' function not found in mapping during execution phase.")
                             result_summary = f"Error: Tool function for '{selected_tool_name}' not found."
 
-                    # 7. Log Action (always log the attempt/decision) - Logic remains the same
+                    # 7. Log Action (always log the attempt/decision)
                     try:
                         await cog.memory_manager.add_internal_action_log(
-                            tool_name=selected_tool_name or "None", # Log 'None' if no tool was chosen
-                            arguments=tool_args if selected_tool_name else None,
+                            tool_name=selected_tool_name or "None", # Log 'None' if no tool was chosen or action was invalid
+                            arguments=tool_args if function_call else None, # Log args only if a valid function call was made
                             reasoning=action_reasoning,
                             result_summary=result_summary
                         )
@@ -581,9 +573,8 @@ async def background_processing_task(cog: 'GurtCog'):
                         print(f"  - Error logging autonomous action attempt to memory: {log_e}")
                         traceback.print_exc()
 
-                    # 8. Decide Follow-up Action based on Result - Logic remains the same
-                    # This part already uses get_internal_ai_json_response which uses google.generativeai
-                    if selected_tool_name and tool_result: # Only consider follow-up if an action was successfully attempted
+                    # 8. Decide Follow-up Action based on Result
+                    if function_call and selected_tool_name and tool_result: # Only consider follow-up if an action was successfully executed
                         print(f"  - Considering follow-up action based on result of {selected_tool_name}...")
                         follow_up_tool_name = None
                         follow_up_tool_args = None
@@ -663,8 +654,8 @@ async def background_processing_task(cog: 'GurtCog'):
                             else:
                                  print(f"    - Error: Follow-up tool '{follow_up_tool_name}' function not found.")
 
-                    # 9. Report Initial Action (Optional) - Logic remains the same
-                    if AUTONOMOUS_ACTION_REPORT_CHANNEL_ID and selected_tool_name: # Only report if an action was attempted
+                    # 9. Report Initial Action (Optional)
+                    if AUTONOMOUS_ACTION_REPORT_CHANNEL_ID and selected_tool_name and function_call: # Only report if a valid action was attempted
                         try:
                             report_channel_id = int(AUTONOMOUS_ACTION_REPORT_CHANNEL_ID) # Ensure it's an int
                             channel = cog.bot.get_channel(report_channel_id)
