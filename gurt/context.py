@@ -27,7 +27,9 @@ def gather_conversation_context(cog: 'GurtCog', channel_id: int, current_message
 
             # Build the content string, including reply and attachment info
             content_parts = []
-            author_name = msg_data['author']['display_name']
+            # FIX: Use the pre-formatted author_string which includes '(BOT)' tag if applicable.
+            # Fall back to display_name or 'Unknown User' if author_string is missing for some reason.
+            author_name = msg_data.get('author_string', msg_data.get('author', {}).get('display_name', 'Unknown User'))
 
             message_id = msg_data['id'] # Get the message ID
 
