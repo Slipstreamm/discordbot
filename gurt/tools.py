@@ -39,7 +39,7 @@ from .config import (
 
 async def get_recent_messages(cog: commands.Cog, limit: int, channel_id: str = None) -> Dict[str, Any]:
     """Get recent messages from a Discord channel"""
-    from .utils import format_message # Import here to avoid circular dependency at module level
+    from .utils import format_message # Import here to avoid circular dependency at module level test
     limit = min(max(1, limit), 100)
     try:
         if channel_id:
