@@ -987,6 +987,380 @@ def create_tools_list():
             }
         )
     )
+    # --- Batch 1 Tool Declarations ---
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_guild_info",
+            description="Gets information about the current Discord server (name, ID, owner, member count, etc.).",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="list_guild_members",
+            description="Lists members in the current server, with optional filters for status or role.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of members to return (default 50, max 1000)."
+                    },
+                    "status_filter": {
+                        "type": "string",
+                        "description": "Optional: Filter by status ('online', 'idle', 'dnd', 'offline')."
+                    },
+                    "role_id_filter": {
+                        "type": "string",
+                        "description": "Optional: Filter by members having a specific role ID."
+                    }
+                },
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_user_avatar",
+            description="Gets the display avatar URL for a given user ID.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The Discord ID of the user."
+                    }
+                },
+                "required": ["user_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_bot_uptime",
+            description="Gets the duration the bot has been running since its last start.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="schedule_message",
+            description="Schedules a message to be sent in a channel at a specific future time (ISO 8601 format with timezone). Requires a persistent scheduler.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "channel_id": {
+                        "type": "string",
+                        "description": "The ID of the channel to send the message to."
+                    },
+                    "message_content": {
+                        "type": "string",
+                        "description": "The content of the message to schedule."
+                    },
+                    "send_at_iso": {
+                        "type": "string",
+                        "description": "The exact time to send the message in ISO 8601 format, including timezone (e.g., '2024-01-01T12:00:00+00:00')."
+                    }
+                },
+                "required": ["channel_id", "message_content", "send_at_iso"]
+            }
+        )
+    )
+    # --- End Batch 1 ---
+
+    # --- Batch 2 Tool Declarations ---
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="delete_message",
+            description="Deletes a specific message by its ID. Requires 'Manage Messages' permission if deleting others' messages.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "description": "The ID of the message to delete."
+                    },
+                    "channel_id": {
+                        "type": "string",
+                        "description": "Optional: The ID of the channel containing the message. Defaults to the current channel."
+                    }
+                },
+                "required": ["message_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="edit_message",
+            description="Edits a message previously sent by the bot.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "description": "The ID of the bot's message to edit."
+                    },
+                    "new_content": {
+                        "type": "string",
+                        "description": "The new text content for the message."
+                    },
+                    "channel_id": {
+                        "type": "string",
+                        "description": "Optional: The ID of the channel containing the message. Defaults to the current channel."
+                    }
+                },
+                "required": ["message_id", "new_content"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_voice_channel_info",
+            description="Gets detailed information about a specific voice channel, including connected members.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "channel_id": {
+                        "type": "string",
+                        "description": "The ID of the voice channel to get information about."
+                    }
+                },
+                "required": ["channel_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="move_user_to_voice_channel",
+            description="Moves a user to a specified voice channel. Requires 'Move Members' permission.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The ID of the user to move."
+                    },
+                    "target_channel_id": {
+                        "type": "string",
+                        "description": "The ID of the voice channel to move the user to."
+                    }
+                },
+                "required": ["user_id", "target_channel_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_guild_roles",
+            description="Lists all roles available in the current server, ordered by position.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    # --- End Batch 2 ---
+
+    # --- Batch 3 Tool Declarations ---
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="assign_role_to_user",
+            description="Assigns a specific role to a user by their IDs. Requires 'Manage Roles' permission and role hierarchy.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The ID of the user to assign the role to."
+                    },
+                    "role_id": {
+                        "type": "string",
+                        "description": "The ID of the role to assign."
+                    }
+                },
+                "required": ["user_id", "role_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="remove_role_from_user",
+            description="Removes a specific role from a user by their IDs. Requires 'Manage Roles' permission and role hierarchy.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The ID of the user to remove the role from."
+                    },
+                    "role_id": {
+                        "type": "string",
+                        "description": "The ID of the role to remove."
+                    }
+                },
+                "required": ["user_id", "role_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="fetch_emoji_list",
+            description="Lists all custom emojis available in the current server.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_guild_invites",
+            description="Lists active invite links for the current server. Requires 'Manage Server' permission.",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="purge_messages",
+            description="Bulk deletes messages in a text channel. Requires 'Manage Messages' permission. Cannot delete messages older than 14 days.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "The maximum number of messages to delete (1-1000)."
+                    },
+                    "channel_id": {
+                        "type": "string",
+                        "description": "Optional: The ID of the text channel to purge. Defaults to the current channel."
+                    },
+                    "user_id": {
+                        "type": "string",
+                        "description": "Optional: Filter to only delete messages from this user ID."
+                    },
+                    "before_message_id": {
+                        "type": "string",
+                        "description": "Optional: Only delete messages before this message ID."
+                    },
+                    "after_message_id": {
+                        "type": "string",
+                        "description": "Optional: Only delete messages after this message ID."
+                    }
+                },
+                "required": ["limit"]
+            }
+        )
+    )
+    # --- End Batch 3 ---
+
+    # --- Batch 4 Tool Declarations ---
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_bot_stats",
+            description="Gets various statistics about the bot's current state (guild count, latency, uptime, memory usage, etc.).",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_weather",
+            description="Gets the current weather for a specified location. Requires external API setup.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The city name or zip code to get weather for (e.g., 'London', '90210, US')."
+                    }
+                },
+                "required": ["location"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="translate_text",
+            description="Translates text to a target language. Requires external API setup.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The text to translate."
+                    },
+                    "target_language": {
+                        "type": "string",
+                        "description": "The target language code (e.g., 'es' for Spanish, 'ja' for Japanese)."
+                    },
+                    "source_language": {
+                        "type": "string",
+                        "description": "Optional: The source language code. If omitted, the API will attempt auto-detection."
+                    }
+                },
+                "required": ["text", "target_language"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="remind_user",
+            description="Sets a reminder for a user to be delivered via DM at a specific future time (ISO 8601 format with timezone). Requires scheduler setup.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "The ID of the user to remind."
+                    },
+                    "reminder_text": {
+                        "type": "string",
+                        "description": "The text content of the reminder."
+                    },
+                    "remind_at_iso": {
+                        "type": "string",
+                        "description": "The exact time to send the reminder in ISO 8601 format, including timezone (e.g., '2024-01-01T12:00:00+00:00')."
+                    }
+                },
+                "required": ["user_id", "reminder_text", "remind_at_iso"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="fetch_random_image",
+            description="Fetches a random image, optionally based on a query. Requires external API setup.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Optional: A keyword or query to search for specific types of images (e.g., 'cats', 'landscape')."
+                    }
+                },
+                "required": []
+            }
+        )
+    )
+    # --- End Batch 4 ---
+
     return tool_declarations
 
 # Initialize TOOLS list, handling potential ImportError if library not installed

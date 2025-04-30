@@ -1399,6 +1399,928 @@ async def get_channel_id(cog: commands.Cog, channel_name: str = None) -> Dict[st
     except Exception as e:
         return {"error": f"Error getting channel ID: {str(e)}"}
 
+# Tool 1: get_guild_info
+async def get_guild_info(cog: commands.Cog) -> Dict[str, Any]:
+    """Gets information about the current Discord server."""
+    print("Executing get_guild_info tool.")
+    if not cog.current_channel or not isinstance(cog.current_channel, discord.abc.GuildChannel):
+        return {"error": "Cannot get guild info outside of a server channel."}
+    guild = cog.current_channel.guild
+    if not guild:
+        return {"error": "Could not determine the current server."}
+
+    try:
+        owner = guild.owner or await guild.fetch_member(guild.owner_id) # Fetch if not cached
+        owner_info = {"id": str(owner.id), "name": owner.name, "display_name": owner.display_name} if owner else None
+
+        return {
+            "status": "success",
+            "guild_id": str(guild.id),
+            "name": guild.name,
+            "description": guild.description,
+            "member_count": guild.member_count,
+            "created_at": guild.created_at.isoformat(),
+            "owner": owner_info,
+            "icon_url": str(guild.icon.url) if guild.icon else None,
+            "banner_url": str(guild.banner.url) if guild.banner else None,
+            "features": guild.features,
+            "preferred_locale": guild.preferred_locale,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except Exception as e:
+        error_message = f"Error getting guild info: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 2: list_guild_members
+async def list_guild_members(cog: commands.Cog, limit: int = 50, status_filter: Optional[str] = None, role_id_filter: Optional[str] = None) -> Dict[str, Any]:
+    """Lists members in the current server, with optional filters."""
+    print(f"Executing list_guild_members tool (limit={limit}, status={status_filter}, role={role_id_filter}).")
+    if not cog.current_channel or not isinstance(cog.current_channel, discord.abc.GuildChannel):
+        return {"error": "Cannot list members outside of a server channel."}
+    guild = cog.current_channel.guild
+    if not guild:
+        return {"error": "Could not determine the current server."}
+
+    limit = min(max(1, limit), 1000) # Limit fetch size
+    members_list = []
+    role_filter_obj = None
+    if role_id_filter:
+        try:
+            role_filter_obj = guild.get_role(int(role_id_filter))
+            if not role_filter_obj:
+                return {"error": f"Role ID {role_id_filter} not found."}
+        except ValueError:
+            return {"error": f"Invalid role ID format: {role_id_filter}."}
+
+    valid_statuses = ["online", "idle", "dnd", "offline"]
+    status_filter_lower = status_filter.lower() if status_filter else None
+    if status_filter_lower and status_filter_lower not in valid_statuses:
+        return {"error": f"Invalid status_filter. Use one of: {', '.join(valid_statuses)}"}
+
+    try:
+        # Fetching all members can be intensive, use guild.members if populated, otherwise fetch cautiously
+        # Note: Fetching all members requires the Members privileged intent.
+        fetched_members = guild.members # Use cached first
+        if len(fetched_members) < guild.member_count and cog.bot.intents.members:
+             print(f"Fetching members for guild {guild.id} as cache seems incomplete...")
+             # This might take time and requires the intent
+             # Consider adding a timeout or limiting the fetch if it's too slow
+             fetched_members = await guild.fetch_members(limit=None).flatten() # Fetch all if intent is enabled
+
+        count = 0
+        for member in fetched_members:
+            if status_filter_lower and str(member.status) != status_filter_lower:
+                continue
+            if role_filter_obj and role_filter_obj not in member.roles:
+                continue
+
+            members_list.append({
+                "id": str(member.id),
+                "name": member.name,
+                "display_name": member.display_name,
+                "bot": member.bot,
+                "status": str(member.status),
+                "joined_at": member.joined_at.isoformat() if member.joined_at else None,
+                "roles": [{"id": str(r.id), "name": r.name} for r in member.roles if r.name != "@everyone"]
+            })
+            count += 1
+            if count >= limit:
+                break
+
+        return {
+            "status": "success",
+            "guild_id": str(guild.id),
+            "filters_applied": {"limit": limit, "status": status_filter, "role_id": role_id_filter},
+            "members": members_list,
+            "count": len(members_list),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except discord.Forbidden:
+         return {"error": "Missing permissions or intents (Members) to list guild members."}
+    except Exception as e:
+        error_message = f"Error listing guild members: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 3: get_user_avatar
+async def get_user_avatar(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
+    """Gets the avatar URL for a given user ID."""
+    print(f"Executing get_user_avatar tool for user ID: {user_id}.")
+    try:
+        user_id_int = int(user_id)
+        user = cog.bot.get_user(user_id_int) or await cog.bot.fetch_user(user_id_int)
+        if not user:
+            return {"error": f"User with ID {user_id} not found."}
+
+        avatar_url = str(user.display_avatar.url) # display_avatar handles default/server avatar
+
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "user_name": user.name,
+            "avatar_url": avatar_url,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except ValueError:
+        return {"error": f"Invalid user ID format: {user_id}."}
+    except discord.NotFound:
+        return {"error": f"User with ID {user_id} not found."}
+    except Exception as e:
+        error_message = f"Error getting user avatar: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 4: get_bot_uptime
+async def get_bot_uptime(cog: commands.Cog) -> Dict[str, Any]:
+    """Gets the uptime of the bot."""
+    print("Executing get_bot_uptime tool.")
+    if not hasattr(cog, 'start_time'):
+         return {"error": "Bot start time not recorded in cog."} # Assumes cog has a start_time attribute
+
+    try:
+        uptime_delta = datetime.datetime.now(datetime.timezone.utc) - cog.start_time
+        total_seconds = int(uptime_delta.total_seconds())
+        days, remainder = divmod(total_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        uptime_str = f"{days}d {hours}h {minutes}m {seconds}s"
+
+        return {
+            "status": "success",
+            "start_time": cog.start_time.isoformat(),
+            "current_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "uptime_seconds": total_seconds,
+            "uptime_formatted": uptime_str,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except Exception as e:
+        error_message = f"Error calculating bot uptime: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 5: schedule_message
+# This requires a persistent scheduling mechanism (like APScheduler or storing in DB)
+# For simplicity, this example won't implement persistence, making it non-functional across restarts.
+# A real implementation needs a background task scheduler.
+async def schedule_message(cog: commands.Cog, channel_id: str, message_content: str, send_at_iso: str) -> Dict[str, Any]:
+    """Schedules a message to be sent in a channel at a specific ISO 8601 time."""
+    print(f"Executing schedule_message tool: Channel={channel_id}, Time={send_at_iso}, Content='{message_content[:50]}...'")
+    if not hasattr(cog, 'scheduler') or not cog.scheduler:
+         return {"error": "Scheduler not available in the cog. Cannot schedule messages persistently."}
+
+    try:
+        send_time = datetime.datetime.fromisoformat(send_at_iso)
+        # Ensure timezone awareness, assume UTC if naive? Or require timezone? Let's require it.
+        if send_time.tzinfo is None:
+            return {"error": "send_at_iso must include timezone information (e.g., +00:00 or Z)."}
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if send_time <= now:
+            return {"error": "Scheduled time must be in the future."}
+
+        channel_id_int = int(channel_id)
+        channel = cog.bot.get_channel(channel_id_int)
+        if not channel:
+            # Try fetching if not in cache
+            channel = await cog.bot.fetch_channel(channel_id_int)
+        if not channel or not isinstance(channel, discord.abc.Messageable):
+             return {"error": f"Channel {channel_id} not found or not messageable."}
+
+        # Limit message length
+        max_msg_len = 1900
+        message_content = message_content[:max_msg_len] + ('...' if len(message_content) > max_msg_len else '')
+
+        # --- Scheduling Logic ---
+        # This uses cog.scheduler.add_job which needs to be implemented using e.g., APScheduler
+        job = cog.scheduler.add_job(
+            send_discord_message, # Use the existing tool function
+            'date',
+            run_date=send_time,
+            args=[cog, channel_id, message_content], # Pass necessary args
+            id=f"scheduled_msg_{channel_id}_{int(time.time())}", # Unique job ID
+            misfire_grace_time=600 # Allow 10 mins grace period
+        )
+        print(f"Scheduled job {job.id} to send message at {send_time.isoformat()}")
+
+        return {
+            "status": "success",
+            "job_id": job.id,
+            "channel_id": channel_id,
+            "message_content_preview": message_content[:100],
+            "scheduled_time_utc": send_time.astimezone(datetime.timezone.utc).isoformat(),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except ValueError as e:
+        return {"error": f"Invalid format for channel_id or send_at_iso: {e}"}
+    except (discord.NotFound, discord.Forbidden):
+         return {"error": f"Cannot access or send messages to channel {channel_id}."}
+    except Exception as e: # Catch scheduler errors too
+        error_message = f"Error scheduling message: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+
+# Tool 6: delete_message
+async def delete_message(cog: commands.Cog, message_id: str, channel_id: Optional[str] = None) -> Dict[str, Any]:
+    """Deletes a specific message by its ID."""
+    print(f"Executing delete_message tool for message ID: {message_id}.")
+    try:
+        if channel_id:
+            channel = cog.bot.get_channel(int(channel_id))
+            if not channel: return {"error": f"Channel {channel_id} not found."}
+        else:
+            channel = cog.current_channel
+            if not channel: return {"error": "No current channel context."}
+        if not isinstance(channel, discord.abc.Messageable):
+             return {"error": f"Channel {getattr(channel, 'id', 'N/A')} is not messageable."}
+
+        message_id_int = int(message_id)
+        message = await channel.fetch_message(message_id_int)
+
+        # Permission Check (if in guild)
+        if isinstance(channel, discord.abc.GuildChannel):
+            bot_member = channel.guild.me
+            # Need 'manage_messages' to delete others' messages, can always delete own
+            if message.author != bot_member and not channel.permissions_for(bot_member).manage_messages:
+                return {"error": "Missing 'Manage Messages' permission to delete this message."}
+
+        await message.delete()
+        print(f"Successfully deleted message {message_id} in channel {channel.id}.")
+        return {"status": "success", "message_id": message_id, "channel_id": str(channel.id)}
+
+    except ValueError:
+        return {"error": f"Invalid message_id or channel_id format."}
+    except discord.NotFound:
+        return {"error": f"Message {message_id} not found in channel {channel_id or getattr(channel, 'id', 'N/A')}."}
+    except discord.Forbidden:
+        return {"error": f"Forbidden: Missing permissions to delete message {message_id}."}
+    except discord.HTTPException as e:
+        error_message = f"API error deleting message {message_id}: {e}"
+        print(error_message)
+        return {"error": error_message}
+    except Exception as e:
+        error_message = f"Unexpected error deleting message {message_id}: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 7: edit_message
+async def edit_message(cog: commands.Cog, message_id: str, new_content: str, channel_id: Optional[str] = None) -> Dict[str, Any]:
+    """Edits a message sent by the bot."""
+    print(f"Executing edit_message tool for message ID: {message_id}.")
+    if not new_content: return {"error": "New content cannot be empty."}
+    # Limit message length
+    max_msg_len = 1900
+    new_content = new_content[:max_msg_len] + ('...' if len(new_content) > max_msg_len else '')
+
+    try:
+        if channel_id:
+            channel = cog.bot.get_channel(int(channel_id))
+            if not channel: return {"error": f"Channel {channel_id} not found."}
+        else:
+            channel = cog.current_channel
+            if not channel: return {"error": "No current channel context."}
+        if not isinstance(channel, discord.abc.Messageable):
+             return {"error": f"Channel {getattr(channel, 'id', 'N/A')} is not messageable."}
+
+        message_id_int = int(message_id)
+        message = await channel.fetch_message(message_id_int)
+
+        # IMPORTANT: Bots can ONLY edit their own messages.
+        if message.author != cog.bot.user:
+            return {"error": "Cannot edit messages sent by other users."}
+
+        await message.edit(content=new_content)
+        print(f"Successfully edited message {message_id} in channel {channel.id}.")
+        return {"status": "success", "message_id": message_id, "channel_id": str(channel.id), "new_content_preview": new_content[:100]}
+
+    except ValueError:
+        return {"error": f"Invalid message_id or channel_id format."}
+    except discord.NotFound:
+        return {"error": f"Message {message_id} not found in channel {channel_id or getattr(channel, 'id', 'N/A')}."}
+    except discord.Forbidden:
+        # This usually shouldn't happen if we check author == bot, but include for safety
+        return {"error": f"Forbidden: Missing permissions to edit message {message_id} (shouldn't happen for own message)."}
+    except discord.HTTPException as e:
+        error_message = f"API error editing message {message_id}: {e}"
+        print(error_message)
+        return {"error": error_message}
+    except Exception as e:
+        error_message = f"Unexpected error editing message {message_id}: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 8: get_voice_channel_info
+async def get_voice_channel_info(cog: commands.Cog, channel_id: str) -> Dict[str, Any]:
+    """Gets information about a specific voice channel."""
+    print(f"Executing get_voice_channel_info tool for channel ID: {channel_id}.")
+    try:
+        channel_id_int = int(channel_id)
+        channel = cog.bot.get_channel(channel_id_int)
+
+        if not channel:
+            return {"error": f"Channel {channel_id} not found."}
+        if not isinstance(channel, discord.VoiceChannel):
+            return {"error": f"Channel {channel_id} is not a voice channel (Type: {type(channel)})."}
+
+        members_info = []
+        for member in channel.members:
+            members_info.append({
+                "id": str(member.id),
+                "name": member.name,
+                "display_name": member.display_name,
+                "voice_state": {
+                    "deaf": member.voice.deaf, "mute": member.voice.mute,
+                    "self_deaf": member.voice.self_deaf, "self_mute": member.voice.self_mute,
+                    "self_stream": member.voice.self_stream, "self_video": member.voice.self_video,
+                    "suppress": member.voice.suppress, "afk": member.voice.afk
+                } if member.voice else None
+            })
+
+        return {
+            "status": "success",
+            "channel_id": str(channel.id),
+            "name": channel.name,
+            "bitrate": channel.bitrate,
+            "user_limit": channel.user_limit,
+            "rtc_region": str(channel.rtc_region) if channel.rtc_region else None,
+            "category": {"id": str(channel.category_id), "name": channel.category.name} if channel.category else None,
+            "guild_id": str(channel.guild.id),
+            "connected_members": members_info,
+            "member_count": len(members_info),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except ValueError:
+        return {"error": f"Invalid channel ID format: {channel_id}."}
+    except Exception as e:
+        error_message = f"Error getting voice channel info: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 9: move_user_to_voice_channel
+async def move_user_to_voice_channel(cog: commands.Cog, user_id: str, target_channel_id: str) -> Dict[str, Any]:
+    """Moves a user to a specified voice channel within the same server."""
+    print(f"Executing move_user_to_voice_channel tool: User={user_id}, TargetChannel={target_channel_id}.")
+    if not cog.current_channel or not isinstance(cog.current_channel, discord.abc.GuildChannel):
+        return {"error": "Cannot move users outside of a server context."}
+    guild = cog.current_channel.guild
+    if not guild: return {"error": "Could not determine server."}
+
+    try:
+        user_id_int = int(user_id)
+        target_channel_id_int = int(target_channel_id)
+
+        member = guild.get_member(user_id_int) or await guild.fetch_member(user_id_int)
+        if not member: return {"error": f"User {user_id} not found in this server."}
+
+        target_channel = guild.get_channel(target_channel_id_int)
+        if not target_channel: return {"error": f"Target voice channel {target_channel_id} not found."}
+        if not isinstance(target_channel, discord.VoiceChannel):
+            return {"error": f"Target channel {target_channel_id} is not a voice channel."}
+
+        # Permission Checks
+        bot_member = guild.me
+        if not bot_member.guild_permissions.move_members:
+            return {"error": "I lack the 'Move Members' permission."}
+        # Check bot permissions in both origin (if user is connected) and target channels
+        if member.voice and member.voice.channel:
+            origin_channel = member.voice.channel
+            if not origin_channel.permissions_for(bot_member).connect or not origin_channel.permissions_for(bot_member).move_members:
+                 return {"error": f"I lack Connect/Move permissions in the user's current channel ({origin_channel.name})."}
+        if not target_channel.permissions_for(bot_member).connect or not target_channel.permissions_for(bot_member).move_members:
+             return {"error": f"I lack Connect/Move permissions in the target channel ({target_channel.name})."}
+        # Cannot move user if bot's top role is not higher (unless bot is owner)
+        if bot_member.id != guild.owner_id and bot_member.top_role <= member.top_role:
+             return {"error": f"Cannot move {member.display_name} due to role hierarchy."}
+
+        await member.move_to(target_channel, reason="Moved by Gurt tool")
+        print(f"Successfully moved {member.display_name} ({user_id}) to voice channel {target_channel.name} ({target_channel_id}).")
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "user_name": member.display_name,
+            "target_channel_id": target_channel_id,
+            "target_channel_name": target_channel.name
+        }
+
+    except ValueError:
+        return {"error": "Invalid user_id or target_channel_id format."}
+    except discord.NotFound:
+        return {"error": "User or target channel not found."}
+    except discord.Forbidden as e:
+        print(f"Forbidden error moving user {user_id}: {e}")
+        return {"error": f"Permission error moving user {user_id}."}
+    except discord.HTTPException as e:
+        print(f"API error moving user {user_id}: {e}")
+        return {"error": f"API error moving user {user_id}: {e}"}
+    except Exception as e:
+        error_message = f"Unexpected error moving user {user_id}: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 10: get_guild_roles
+async def get_guild_roles(cog: commands.Cog) -> Dict[str, Any]:
+    """Lists all roles in the current server."""
+    print("Executing get_guild_roles tool.")
+    if not cog.current_channel or not isinstance(cog.current_channel, discord.abc.GuildChannel):
+        return {"error": "Cannot get roles outside of a server channel."}
+    guild = cog.current_channel.guild
+    if not guild:
+        return {"error": "Could not determine the current server."}
+
+    try:
+        roles_list = []
+        # Roles are ordered by position, highest first (excluding @everyone)
+        for role in reversed(guild.roles): # Iterate from lowest to highest position
+            if role.name == "@everyone": continue
+            roles_list.append({
+                "id": str(role.id),
+                "name": role.name,
+                "color": str(role.color),
+                "position": role.position,
+                "is_mentionable": role.mentionable,
+                "member_count": len(role.members) # Can be slow on large servers
+            })
+
+        return {
+            "status": "success",
+            "guild_id": str(guild.id),
+            "roles": roles_list,
+            "count": len(roles_list),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except Exception as e:
+        error_message = f"Error listing guild roles: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+
+# Tool 11: assign_role_to_user
+async def assign_role_to_user(cog: commands.Cog, user_id: str, role_id: str) -> Dict[str, Any]:
+    """Assigns a specific role to a user."""
+    print(f"Executing assign_role_to_user tool: User={user_id}, Role={role_id}.")
+    if not cog.current_channel or not isinstance(cog.current_channel, discord.abc.GuildChannel):
+        return {"error": "Cannot manage roles outside of a server context."}
+    guild = cog.current_channel.guild
+    if not guild: return {"error": "Could not determine server."}
+
+    try:
+        user_id_int = int(user_id)
+        role_id_int = int(role_id)
+
+        member = guild.get_member(user_id_int) or await guild.fetch_member(user_id_int)
+        if not member: return {"error": f"User {user_id} not found in this server."}
+
+        role = guild.get_role(role_id_int)
+        if not role: return {"error": f"Role {role_id} not found in this server."}
+        if role.name == "@everyone": return {"error": "Cannot assign the @everyone role."}
+
+        # Permission Checks
+        bot_member = guild.me
+        if not bot_member.guild_permissions.manage_roles:
+            return {"error": "I lack the 'Manage Roles' permission."}
+        # Check role hierarchy: Bot's top role must be higher than the role being assigned
+        if bot_member.id != guild.owner_id and bot_member.top_role <= role:
+             return {"error": f"Cannot assign role '{role.name}' because my highest role is not above it."}
+        # Check if user already has the role
+        if role in member.roles:
+            return {"status": "already_has_role", "user_id": user_id, "role_id": role_id, "role_name": role.name}
+
+        await member.add_roles(role, reason="Assigned by Gurt tool")
+        print(f"Successfully assigned role '{role.name}' ({role_id}) to {member.display_name} ({user_id}).")
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "user_name": member.display_name,
+            "role_id": role_id,
+            "role_name": role.name
+        }
+
+    except ValueError:
+        return {"error": "Invalid user_id or role_id format."}
+    except discord.NotFound:
+        return {"error": "User or role not found."}
+    except discord.Forbidden as e:
+        print(f"Forbidden error assigning role {role_id} to {user_id}: {e}")
+        return {"error": f"Permission error assigning role: {e}"}
+    except discord.HTTPException as e:
+        print(f"API error assigning role {role_id} to {user_id}: {e}")
+        return {"error": f"API error assigning role: {e}"}
+    except Exception as e:
+        error_message = f"Unexpected error assigning role {role_id} to {user_id}: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 12: remove_role_from_user
+async def remove_role_from_user(cog: commands.Cog, user_id: str, role_id: str) -> Dict[str, Any]:
+    """Removes a specific role from a user."""
+    print(f"Executing remove_role_from_user tool: User={user_id}, Role={role_id}.")
+    if not cog.current_channel or not isinstance(cog.current_channel, discord.abc.GuildChannel):
+        return {"error": "Cannot manage roles outside of a server context."}
+    guild = cog.current_channel.guild
+    if not guild: return {"error": "Could not determine server."}
+
+    try:
+        user_id_int = int(user_id)
+        role_id_int = int(role_id)
+
+        member = guild.get_member(user_id_int) or await guild.fetch_member(user_id_int)
+        if not member: return {"error": f"User {user_id} not found in this server."}
+
+        role = guild.get_role(role_id_int)
+        if not role: return {"error": f"Role {role_id} not found in this server."}
+        if role.name == "@everyone": return {"error": "Cannot remove the @everyone role."}
+
+        # Permission Checks
+        bot_member = guild.me
+        if not bot_member.guild_permissions.manage_roles:
+            return {"error": "I lack the 'Manage Roles' permission."}
+        # Check role hierarchy: Bot's top role must be higher than the role being removed
+        if bot_member.id != guild.owner_id and bot_member.top_role <= role:
+             return {"error": f"Cannot remove role '{role.name}' because my highest role is not above it."}
+        # Check if user actually has the role
+        if role not in member.roles:
+            return {"status": "does_not_have_role", "user_id": user_id, "role_id": role_id, "role_name": role.name}
+
+        await member.remove_roles(role, reason="Removed by Gurt tool")
+        print(f"Successfully removed role '{role.name}' ({role_id}) from {member.display_name} ({user_id}).")
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "user_name": member.display_name,
+            "role_id": role_id,
+            "role_name": role.name
+        }
+
+    except ValueError:
+        return {"error": "Invalid user_id or role_id format."}
+    except discord.NotFound:
+        return {"error": "User or role not found."}
+    except discord.Forbidden as e:
+        print(f"Forbidden error removing role {role_id} from {user_id}: {e}")
+        return {"error": f"Permission error removing role: {e}"}
+    except discord.HTTPException as e:
+        print(f"API error removing role {role_id} from {user_id}: {e}")
+        return {"error": f"API error removing role: {e}"}
+    except Exception as e:
+        error_message = f"Unexpected error removing role {role_id} from {user_id}: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 13: fetch_emoji_list
+async def fetch_emoji_list(cog: commands.Cog) -> Dict[str, Any]:
+    """Lists all custom emojis available in the current server."""
+    print("Executing fetch_emoji_list tool.")
+    if not cog.current_channel or not isinstance(cog.current_channel, discord.abc.GuildChannel):
+        return {"error": "Cannot fetch emojis outside of a server context."}
+    guild = cog.current_channel.guild
+    if not guild: return {"error": "Could not determine server."}
+
+    try:
+        emojis_list = []
+        for emoji in guild.emojis:
+            emojis_list.append({
+                "id": str(emoji.id),
+                "name": emoji.name,
+                "url": str(emoji.url),
+                "is_animated": emoji.animated,
+                "is_managed": emoji.managed, # e.g., Twitch integration emojis
+                "available": emoji.available, # If the bot can use it
+                "created_at": emoji.created_at.isoformat() if emoji.created_at else None
+            })
+
+        return {
+            "status": "success",
+            "guild_id": str(guild.id),
+            "emojis": emojis_list,
+            "count": len(emojis_list),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except Exception as e:
+        error_message = f"Error fetching emoji list: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 14: get_guild_invites
+async def get_guild_invites(cog: commands.Cog) -> Dict[str, Any]:
+    """Lists active invite links for the current server. Requires 'Manage Server' permission."""
+    print("Executing get_guild_invites tool.")
+    if not cog.current_channel or not isinstance(cog.current_channel, discord.abc.GuildChannel):
+        return {"error": "Cannot get invites outside of a server context."}
+    guild = cog.current_channel.guild
+    if not guild: return {"error": "Could not determine server."}
+
+    # Permission Check
+    bot_member = guild.me
+    if not bot_member.guild_permissions.manage_guild:
+        return {"error": "I lack the 'Manage Server' permission required to view invites."}
+
+    try:
+        invites = await guild.invites()
+        invites_list = []
+        for invite in invites:
+            inviter_info = {"id": str(invite.inviter.id), "name": invite.inviter.name} if invite.inviter else None
+            channel_info = {"id": str(invite.channel.id), "name": invite.channel.name} if invite.channel else None
+            invites_list.append({
+                "code": invite.code,
+                "url": invite.url,
+                "inviter": inviter_info,
+                "channel": channel_info,
+                "uses": invite.uses,
+                "max_uses": invite.max_uses,
+                "max_age": invite.max_age, # In seconds, 0 means infinite
+                "is_temporary": invite.temporary,
+                "created_at": invite.created_at.isoformat() if invite.created_at else None,
+                "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+            })
+
+        return {
+            "status": "success",
+            "guild_id": str(guild.id),
+            "invites": invites_list,
+            "count": len(invites_list),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except discord.Forbidden:
+        # Should be caught by initial check, but good practice
+        return {"error": "Forbidden: Missing 'Manage Server' permission."}
+    except discord.HTTPException as e:
+        print(f"API error getting invites: {e}")
+        return {"error": f"API error getting invites: {e}"}
+    except Exception as e:
+        error_message = f"Unexpected error getting invites: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 15: purge_messages
+async def purge_messages(cog: commands.Cog, limit: int, channel_id: Optional[str] = None, user_id: Optional[str] = None, before_message_id: Optional[str] = None, after_message_id: Optional[str] = None) -> Dict[str, Any]:
+    """Bulk deletes messages in a channel. Requires 'Manage Messages' permission."""
+    print(f"Executing purge_messages tool: Limit={limit}, Channel={channel_id}, User={user_id}, Before={before_message_id}, After={after_message_id}.")
+    if not 1 <= limit <= 1000: # Discord's practical limit is often lower, but API allows up to 100 per call
+        return {"error": "Limit must be between 1 and 1000."}
+
+    try:
+        if channel_id:
+            channel = cog.bot.get_channel(int(channel_id))
+            if not channel: return {"error": f"Channel {channel_id} not found."}
+        else:
+            channel = cog.current_channel
+            if not channel: return {"error": "No current channel context."}
+        if not isinstance(channel, discord.TextChannel): # Purge usually only for text channels
+             return {"error": f"Channel {getattr(channel, 'id', 'N/A')} must be a text channel."}
+
+        # Permission Check
+        bot_member = channel.guild.me
+        if not channel.permissions_for(bot_member).manage_messages:
+            return {"error": "I lack the 'Manage Messages' permission required to purge."}
+
+        target_user = None
+        if user_id:
+            target_user = await cog.bot.fetch_user(int(user_id)) # Fetch user object if ID provided
+            if not target_user: return {"error": f"User {user_id} not found."}
+
+        before_obj = discord.Object(id=int(before_message_id)) if before_message_id else None
+        after_obj = discord.Object(id=int(after_message_id)) if after_message_id else None
+
+        check_func = (lambda m: m.author == target_user) if target_user else None
+
+        # discord.py handles bulk deletion in batches of 100 automatically
+        deleted_messages = await channel.purge(
+            limit=limit,
+            check=check_func,
+            before=before_obj,
+            after=after_obj,
+            reason="Purged by Gurt tool"
+        )
+
+        deleted_count = len(deleted_messages)
+        print(f"Successfully purged {deleted_count} messages from channel {channel.id}.")
+        return {
+            "status": "success",
+            "channel_id": str(channel.id),
+            "deleted_count": deleted_count,
+            "limit_requested": limit,
+            "filters_applied": {"user_id": user_id, "before": before_message_id, "after": after_message_id},
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+
+    except ValueError:
+        return {"error": "Invalid ID format for channel, user, before, or after message."}
+    except discord.NotFound:
+        return {"error": "Channel, user, before, or after message not found."}
+    except discord.Forbidden:
+        return {"error": "Forbidden: Missing 'Manage Messages' permission."}
+    except discord.HTTPException as e:
+        print(f"API error purging messages: {e}")
+        # Provide more specific feedback if possible (e.g., messages too old)
+        if "too old" in str(e).lower():
+             return {"error": "API error: Cannot bulk delete messages older than 14 days."}
+        return {"error": f"API error purging messages: {e}"}
+    except Exception as e:
+        error_message = f"Unexpected error purging messages: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+
+# Tool 16: get_bot_stats
+async def get_bot_stats(cog: commands.Cog) -> Dict[str, Any]:
+    """Gets various statistics about the bot's current state."""
+    print("Executing get_bot_stats tool.")
+    # This requires access to bot-level stats, potentially stored in the main bot class or cog
+    try:
+        # Example stats (replace with actual data sources)
+        guild_count = len(cog.bot.guilds)
+        user_count = len(cog.bot.users) # Might not be accurate without intents
+        total_users = sum(g.member_count for g in cog.bot.guilds if g.member_count) # Requires member intent
+        latency_ms = round(cog.bot.latency * 1000)
+        # Command usage would need tracking within the cog/bot
+        command_count = cog.command_usage_count if hasattr(cog, 'command_usage_count') else "N/A"
+        # Memory usage (platform specific, using psutil is common)
+        try:
+            import psutil
+            process = psutil.Process(os.getpid())
+            memory_mb = round(process.memory_info().rss / (1024 * 1024), 2)
+        except ImportError:
+            memory_mb = "N/A (psutil not installed)"
+        except Exception as mem_e:
+            memory_mb = f"Error ({mem_e})"
+
+        uptime_dict = await get_bot_uptime(cog) # Reuse uptime tool
+
+        return {
+            "status": "success",
+            "guild_count": guild_count,
+            "cached_user_count": user_count,
+            "total_member_count_approx": total_users, # Note intent requirement
+            "latency_ms": latency_ms,
+            "command_usage_count": command_count,
+            "memory_usage_mb": memory_mb,
+            "uptime_info": uptime_dict, # Include uptime details
+            "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "discord_py_version": discord.__version__,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except Exception as e:
+        error_message = f"Error getting bot stats: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return {"error": error_message}
+
+# Tool 17: get_weather (Placeholder - Requires Weather API)
+async def get_weather(cog: commands.Cog, location: str) -> Dict[str, Any]:
+    """Gets the current weather for a specified location (requires external API setup)."""
+    print(f"Executing get_weather tool for location: {location}.")
+    # --- Placeholder Implementation ---
+    # A real implementation would use a weather API (e.g., OpenWeatherMap, WeatherAPI)
+    # It would require an API key stored in config and use aiohttp to make the request.
+    # Example using a hypothetical API call:
+    # weather_api_key = os.getenv("WEATHER_API_KEY")
+    # if not weather_api_key: return {"error": "Weather API key not configured."}
+    # if not cog.session: return {"error": "aiohttp session not available."}
+    # api_url = f"https://api.some_weather_service.com/current?q={location}&appid={weather_api_key}&units=metric"
+    # try:
+    #     async with cog.session.get(api_url) as response:
+    #         if response.status == 200:
+    #             data = await response.json()
+    #             # Parse data and return relevant info
+    #             temp = data.get('main', {}).get('temp')
+    #             desc = data.get('weather', [{}])[0].get('description')
+    #             city = data.get('name')
+    #             return {"status": "success", "location": city, "temperature_celsius": temp, "description": desc}
+    #         else:
+    #             return {"error": f"Weather API error (Status {response.status}): {await response.text()}"}
+    # except Exception as e: return {"error": f"Error fetching weather: {e}"}
+    # --- End Placeholder ---
+
+    return {
+        "status": "placeholder",
+        "error": "Weather tool not fully implemented. Requires external API integration.",
+        "location_requested": location,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+# Tool 18: translate_text (Placeholder - Requires Translation API)
+async def translate_text(cog: commands.Cog, text: str, target_language: str, source_language: Optional[str] = None) -> Dict[str, Any]:
+    """Translates text to a target language (requires external API setup)."""
+    print(f"Executing translate_text tool: Target={target_language}, Source={source_language}, Text='{text[:50]}...'")
+    # --- Placeholder Implementation ---
+    # A real implementation would use a translation API (e.g., Google Translate API, DeepL)
+    # It would require API keys/credentials and use a suitable library or aiohttp.
+    # Example using a hypothetical API call:
+    # translate_api_key = os.getenv("TRANSLATE_API_KEY")
+    # if not translate_api_key: return {"error": "Translation API key not configured."}
+    # if not cog.session: return {"error": "aiohttp session not available."}
+    # api_url = "https://api.some_translate_service.com/translate"
+    # payload = {"text": text, "target": target_language}
+    # if source_language: payload["source"] = source_language
+    # headers = {"Authorization": f"Bearer {translate_api_key}"}
+    # try:
+    #     async with cog.session.post(api_url, json=payload, headers=headers) as response:
+    #         if response.status == 200:
+    #             data = await response.json()
+    #             translated = data.get('translations', [{}])[0].get('text')
+    #             detected_source = data.get('translations', [{}])[0].get('detected_source_language')
+    #             return {"status": "success", "original_text": text, "translated_text": translated, "target_language": target_language, "detected_source_language": detected_source}
+    #         else:
+    #             return {"error": f"Translation API error (Status {response.status}): {await response.text()}"}
+    # except Exception as e: return {"error": f"Error translating text: {e}"}
+    # --- End Placeholder ---
+
+    return {
+        "status": "placeholder",
+        "error": "Translation tool not fully implemented. Requires external API integration.",
+        "text_preview": text[:100],
+        "target_language": target_language,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+# Tool 19: remind_user (Placeholder - Requires Scheduler/DB)
+async def remind_user(cog: commands.Cog, user_id: str, reminder_text: str, remind_at_iso: str) -> Dict[str, Any]:
+    """Sets a reminder for a user to be delivered via DM at a specific time."""
+    print(f"Executing remind_user tool: User={user_id}, Time={remind_at_iso}, Reminder='{reminder_text[:50]}...'")
+    # --- Placeholder Implementation ---
+    # This requires a persistent scheduler (like APScheduler) and likely a way to store reminders
+    # in case the bot restarts. It also needs to fetch the user and send a DM.
+    # if not hasattr(cog, 'scheduler') or not cog.scheduler:
+    #      return {"error": "Scheduler not available. Cannot set reminders."}
+    # try:
+    #     remind_time = datetime.datetime.fromisoformat(remind_at_iso)
+    #     if remind_time.tzinfo is None: return {"error": "remind_at_iso must include timezone."}
+    #     now = datetime.datetime.now(datetime.timezone.utc)
+    #     if remind_time <= now: return {"error": "Reminder time must be in the future."}
+    #
+    #     user = await cog.bot.fetch_user(int(user_id))
+    #     if not user: return {"error": f"User {user_id} not found."}
+    #
+    #     # Define the function to be called by the scheduler
+    #     async def send_reminder_dm(target_user_id, text):
+    #         try:
+    #             user_to_dm = await cog.bot.fetch_user(target_user_id)
+    #             await user_to_dm.send(f"⏰ Reminder: {text}")
+    #             print(f"Sent reminder DM to {user_to_dm.name} ({target_user_id})")
+    #         except Exception as dm_e:
+    #             print(f"Failed to send reminder DM to {target_user_id}: {dm_e}")
+    #
+    #     job = cog.scheduler.add_job(
+    #         send_reminder_dm,
+    #         'date',
+    #         run_date=remind_time,
+    #         args=[user.id, reminder_text],
+    #         id=f"reminder_{user.id}_{int(time.time())}",
+    #         misfire_grace_time=600
+    #     )
+    #     print(f"Scheduled reminder job {job.id} for user {user.id} at {remind_time.isoformat()}")
+    #     return {"status": "success", "job_id": job.id, "user_id": user_id, "reminder_text": reminder_text, "remind_time_utc": remind_time.astimezone(datetime.timezone.utc).isoformat()}
+    # except ValueError: return {"error": "Invalid user_id or remind_at_iso format."}
+    # except discord.NotFound: return {"error": f"User {user_id} not found."}
+    # except Exception as e: return {"error": f"Error setting reminder: {e}"}
+    # --- End Placeholder ---
+
+    return {
+        "status": "placeholder",
+        "error": "Reminder tool not fully implemented. Requires scheduler and DM functionality.",
+        "user_id": user_id,
+        "reminder_text_preview": reminder_text[:100],
+        "remind_at_iso": remind_at_iso,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+# Tool 20: fetch_random_image (Placeholder - Requires Image API/Source)
+async def fetch_random_image(cog: commands.Cog, query: Optional[str] = None) -> Dict[str, Any]:
+    """Fetches a random image, optionally based on a query (requires external API setup)."""
+    print(f"Executing fetch_random_image tool: Query='{query}'")
+    # --- Placeholder Implementation ---
+    # A real implementation could use APIs like Unsplash, Giphy (for GIFs), Reddit (PRAW), etc.
+    # Example using a hypothetical Unsplash call:
+    # unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
+    # if not unsplash_key: return {"error": "Unsplash API key not configured."}
+    # if not cog.session: return {"error": "aiohttp session not available."}
+    # api_url = f"https://api.unsplash.com/photos/random?client_id={unsplash_key}"
+    # if query: api_url += f"&query={query}"
+    # try:
+    #     async with cog.session.get(api_url) as response:
+    #         if response.status == 200:
+    #             data = await response.json()
+    #             image_url = data.get('urls', {}).get('regular')
+    #             alt_desc = data.get('alt_description')
+    #             photographer = data.get('user', {}).get('name')
+    #             if image_url:
+    #                 return {"status": "success", "image_url": image_url, "description": alt_desc, "photographer": photographer, "source": "Unsplash"}
+    #             else:
+    #                 return {"error": "Failed to extract image URL from Unsplash response."}
+    #         else:
+    #             return {"error": f"Image API error (Status {response.status}): {await response.text()}"}
+    # except Exception as e: return {"error": f"Error fetching random image: {e}"}
+    # --- End Placeholder ---
+
+    return {
+        "status": "placeholder",
+        "error": "Random image tool not fully implemented. Requires external API integration.",
+        "query": query,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+
 # --- Tool Mapping ---
 # This dictionary maps tool names (used in the AI prompt) to their implementation functions.
 TOOL_MAPPING = {
@@ -1434,5 +2356,33 @@ TOOL_MAPPING = {
     "no_operation": no_operation, # Added no-op tool
     "restart_gurt_bot": restart_gurt_bot, # Tool to restart the Gurt bot
     "run_git_pull": run_git_pull, # Tool to run git pull on the host
-    "get_channel_id": get_channel_id # Tool to get channel id
+    "get_channel_id": get_channel_id, # Tool to get channel id
+    # --- Batch 1 Additions ---
+    "get_guild_info": get_guild_info,
+    "list_guild_members": list_guild_members,
+    "get_user_avatar": get_user_avatar,
+    "get_bot_uptime": get_bot_uptime,
+    "schedule_message": schedule_message,
+    # --- End Batch 1 ---
+    # --- Batch 2 Additions ---
+    "delete_message": delete_message,
+    "edit_message": edit_message,
+    "get_voice_channel_info": get_voice_channel_info,
+    "move_user_to_voice_channel": move_user_to_voice_channel,
+    "get_guild_roles": get_guild_roles,
+    # --- End Batch 2 ---
+    # --- Batch 3 Additions ---
+    "assign_role_to_user": assign_role_to_user,
+    "remove_role_from_user": remove_role_from_user,
+    "fetch_emoji_list": fetch_emoji_list,
+    "get_guild_invites": get_guild_invites,
+    "purge_messages": purge_messages,
+    # --- End Batch 3 ---
+    # --- Batch 4 Additions ---
+    "get_bot_stats": get_bot_stats,
+    "get_weather": get_weather,
+    "translate_text": translate_text,
+    "remind_user": remind_user,
+    "fetch_random_image": fetch_random_image,
+    # --- End Batch 4 ---
 }
