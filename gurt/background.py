@@ -7,7 +7,11 @@ import json
 import aiohttp
 import discord # Added import
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any # Added Any
+from typing import TYPE_CHECKING, Any, List, Dict # Added List, Dict
+# Use google.generativeai instead of vertexai directly
+from google import genai
+from google.genai import types
+# from google.protobuf import json_format # No longer needed for args parsing
 
 # Relative imports
 from .config import (
@@ -29,8 +33,15 @@ from .analysis import (
     reflect_on_memories, decompose_goal_into_steps, # Import goal decomposition
     proactively_create_goals # Import placeholder for proactive goal creation
 )
-# Import for LLM calls
-from .api import get_internal_ai_json_response
+# Import helpers from api.py
+from .api import (
+    get_internal_ai_json_response,
+    call_google_genai_api_with_retry, # Import the retry helper
+    find_function_call_in_parts,      # Import function call finder
+    _get_response_text,               # Import text extractor
+    _preprocess_schema_for_vertex,    # Import schema preprocessor (name kept for now)
+    STANDARD_SAFETY_SETTINGS          # Import safety settings
+)
 
 if TYPE_CHECKING:
     from .cog import GurtCog # For type hinting
@@ -302,15 +313,16 @@ async def background_processing_task(cog: 'GurtCog'):
             if now - cog.last_internal_action_check > INTERNAL_ACTION_INTERVAL_SECONDS:
                 if random.random() < INTERNAL_ACTION_PROBABILITY:
                     print("--- Considering Autonomous Action ---")
-                    action_decision = None
+                    action_decision = None # Keep for logging/reporting structure? Or remove? Let's remove for now.
                     selected_tool_name = None
                     tool_args = None
                     tool_result = None
                     result_summary = "No action taken."
-                    action_reasoning = "Probability met, but LLM decided against action or failed."
+                    action_reasoning = "Probability met, but model did not call a function or failed." # Updated default reasoning
+                    function_call = None # To store the google.genai FunctionCall object
 
                     try:
-                        # 1. Gather Context for LLM
+                        # 1. Gather Context for LLM (Same as before)
                         context_summary = "Gurt is considering an autonomous action.\n"
                         context_summary += f"Current Mood: {cog.current_mood}\n"
                         # Add recent messages summary (optional, could be large)
@@ -327,43 +339,34 @@ async def background_processing_task(cog: 'GurtCog'):
                         # Add key personality traits
                         traits = await cog.memory_manager.get_all_personality_traits()
                         if traits:
-                             context_summary += f"Personality Snippet: { {k: round(v, 2) for k, v in traits.items() if k in ['mischief', 'curiosity', 'chattiness']} }\n"
+                              context_summary += f"Personality Snippet: { {k: round(v, 2) for k, v in traits.items() if k in ['mischief', 'curiosity', 'chattiness']} }\n"
 
-                        # 2. Define LLM Prompt and Schema
-                        action_decision_schema = {
-                            "type": "object",
-                            "properties": {
-                                "should_act": {"type": "boolean", "description": "Whether Gurt should perform an autonomous action now."},
-                                "reasoning": {"type": "string", "description": "CRITICAL: Reasoning MUST be in Gurt's voice (heavy slang, informal, chill, maybe sarcastic/mischievous). Explain *why* you're acting (or not) like Gurt would think it (e.g., 'ngl kinda bored', 'ts might be useful for my goal', 'lol watch this'). Consider current goals, mood, recent activity."},
-                                "action_tool_name": {"type": ["string", "null"], "description": "If acting, the name of the tool to use. Choose from available tools, you can do literally anything. Null if not acting."},
-                                "action_arguments": {"type": ["object", "null"], "description": "If acting, a dictionary of arguments for the chosen tool. Null if not acting."}
-                            },
-                            "required": ["should_act", "reasoning"]
-                        }
-                        # Build a detailed tool list for the LLM using TOOLS metadata
-                        def _tool_signature(decl):
-                            params = decl.parameters.get("properties", {})
-                            required = set(decl.parameters.get("required", []))
-                            param_strs = []
-                            for pname, pinfo in params.items():
-                                typ = pinfo.get("type", "any")
-                                desc = pinfo.get("description", "")
-                                req = "required" if pname in required else "optional"
-                                param_strs.append(f"{pname}: {typ} ({req})")
-                            return ", ".join(param_strs)
-
+                        # 2. Define Prompt and Tools for google.generativeai
                         # Exclude meta/dangerous tools
                         excluded_tools = {"create_new_tool"}
-                        available_tools_desc = ""
-                        for decl in TOOLS:
-                            if decl.name in excluded_tools:
-                                continue
-                            sig = _tool_signature(decl)
-                            available_tools_desc += f"- {decl.name}: {decl.description}"
-                            if sig:
-                                available_tools_desc += f" [{sig}]"
-                            available_tools_desc += "\n"
+                        # Preprocess tool schemas using the helper from api.py
+                        preprocessed_declarations = []
+                        if TOOLS:
+                            for decl in TOOLS:
+                                if decl.name in excluded_tools: continue
+                                # Ensure decl.parameters is a dict before preprocessing
+                                preprocessed_params = _preprocess_schema_for_vertex(decl.parameters) if isinstance(decl.parameters, dict) else decl.parameters
+                                preprocessed_declarations.append(
+                                    types.FunctionDeclaration(
+                                        name=decl.name,
+                                        description=decl.description,
+                                        parameters=preprocessed_params # Use the preprocessed schema
+                                    )
+                                )
+                            print(f"Preprocessed {len(preprocessed_declarations)} tool declarations for autonomous action.")
+                        else:
+                            print("No tools found in config (TOOLS list is empty or None) for autonomous action.")
 
+                        # Create the Tool object using the preprocessed declarations
+                        genai_tool = types.Tool(function_declarations=preprocessed_declarations) if preprocessed_declarations else None
+                        tools_list = [genai_tool] if genai_tool else None
+
+                        # System prompt remains largely the same, just ensure it guides towards function calling
                         system_prompt = (
                             "yo you Gurt. u vibin in the bg, thinkin if u should do sum wild shi or just chill. "
                             "you write/speak like this prompt is written, all lowercase, slang, emojis, etc. "
@@ -371,56 +374,91 @@ async def background_processing_task(cog: 'GurtCog'):
                             "use slang like 'ts', 'ngl', 'fr', 'bro', '💀', 'ong', 'lowkey', 'highkey', 'pmo', 'icl', 'sybau', etc. "
                             "do random or goofy actions for the vibes, not just for goals. "
                             "CRITICAL: You are EXTREMELY encouraged to do random, pointless, or meme-heavy actions for the vibes, not just goal-driven stuff. "
-                            "if u act, pick a tool + args, but only if it’s not spammy or basic. "
-                            "CRITICAL: ur 'reasoning' gotta be in ur actual voice (max slang, informal, like ur inner monologue, maybe a lil unhinged or sassy). "
-                            f"tools u can use (try random ones too):\n{available_tools_desc}\n"
-                            "ONLY reply w/ the JSON decision, no extra text."
+                            "if u act, call one of the available functions. if not, just respond normally explaining why not (in ur voice). "
+                            "CRITICAL: ur reasoning/response gotta be in ur actual voice (max slang, informal, like ur inner monologue, maybe a lil unhinged or sassy). "
+                            "don't just call functions for goals, call em for fun too. be unpredictable."
                         )
-                        user_prompt = f"Context rn:\n{context_summary}\n\nu finna do sum or nah? if so, what tool/args? why? (say it how u actually would, slang maxed)"
+                        user_prompt = f"Context rn:\n{context_summary}\n\nu finna do sum or nah? if so, call a function. if not, why not? (say it how u actually would, slang maxed)"
 
-                        # 3. Call LLM for Decision
-                        print("  - Asking LLM for autonomous action decision...")
-                        decision_data, _ = await get_internal_ai_json_response(
+                        # 3. Prepare Contents and Config for google.generativeai
+                        contents: List[types.Content] = [
+                            # System prompt handled by generation_config
+                            types.Content(role="user", parts=[types.Part(text=user_prompt)])
+                        ]
+
+                        # Build generation config
+                        gen_config_dict = {
+                            "temperature": 0.7,
+                            "max_output_tokens": 4096, # Adjust as needed
+                            "safety_settings": STANDARD_SAFETY_SETTINGS,
+                            "system_instruction": system_prompt, # Pass system prompt here
+                        }
+                        if tools_list:
+                            gen_config_dict["tools"] = tools_list
+                            # Set tool config to ANY mode
+                            gen_config_dict["tool_config"] = types.ToolConfig(
+                                function_calling_config=types.FunctionCallingConfig(
+                                    mode=types.FunctionCallingConfig.Mode.ANY # Use ANY mode
+                                )
+                            )
+                        generation_config = types.GenerateContentConfig(**gen_config_dict)
+
+                        # 4. Call API using the helper from api.py
+                        print("  - Asking Google GenAI model for autonomous action decision...")
+                        response_obj = await call_google_genai_api_with_retry(
                             cog=cog,
-                            prompt_messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                            task_description="Autonomous Action Decision",
-                            response_schema_dict=action_decision_schema,
-                            model_name_override=cog.default_model, # Use default model
-                            temperature=0.6 # Allow some creativity
+                            model_name=cog.default_model, # Use default model name string
+                            contents=contents,
+                            generation_config=generation_config,
+                            request_desc="Autonomous Action Decision",
                         )
 
-                        # 4. Process LLM Decision
-                        if decision_data and decision_data.get("should_act"):
-                            action_decision = decision_data
-                            selected_tool_name = action_decision.get("action_tool_name")
-                            tool_args = action_decision.get("action_arguments")
-                            action_reasoning = action_decision.get("reasoning", "LLM decided to act.")
-                            print(f"  - LLM decided to act: Tool='{selected_tool_name}', Args={tool_args}, Reason='{action_reasoning}'")
+                        # 5. Process Response using helpers from api.py
+                        if response_obj and response_obj.candidates:
+                            candidate = response_obj.candidates[0]
+                            # Use find_function_call_in_parts helper
+                            function_call = find_function_call_in_parts(candidate.content.parts)
 
-                            if not selected_tool_name or selected_tool_name not in TOOL_MAPPING:
-                                print(f"  - Error: LLM chose invalid or missing tool '{selected_tool_name}'. Aborting action.")
-                                result_summary = f"Error: LLM chose invalid tool '{selected_tool_name}'."
-                                selected_tool_name = None # Prevent execution
-                            elif not isinstance(tool_args, dict) and tool_args is not None:
-                                print(f"  - Warning: LLM provided non-dict arguments '{tool_args}'. Attempting with empty args.")
-                                result_summary = f"Warning: LLM provided invalid args '{tool_args}'. Used {{}}."
-                                tool_args = {} # Default to empty dict if invalid but not None
-                            elif tool_args is None:
-                                tool_args = {} # Ensure it's a dict for execution
+                            if function_call:
+                                selected_tool_name = function_call.name
+                                # Args are already dict-like in google.generativeai
+                                tool_args = dict(function_call.args) if function_call.args else {}
+                                # Use _get_response_text to find any accompanying text reasoning
+                                text_reasoning = _get_response_text(response_obj)
+                                action_reasoning = text_reasoning if text_reasoning else f"Model decided to call function '{selected_tool_name}'."
+                                print(f"  - Model called function: Tool='{selected_tool_name}', Args={tool_args}, Reason='{action_reasoning}'")
 
+                                if selected_tool_name not in TOOL_MAPPING:
+                                    print(f"  - Error: Model called unknown function '{selected_tool_name}'. Aborting action.")
+                                    result_summary = f"Error: Model called unknown function '{selected_tool_name}'."
+                                    selected_tool_name = None # Prevent execution
+                                    function_call = None # Clear function call
+                            else:
+                                # No function call, use _get_response_text for reasoning
+                                action_reasoning = _get_response_text(response_obj) or "Model did not call a function and provided no text."
+                                print(f"  - Model did not call a function. Response/Reason: {action_reasoning}")
+                                result_summary = f"No action taken. Reason: {action_reasoning}"
+                                selected_tool_name = None # Ensure no execution
+                                function_call = None
                         else:
-                            action_reasoning = decision_data.get("reasoning", "LLM decided not to act or failed.") if decision_data else "LLM decision failed."
-                            print(f"  - LLM decided not to act. Reason: {action_reasoning}")
-                            result_summary = f"No action taken. Reason: {action_reasoning}"
+                             # Handle case where API call succeeded but returned no candidates/response_obj
+                             error_msg = "Autonomous action API call returned no response or candidates."
+                             print(f"  - Error: {error_msg}")
+                             result_summary = error_msg
+                             action_reasoning = error_msg
+                             selected_tool_name = None
+                             function_call = None
 
                     except Exception as llm_e:
-                        print(f"  - Error during LLM decision phase for autonomous action: {llm_e}")
+                        print(f"  - Error during Google GenAI call/processing for autonomous action: {llm_e}")
                         traceback.print_exc()
-                        result_summary = f"Error during LLM decision: {llm_e}"
-                        action_reasoning = f"LLM decision phase failed: {llm_e}"
+                        result_summary = f"Error during Google GenAI call/processing: {llm_e}"
+                        action_reasoning = f"Google GenAI call/processing failed: {llm_e}"
+                        selected_tool_name = None # Ensure no execution
+                        function_call = None
 
-                    # 5. Execute Action (if decided)
-                    if selected_tool_name and tool_args is not None: # Ensure args is at least {}
+                    # 6. Execute Action (if function was called) - Logic remains the same
+                    if function_call and selected_tool_name and tool_args is not None: # Check function_call exists
                         tool_func = TOOL_MAPPING.get(selected_tool_name)
                         if tool_func:
                             print(f"  - Executing autonomous action: {selected_tool_name}(cog, **{tool_args})")
@@ -456,7 +494,7 @@ async def background_processing_task(cog: 'GurtCog'):
                             print(f"  - Error: Tool '{selected_tool_name}' function not found in mapping during execution phase.")
                             result_summary = f"Error: Tool function for '{selected_tool_name}' not found."
 
-                    # 6. Log Action (always log the attempt/decision)
+                    # 7. Log Action (always log the attempt/decision) - Logic remains the same
                     try:
                         log_result = await cog.memory_manager.add_internal_action_log(
                             tool_name=selected_tool_name or "None", # Log 'None' if no tool was chosen
@@ -472,7 +510,8 @@ async def background_processing_task(cog: 'GurtCog'):
                         print(f"  - Error logging autonomous action attempt to memory: {log_e}")
                         traceback.print_exc()
 
-                    # 6.5 Decide Follow-up Action based on Result
+                    # 8. Decide Follow-up Action based on Result - Logic remains the same
+                    # This part already uses get_internal_ai_json_response which uses google.generativeai
                     if selected_tool_name and tool_result: # Only consider follow-up if an action was successfully attempted
                         print(f"  - Considering follow-up action based on result of {selected_tool_name}...")
                         follow_up_tool_name = None
@@ -553,7 +592,7 @@ async def background_processing_task(cog: 'GurtCog'):
                             else:
                                  print(f"    - Error: Follow-up tool '{follow_up_tool_name}' function not found.")
 
-                    # 7. Report Initial Action (Optional)
+                    # 9. Report Initial Action (Optional) - Logic remains the same
                     if AUTONOMOUS_ACTION_REPORT_CHANNEL_ID and selected_tool_name: # Only report if an action was attempted
                         try:
                             report_channel_id = int(AUTONOMOUS_ACTION_REPORT_CHANNEL_ID) # Ensure it's an int
