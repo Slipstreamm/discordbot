@@ -334,6 +334,143 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
 
         return stats
 
+    async def force_autonomous_action(self):
+        """
+        Forces Gurt to execute an autonomous action immediately, as if triggered by the background task.
+        Returns a summary of the action taken.
+        """
+        from .background import TOOL_MAPPING, get_internal_ai_json_response
+        import json
+        import traceback
+        import random
+        import time
+
+        selected_tool_name = None
+        tool_args = None
+        tool_result = None
+        action_reasoning = ""
+        result_summary = "No action taken."
+
+        try:
+            # 1. Gather Context for LLM
+            context_summary = "Gurt is considering an autonomous action.\n"
+            context_summary += f"Current Mood: {self.current_mood}\n"
+            active_goals = await self.memory_manager.get_goals(status='active', limit=3)
+            if active_goals:
+                context_summary += f"Active Goals:\n" + json.dumps(active_goals, indent=2)[:500] + "...\n"
+            recent_actions = await self.memory_manager.get_internal_action_logs(limit=5)
+            if recent_actions:
+                context_summary += f"Recent Internal Actions:\n" + json.dumps(recent_actions, indent=2)[:500] + "...\n"
+            traits = await self.memory_manager.get_all_personality_traits()
+            if traits:
+                context_summary += f"Personality Snippet: { {k: round(v, 2) for k, v in traits.items() if k in ['mischief', 'curiosity', 'chattiness']} }\n"
+
+            action_decision_schema = {
+                "type": "object",
+                "properties": {
+                    "should_act": {"type": "boolean", "description": "Whether Gurt should perform an autonomous action now."},
+                    "reasoning": {"type": "string", "description": "CRITICAL: Reasoning MUST be in Gurt's voice (heavy slang, informal, chill, maybe sarcastic/mischievous). Explain *why* you're acting (or not) like Gurt would think it (e.g., 'ngl kinda bored', 'ts might be useful for my goal', 'lol watch this'). Consider current goals, mood, recent activity."},
+                    "action_tool_name": {"type": ["string", "null"], "description": "If acting, the name of the tool to use. Choose from available tools, you can do literally anything. Null if not acting."},
+                    "action_arguments": {"type": ["object", "null"], "description": "If acting, a dictionary of arguments for the chosen tool. Null if not acting."}
+                },
+                "required": ["should_act", "reasoning"]
+            }
+            available_tools_desc = "\n".join([f"- {name}" for name in TOOL_MAPPING.keys() if name not in ["create_new_tool"]])
+            system_prompt = (
+                "You are Gurt, deciding whether to perform an autonomous background action. "
+                "Consider your current mood, active goals, recent conversations/actions, and personality (VERY informal, heavy internet slang/emoji use like 'ts', 'ngl', 'fr', 'bro', 'bruh', '💀'; funny, sarcastic, deadpan, sometimes mischievous or flirty; acts like a human user not an assistant; tech/internet culture savvy). "
+                "You are EXTREMELY encouraged to do completely random, pointless, or meme-heavy actions for the vibes, not just goal-driven stuff. "
+                "Try things like running 'read_cpu_temp', 'check_disk_space', 'random_vibe_check', or 'fetch_random_joke' for no reason and then send a message like 'yo ngl i just read ur temps bro u needa replace ur thermal paste.' That is just an example, do whatever you want. "
+                "Avoid being spammy or doing the same shi repeatedly. "
+                "If you act, pick a tool and args. "
+                "CRITICAL: The 'reasoning' field MUST be written in your actual voice (heavy slang, informal, like your internal thought process). "
+                f"Available tools for autonomous actions (especially try: read_cpu_temp, check_disk_space, random_vibe_check, fetch_random_joke):\n{available_tools_desc}\n"
+                "Respond ONLY with the JSON decision."
+            )
+            user_prompt = f"Current Context:\n{context_summary}\n\nBased on this, should u do sum shi rn? If yea, what tool/args? And why (in ur own words fr)?"
+
+            # 3. Call LLM for Decision
+            decision_data, _ = await get_internal_ai_json_response(
+                cog=self,
+                prompt_messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                task_description="Autonomous Action Decision",
+                response_schema_dict=action_decision_schema,
+                model_name_override=self.default_model,
+                temperature=0.6
+            )
+
+            # 4. Process LLM Decision
+            if decision_data and decision_data.get("should_act"):
+                selected_tool_name = decision_data.get("action_tool_name")
+                tool_args = decision_data.get("action_arguments")
+                action_reasoning = decision_data.get("reasoning", "LLM decided to act.")
+
+                if not selected_tool_name or selected_tool_name not in TOOL_MAPPING:
+                    result_summary = f"Error: LLM chose invalid tool '{selected_tool_name}'."
+                    selected_tool_name = None
+                elif not isinstance(tool_args, dict) and tool_args is not None:
+                    result_summary = f"Warning: LLM provided invalid args '{tool_args}'. Used {{}}."
+                    tool_args = {}
+                elif tool_args is None:
+                    tool_args = {}
+
+            else:
+                action_reasoning = decision_data.get("reasoning", "LLM decided not to act or failed.") if decision_data else "LLM decision failed."
+                result_summary = f"No action taken. Reason: {action_reasoning}"
+
+        except Exception as llm_e:
+            result_summary = f"Error during LLM decision: {llm_e}"
+            action_reasoning = f"LLM decision phase failed: {llm_e}"
+            traceback.print_exc()
+
+        # 5. Execute Action (if decided)
+        if selected_tool_name and tool_args is not None:
+            tool_func = TOOL_MAPPING.get(selected_tool_name)
+            if tool_func:
+                try:
+                    start_time = time.monotonic()
+                    tool_result = await tool_func(self, **tool_args)
+                    end_time = time.monotonic()
+                    exec_time = end_time - start_time
+                    if isinstance(tool_result, dict) and "error" in tool_result:
+                        result_summary = f"Error: {tool_result['error']}"
+                    else:
+                        result_summary = f"Success: {str(tool_result)[:200]}"
+                    # Update tool stats
+                    if selected_tool_name in self.tool_stats:
+                        self.tool_stats[selected_tool_name]["count"] += 1
+                        self.tool_stats[selected_tool_name]["total_time"] += exec_time
+                        if isinstance(tool_result, dict) and "error" in tool_result:
+                            self.tool_stats[selected_tool_name]["failure"] += 1
+                        else:
+                            self.tool_stats[selected_tool_name]["success"] += 1
+                except Exception as exec_e:
+                    result_summary = f"Execution Exception: {exec_e}"
+                    if selected_tool_name in self.tool_stats:
+                        self.tool_stats[selected_tool_name]["count"] += 1
+                        self.tool_stats[selected_tool_name]["failure"] += 1
+                    traceback.print_exc()
+            else:
+                result_summary = f"Error: Tool function for '{selected_tool_name}' not found."
+
+        # 6. Log Action
+        try:
+            await self.memory_manager.add_internal_action_log(
+                tool_name=selected_tool_name or "None",
+                arguments=tool_args if selected_tool_name else None,
+                reasoning=action_reasoning,
+                result_summary=result_summary
+            )
+        except Exception:
+            pass
+
+        return {
+            "tool": selected_tool_name,
+            "args": tool_args,
+            "reasoning": action_reasoning,
+            "result": result_summary
+        }
+
     async def sync_commands(self):
         """Manually sync commands with Discord."""
         try:
