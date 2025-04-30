@@ -1386,17 +1386,6 @@ def create_tools_list():
     )
     tool_declarations.append(
         FunctionDeclaration(
-            name="random_vibe_check",
-            description="Returns a random vibe/meme message. Use for chaotic or pointless autonomous actions.",
-            parameters={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        )
-    )
-    tool_declarations.append(
-        FunctionDeclaration(
             name="fetch_random_joke",
             description="Fetches a random joke from a public API. Use for random humor or to break the ice.",
             parameters={

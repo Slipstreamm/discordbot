@@ -214,7 +214,10 @@ class MemoryManager:
                     priority INTEGER DEFAULT 5, -- Lower number = higher priority
                     created_timestamp REAL DEFAULT (unixepoch('now')),
                     last_updated REAL DEFAULT (unixepoch('now')),
-                    details TEXT -- Optional JSON blob for sub-tasks, progress, etc.
+                    details TEXT, -- Optional JSON blob for sub-tasks, progress, etc.
+                    guild_id TEXT, -- The server ID where the goal was created
+                    channel_id TEXT, -- The channel ID where the goal was created
+                    user_id TEXT -- The user ID who created the goal
                 );
             """)
             await db.execute("CREATE INDEX IF NOT EXISTS idx_goal_status ON gurt_goals (status);")
@@ -916,8 +919,8 @@ class MemoryManager:
 
     # --- Goal Management Methods (SQLite) ---
 
-    async def add_goal(self, description: str, priority: int = 5, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Adds a new goal to the database."""
+    async def add_goal(self, description: str, priority: int = 5, details: Optional[Dict[str, Any]] = None, guild_id: Optional[str] = None, channel_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Adds a new goal to the database, including context."""
         if not description:
             return {"error": "Goal description is required."}
         logger.info(f"Adding new goal (Priority {priority}): '{description}'")
@@ -933,10 +936,10 @@ class MemoryManager:
                 async with aiosqlite.connect(self.db_path) as db:
                     cursor = await db.execute(
                         """
-                        INSERT INTO gurt_goals (description, priority, details, status, last_updated)
-                        VALUES (?, ?, ?, 'pending', unixepoch('now'))
+                        INSERT INTO gurt_goals (description, priority, details, status, last_updated, guild_id, channel_id, user_id)
+                        VALUES (?, ?, ?, 'pending', unixepoch('now'), ?, ?, ?)
                         """,
-                        (description, priority, details_json)
+                        (description, priority, details_json, guild_id, channel_id, user_id)
                     )
                     await db.commit()
                     goal_id = cursor.lastrowid
@@ -951,7 +954,7 @@ class MemoryManager:
         logger.info(f"Retrieving goals (Status: {status or 'any'}, Limit: {limit})")
         goals = []
         try:
-            sql = "SELECT goal_id, description, status, priority, created_timestamp, last_updated, details FROM gurt_goals"
+            sql = "SELECT goal_id, description, status, priority, created_timestamp, last_updated, details, guild_id, channel_id, user_id FROM gurt_goals"
             params = []
             if status:
                 sql += " WHERE status = ?"
@@ -969,7 +972,10 @@ class MemoryManager:
                     "priority": row[3],
                     "created_timestamp": row[4],
                     "last_updated": row[5],
-                    "details": details
+                    "details": details,
+                    "guild_id": row[7],
+                    "channel_id": row[8],
+                    "user_id": row[9]
                 })
             logger.info(f"Retrieved {len(goals)} goals.")
             return goals

@@ -403,7 +403,20 @@ def setup_commands(cog: 'GurtCog'):
             except json.JSONDecodeError:
                 await interaction.followup.send("❌ Invalid JSON format for details.", ephemeral=True)
                 return
-        result = await cog.memory_manager.add_goal(description, priority, details)
+
+        # Capture context from interaction
+        guild_id = str(interaction.guild_id) if interaction.guild_id else None
+        channel_id = str(interaction.channel_id) if interaction.channel_id else None
+        user_id = str(interaction.user.id) if interaction.user else None
+
+        result = await cog.memory_manager.add_goal(
+            description,
+            priority,
+            details,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id
+        )
         if result.get("status") == "added":
             await interaction.followup.send(f"✅ Goal added (ID: {result.get('goal_id')}): '{description}'", ephemeral=True)
         elif result.get("status") == "duplicate":

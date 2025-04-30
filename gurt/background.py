@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 # --- Tool Mapping Import ---
 # Import the mapping to execute tools by name
-from .tools import TOOL_MAPPING
+from .tools import TOOL_MAPPING, send_discord_message # Also import send_discord_message directly for goal execution reporting
 from .config import TOOLS  # Import FunctionDeclaration list for tool metadata
 
 # --- Background Task ---
@@ -187,9 +187,13 @@ async def background_processing_task(cog: 'GurtCog'):
                         goal_id = goal.get('goal_id')
                         description = goal.get('description')
                         plan = goal.get('details') # The decomposition plan is stored here
+                        # Retrieve context saved with the goal
+                        goal_context_guild_id = goal.get('guild_id')
+                        goal_context_channel_id = goal.get('channel_id')
+                        goal_context_user_id = goal.get('user_id')
 
                         if goal_id and description and plan and isinstance(plan.get('steps'), list):
-                            print(f"--- Executing Goal ID {goal_id}: '{description}' ---")
+                            print(f"--- Executing Goal ID {goal_id}: '{description}' (Context: G={goal_context_guild_id}, C={goal_context_channel_id}, U={goal_context_user_id}) ---")
                             steps = plan['steps']
                             current_step_index = plan.get('current_step_index', 0) # Track progress
                             goal_failed = False
@@ -243,6 +247,33 @@ async def background_processing_task(cog: 'GurtCog'):
                                         tool_error = f"Tool '{tool_name}' not found in TOOL_MAPPING."
                                         print(f"    - Error: {tool_error}")
 
+                                    # --- Send Update Message (if channel context exists) --- ### MODIFICATION START ###
+                                    if goal_context_channel_id:
+                                        step_number_display = current_step_index + 1 # Human-readable step number for display
+                                        status_emoji = "✅" if tool_success else "❌"
+                                        # Use the helper function to create a summary
+                                        step_result_summary = _create_result_summary(tool_result if tool_success else {"error": tool_error})
+
+                                        update_message = (
+                                            f"**Goal Update (ID: {goal_id}, Step {step_number_display}/{len(steps)})** {status_emoji}\n"
+                                            f"> **Goal:** {description}\n"
+                                            f"> **Step:** {step_desc}\n"
+                                            f"> **Tool:** `{tool_name}`\n"
+                                            # f"> **Args:** `{json.dumps(tool_args)}`\n" # Args might be too verbose
+                                            f"> **Result:** `{step_result_summary}`"
+                                        )
+                                        # Limit message length
+                                        if len(update_message) > 1900:
+                                            update_message = update_message[:1900] + "...`"
+
+                                        try:
+                                            # Use the imported send_discord_message function
+                                            await send_discord_message(cog, channel_id=goal_context_channel_id, message_content=update_message)
+                                            print(f"    - Sent goal update to channel {goal_context_channel_id}")
+                                        except Exception as msg_err:
+                                            print(f"    - Failed to send goal update message to channel {goal_context_channel_id}: {msg_err}")
+                                    ### MODIFICATION END ###
+
                                     # --- Handle Tool Outcome ---
                                     if tool_success:
                                         # Store result if needed (optional, requires plan structure modification)
@@ -254,6 +285,7 @@ async def background_processing_task(cog: 'GurtCog'):
                                 else:
                                     # Step doesn't require a tool (e.g., internal reasoning/check)
                                     print("    - No tool required for this step (internal check/reasoning).")
+                                    # Send update message for non-tool steps too? Optional. For now, only for tool steps.
                                     current_step_index += 1 # Assume non-tool steps succeed for now
 
                                 # Check if goal completed

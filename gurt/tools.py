@@ -2420,22 +2420,6 @@ async def check_disk_space(cog: commands.Cog) -> Dict[str, Any]:
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-async def random_vibe_check(cog: commands.Cog) -> Dict[str, Any]:
-    """Returns a random vibe/meme message."""
-    vibes = [
-        "vibe check: passed ✅",
-        "vibe check: failed 💀",
-        "vibe check: ur pc is haunted",
-        "vibe check: cpu's chillin, u chillin?",
-        "vibe check: ngl ur vibes immaculate rn",
-        "vibe check: system's sus, keep an eye out 👀",
-        "vibe check: all systems go, but are YOU ok?",
-        "vibe check: ur fans sound like a jet, u good?",
-        "vibe check: i detected 0 vibes, try again later"
-    ]
-    import random
-    return {"status": "success", "vibe": random.choice(vibes)}
-
 async def fetch_random_joke(cog: commands.Cog) -> Dict[str, Any]:
     """Fetches a random joke from an API."""
     url = "https://official-joke-api.appspot.com/random_joke"
@@ -2596,7 +2580,6 @@ TOOL_MAPPING = {
     # --- Random System/Meme Tools ---
     "read_temps": read_temps,
     "check_disk_space": check_disk_space,
-    "random_vibe_check": random_vibe_check,
     "fetch_random_joke": fetch_random_joke,
     # --- Guild/Channel Listing Tools ---
     "list_bot_guilds": list_bot_guilds,
