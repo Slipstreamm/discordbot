@@ -956,7 +956,7 @@ def create_tools_list():
                         "description": "The ID of the channel to send the restart message in. If not provided, no message is sent."
                     }
                 },
-                "required": []
+                "required": ["channel_id"]
             }
         )
     )
