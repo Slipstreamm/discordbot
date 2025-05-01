@@ -1443,6 +1443,101 @@ def create_tools_list():
         )
     )
 
+    # --- User Profile Tool Declarations ---
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_user_username",
+            description="Gets the unique Discord username (e.g., username#1234) for a given user ID.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string", "description": "The Discord user ID of the target user."}
+                },
+                "required": ["user_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_user_display_name",
+            description="Gets the display name for a given user ID (server nickname if in a guild, otherwise global name).",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string", "description": "The Discord user ID of the target user."}
+                },
+                "required": ["user_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_user_avatar_url",
+            description="Gets the URL of the user's current avatar (server-specific if available, otherwise global).",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string", "description": "The Discord user ID of the target user."}
+                },
+                "required": ["user_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_user_status",
+            description="Gets the current status (online, idle, dnd, offline) of a user. Requires guild context and potentially presence intent.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string", "description": "The Discord user ID of the target user."}
+                },
+                "required": ["user_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_user_activity",
+            description="Gets the current activity (e.g., Playing game, Listening to Spotify) of a user. Requires guild context and potentially presence intent.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string", "description": "The Discord user ID of the target user."}
+                },
+                "required": ["user_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_user_roles",
+            description="Gets the list of roles for a user in the current server. Requires guild context.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string", "description": "The Discord user ID of the target user."}
+                },
+                "required": ["user_id"]
+            }
+        )
+    )
+    tool_declarations.append(
+        FunctionDeclaration(
+            name="get_user_profile_info",
+            description="Gets comprehensive profile information for a given user ID (username, display name, avatar, status, activity, roles, etc.).",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string", "description": "The Discord user ID of the target user."}
+                },
+                "required": ["user_id"]
+            }
+        )
+    )
+    # --- End User Profile Tool Declarations ---
+
+
     return tool_declarations
 
 # Initialize TOOLS list, handling potential ImportError if library not installed

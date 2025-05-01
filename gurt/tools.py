@@ -2591,4 +2591,275 @@ TOOL_MAPPING = {
     "list_guild_channels": list_guild_channels,
     # --- Tool Listing Tool ---
     "list_tools": list_tools,
+    # --- User Profile Tools ---
+    "get_user_username": get_user_username,
+    "get_user_display_name": get_user_display_name,
+    "get_user_avatar_url": get_user_avatar_url,
+    "get_user_status": get_user_status,
+    "get_user_activity": get_user_activity,
+    "get_user_roles": get_user_roles,
+    "get_user_profile_info": get_user_profile_info,
+    # --- End User Profile Tools ---
 }
+
+# --- User Profile Tools ---
+
+async def _get_user_or_member(cog: commands.Cog, user_id_str: str) -> Tuple[Optional[Union[discord.User, discord.Member]], Optional[Dict[str, Any]]]:
+    """Helper to fetch a User or Member object, handling errors."""
+    try:
+        user_id = int(user_id_str)
+        user_or_member = cog.bot.get_user(user_id)
+
+        # If in a guild context, try to get the Member object for more info (status, roles, etc.)
+        if not user_or_member and cog.current_channel and isinstance(cog.current_channel, discord.abc.GuildChannel):
+            guild = cog.current_channel.guild
+            if guild:
+                print(f"Attempting to fetch member {user_id} from guild {guild.id}")
+                try:
+                    user_or_member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+                except discord.NotFound:
+                    print(f"Member {user_id} not found in guild {guild.id}. Falling back to fetch_user.")
+                    # Fallback to fetching user if not found as member
+                    try: user_or_member = await cog.bot.fetch_user(user_id)
+                    except discord.NotFound: pass # Handled below
+                except discord.Forbidden:
+                     print(f"Forbidden to fetch member {user_id} from guild {guild.id}. Falling back to fetch_user.")
+                     try: user_or_member = await cog.bot.fetch_user(user_id)
+                     except discord.NotFound: pass # Handled below
+
+        # If still not found, try fetching globally
+        if not user_or_member:
+            print(f"User/Member {user_id} not in cache or guild, attempting global fetch_user.")
+            try:
+                user_or_member = await cog.bot.fetch_user(user_id)
+            except discord.NotFound:
+                print(f"User {user_id} not found globally.")
+                return None, {"error": f"User with ID {user_id_str} not found."}
+            except discord.HTTPException as e:
+                print(f"HTTP error fetching user {user_id}: {e}")
+                return None, {"error": f"API error fetching user {user_id_str}: {e}"}
+
+        if not user_or_member: # Should be caught by NotFound above, but double-check
+             return None, {"error": f"User with ID {user_id_str} could not be retrieved."}
+
+        return user_or_member, None # Return the user/member object and no error
+    except ValueError:
+        return None, {"error": f"Invalid user ID format: {user_id_str}."}
+    except Exception as e:
+        error_message = f"Unexpected error fetching user/member {user_id_str}: {str(e)}"
+        print(error_message); traceback.print_exc()
+        return None, {"error": error_message}
+
+
+async def get_user_username(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
+    """Gets the unique Discord username (e.g., username#1234) for a given user ID."""
+    print(f"Executing get_user_username for user ID: {user_id}.")
+    user_obj, error_resp = await _get_user_or_member(cog, user_id)
+    if error_resp: return error_resp
+    if not user_obj: return {"error": f"Failed to retrieve user object for ID {user_id}."} # Should not happen if error_resp is None
+
+    return {
+        "status": "success",
+        "user_id": user_id,
+        "username": str(user_obj), # User.__str__() gives username#discriminator
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+async def get_user_display_name(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
+    """Gets the display name for a given user ID (server nickname if in a guild, otherwise global name)."""
+    print(f"Executing get_user_display_name for user ID: {user_id}.")
+    user_obj, error_resp = await _get_user_or_member(cog, user_id)
+    if error_resp: return error_resp
+    if not user_obj: return {"error": f"Failed to retrieve user object for ID {user_id}."}
+
+    # user_obj could be User or Member. display_name works for both.
+    display_name = user_obj.display_name
+
+    return {
+        "status": "success",
+        "user_id": user_id,
+        "display_name": display_name,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+async def get_user_avatar_url(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
+    """Gets the URL of the user's current avatar (server-specific if available, otherwise global)."""
+    print(f"Executing get_user_avatar_url for user ID: {user_id}.")
+    user_obj, error_resp = await _get_user_or_member(cog, user_id)
+    if error_resp: return error_resp
+    if not user_obj: return {"error": f"Failed to retrieve user object for ID {user_id}."}
+
+    # .display_avatar handles server vs global avatar automatically
+    avatar_url = str(user_obj.display_avatar.url)
+
+    return {
+        "status": "success",
+        "user_id": user_id,
+        "avatar_url": avatar_url,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+async def get_user_status(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
+    """Gets the current status (online, idle, dnd, offline) of a user. Requires guild context."""
+    print(f"Executing get_user_status for user ID: {user_id}.")
+    user_obj, error_resp = await _get_user_or_member(cog, user_id)
+    if error_resp: return error_resp
+    if not user_obj: return {"error": f"Failed to retrieve user object for ID {user_id}."}
+
+    if isinstance(user_obj, discord.Member):
+        status_str = str(user_obj.status)
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "user_status": status_str,
+            "guild_id": str(user_obj.guild.id),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    else:
+        # If we only have a User object, status isn't directly available without presence intent/cache.
+        return {"error": f"Cannot determine status for user {user_id} outside of a shared server or without presence intent.", "user_id": user_id}
+
+async def get_user_activity(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
+    """Gets the current activity (e.g., Playing game) of a user. Requires guild context."""
+    print(f"Executing get_user_activity for user ID: {user_id}.")
+    user_obj, error_resp = await _get_user_or_member(cog, user_id)
+    if error_resp: return error_resp
+    if not user_obj: return {"error": f"Failed to retrieve user object for ID {user_id}."}
+
+    activity_info = None
+    if isinstance(user_obj, discord.Member) and user_obj.activity:
+        activity = user_obj.activity
+        activity_type_str = str(activity.type).split('.')[-1] # e.g., 'playing', 'streaming', 'listening'
+        activity_details = {"type": activity_type_str, "name": activity.name}
+
+        # Add more details based on activity type
+        if isinstance(activity, discord.Game):
+            if hasattr(activity, 'start'): activity_details["start_time"] = activity.start.isoformat() if activity.start else None
+            if hasattr(activity, 'end'): activity_details["end_time"] = activity.end.isoformat() if activity.end else None
+        elif isinstance(activity, discord.Streaming):
+            activity_details.update({"platform": activity.platform, "url": activity.url, "game": activity.game})
+        elif isinstance(activity, discord.Spotify):
+            activity_details.update({
+                "title": activity.title, "artist": activity.artist, "album": activity.album,
+                "album_cover_url": activity.album_cover_url, "track_id": activity.track_id,
+                "duration": str(activity.duration),
+                "start": activity.start.isoformat() if activity.start else None,
+                "end": activity.end.isoformat() if activity.end else None
+            })
+        elif isinstance(activity, discord.CustomActivity):
+             activity_details.update({"custom_text": activity.name, "emoji": str(activity.emoji) if activity.emoji else None})
+             activity_details["name"] = activity.name # Override generic name with the custom text
+        # Add other activity types if needed (Listening, Watching)
+
+        activity_info = activity_details
+        status = "success"
+        guild_id = str(user_obj.guild.id)
+    elif isinstance(user_obj, discord.Member):
+        status = "success" # Found member but they have no activity
+        guild_id = str(user_obj.guild.id)
+    else:
+        return {"error": f"Cannot determine activity for user {user_id} outside of a shared server.", "user_id": user_id}
+
+    return {
+        "status": status,
+        "user_id": user_id,
+        "activity": activity_info, # Will be None if no activity
+        "guild_id": guild_id if isinstance(user_obj, discord.Member) else None,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+async def get_user_roles(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
+    """Gets the list of roles for a user in the current server. Requires guild context."""
+    print(f"Executing get_user_roles for user ID: {user_id}.")
+    user_obj, error_resp = await _get_user_or_member(cog, user_id)
+    if error_resp: return error_resp
+    if not user_obj: return {"error": f"Failed to retrieve user object for ID {user_id}."}
+
+    if isinstance(user_obj, discord.Member):
+        roles_list = []
+        # Sort roles by position (highest first), excluding @everyone
+        sorted_roles = sorted(user_obj.roles, key=lambda r: r.position, reverse=True)
+        for role in sorted_roles:
+            if role.is_default(): continue # Skip @everyone
+            roles_list.append({
+                "id": str(role.id),
+                "name": role.name,
+                "color": str(role.color),
+                "position": role.position
+            })
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "roles": roles_list,
+            "role_count": len(roles_list),
+            "guild_id": str(user_obj.guild.id),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    else:
+        return {"error": f"Cannot determine roles for user {user_id} outside of a shared server.", "user_id": user_id}
+
+async def get_user_profile_info(cog: commands.Cog, user_id: str) -> Dict[str, Any]:
+    """Gets comprehensive profile information for a given user ID."""
+    print(f"Executing get_user_profile_info for user ID: {user_id}.")
+    user_obj, error_resp = await _get_user_or_member(cog, user_id)
+    if error_resp: return error_resp
+    if not user_obj: return {"error": f"Failed to retrieve user object for ID {user_id}."}
+
+    profile_info = {
+        "user_id": user_id,
+        "username": str(user_obj),
+        "display_name": user_obj.display_name,
+        "avatar_url": str(user_obj.display_avatar.url),
+        "is_bot": user_obj.bot,
+        "created_at": user_obj.created_at.isoformat() if user_obj.created_at else None,
+        # Fields requiring Member object
+        "status": None,
+        "activity": None,
+        "roles": None,
+        "role_count": 0,
+        "joined_at": None,
+        "guild_id": None,
+        "nickname": None,
+        "voice_state": None,
+    }
+
+    if isinstance(user_obj, discord.Member):
+        profile_info["status"] = str(user_obj.status)
+        profile_info["joined_at"] = user_obj.joined_at.isoformat() if user_obj.joined_at else None
+        profile_info["guild_id"] = str(user_obj.guild.id)
+        profile_info["nickname"] = user_obj.nick # Store specific nickname
+
+        # Get Activity
+        activity_result = await get_user_activity(cog, user_id)
+        if activity_result.get("status") == "success":
+            profile_info["activity"] = activity_result.get("activity")
+
+        # Get Roles
+        roles_result = await get_user_roles(cog, user_id)
+        if roles_result.get("status") == "success":
+            profile_info["roles"] = roles_result.get("roles")
+            profile_info["role_count"] = roles_result.get("role_count", 0)
+
+        # Get Voice State (if connected)
+        if user_obj.voice:
+            voice = user_obj.voice
+            profile_info["voice_state"] = {
+                "channel_id": str(voice.channel.id) if voice.channel else None,
+                "channel_name": voice.channel.name if voice.channel else None,
+                "deaf": voice.deaf, "mute": voice.mute,
+                "self_deaf": voice.self_deaf, "self_mute": voice.self_mute,
+                "self_stream": voice.self_stream, "self_video": voice.self_video,
+                "suppress": voice.suppress, "afk": voice.afk,
+                "session_id": voice.session_id
+            }
+
+    return {
+        "status": "success",
+        "profile": profile_info,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+# --- End User Profile Tools ---
+
+
+# --- Tool Mapping ---
