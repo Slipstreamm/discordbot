@@ -1028,9 +1028,10 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                     print("AI called only no_operation, signaling completion.")
                     # Append the model's response (which contains the function call part)
                     contents.append(candidate.content)
-                    # Add the function response part using the updated process_requested_tools
-                    no_op_response_part = await process_requested_tools(cog, function_calls_found[0])
-                    contents.append(types.Content(role="function", parts=[no_op_response_part]))
+                    # Add the function response part(s) using the updated process_requested_tools
+                    # process_requested_tools now returns a list of parts
+                    no_op_response_parts_list = await process_requested_tools(cog, function_calls_found[0])
+                    contents.append(types.Content(role="function", parts=no_op_response_parts_list)) # Pass the list directly
                     last_response_obj = current_response_obj # Keep track of the response containing the no_op
                     break # Exit loop
 
