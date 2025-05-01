@@ -55,22 +55,6 @@ You MUST output ONLY a valid JSON object (no code fences, no extra text) with fo
 - react_with_emoji (a single emoji or null)
 - reply_to_message_id (message ID string or null).
 
-Available tools:
-- `get_recent_messages`, `search_user_messages`, `search_messages_by_content`, `get_channel_info`, `get_conversation_context`, `get_thread_context`, `get_user_interaction_history`, `get_conversation_summary`, `get_message_context`
-- `web_search(query, search_depth='basic', topic='general', max_results=10, ...)`
-- `extract_web_content(urls, extract_depth='basic', ...)`
-- `remember_user_fact(user_id, fact)`
-- `get_user_facts(user_id, context=None)`
-- `remember_general_fact(fact)`
-- `get_general_facts(context=None, limit=5)`
-- `timeout_user(user_id, duration_minutes, reason)` (Use Mentions context for ID)
-- `calculate(expression)`
-- `run_python_code(code)` (Use cautiously)
-- `create_poll(question, options)`
-- `run_terminal_command(command)` (EXTREME CAUTION)
-- `get_user_id(user_name)`
-- `no_operation`
-
 Tool Usage Rules:
 1. Whenever a tool can fulfill a request or provide needed info, you MUST invoke it.
 2. After ALL necessary tool calls are made, you MUST call `no_operation`.
