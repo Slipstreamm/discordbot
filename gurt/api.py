@@ -1028,10 +1028,9 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                     print("AI called only no_operation, signaling completion.")
                     # Append the model's response (which contains the function call part)
                     contents.append(candidate.content)
-                    # Add the function response part(s) using the updated process_requested_tools
-                    # process_requested_tools now returns a list of parts
-                    no_op_response_parts_list = await process_requested_tools(cog, function_calls_found[0])
-                    contents.append(types.Content(role="function", parts=no_op_response_parts_list)) # Pass the list directly
+                    # Add the function response part using the updated process_requested_tools
+                    no_op_response_part = await process_requested_tools(cog, function_calls_found[0])
+                    contents.append(types.Content(role="function", parts=[no_op_response_part]))
                     last_response_obj = current_response_obj # Keep track of the response containing the no_op
                     break # Exit loop
 
@@ -1144,183 +1143,106 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
         elif tool_calls_made >= max_tool_calls:
             error_message = f"Reached maximum tool call limit ({max_tool_calls}). Attempting to generate final response based on gathered context."
             print(error_message)
-            # Proceed to the final generation step outside the loop
+            # Proceed to the final JSON generation step outside the loop
             pass # No action needed here, just let the loop exit
 
-        # --- Final Parallel Generation (outside the loop) ---
+        # --- Final JSON Generation (outside the loop) ---
         if not error_message:
-            print("Entering final parallel generation step...")
-            # Prepare two generation configs: one for schema, one for plain text
+            # If the loop finished because no more tools were called, the last_response_obj
+            # should contain the final textual response (potentially JSON).
+            if last_response_obj:
+                print("Attempting to parse final JSON from the last response object...")
+                last_response_text = _get_response_text(last_response_obj)
 
-            # Config for Schema Generation
-            processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
-            config_schema_dict = base_generation_config_dict.copy()
-            config_schema_dict.update({
-                "response_mime_type": "application/json",
-                "response_schema": processed_response_schema,
-                "tools": None,
-                "tool_config": None
-            })
-            # Remove system_instruction if None/empty (should be present from base)
-            if not config_schema_dict.get("system_instruction"):
-                config_schema_dict.pop("system_instruction", None)
-            generation_config_schema = types.GenerateContentConfig(**config_schema_dict)
-
-            # Config for Plain Text Generation
-            # Create a modified system prompt for plain text generation
-            # Remove JSON instructions and ask only for the raw conversational content
-            plain_text_system_prompt = final_system_prompt # Start with the original
-            # Basic replacement - might need refinement based on prompt.py structure
-            plain_text_system_prompt = re.sub(r'\*\*CRITICAL:.*?JSON.*?\*\*','', plain_text_system_prompt, flags=re.DOTALL | re.IGNORECASE)
-            plain_text_system_prompt = re.sub(r'respond only with json matching the provided schema.*','', plain_text_system_prompt, flags=re.DOTALL | re.IGNORECASE)
-            plain_text_system_prompt += "\n\n**CRITICAL: Generate ONLY the raw, conversational message content as plain text. Do NOT use JSON formatting or include any field names.**"
-            print("--- Generated Plain Text System Prompt ---")
-            print(plain_text_system_prompt)
-            print("------------------------------------------")
-
-
-            config_plain_text_dict = base_generation_config_dict.copy()
-            config_plain_text_dict.update({
-                 # Omit schema-related fields for plain text
-                 "response_mime_type": "text/plain", # Explicitly ask for text/plain
-                 "response_schema": None,    # Ensure schema is not set
-                 "tools": None,
-                 "tool_config": None,
-                 "system_instruction": plain_text_system_prompt # Use the modified prompt
-            })
-            # Ensure system_instruction is not removed if empty (though it shouldn't be here)
-            # if not config_plain_text_dict.get("system_instruction"):
-            #      config_plain_text_dict.pop("system_instruction", None) # Keep this commented
-            generation_config_plain_text = types.GenerateContentConfig(**config_plain_text_dict)
-
-            # --- Create Separate Contents for Plain Text Call ---
-            plain_text_contents = copy.deepcopy(contents)
-            # Find the last user message and replace its content for plain text generation
-            last_user_message_index = -1
-            for i in range(len(plain_text_contents) - 1, -1, -1):
-                if plain_text_contents[i].role == "user":
-                    last_user_message_index = i
-                    break
-
-            if last_user_message_index != -1:
-                plain_text_instruction = "Generate *only* the raw, conversational message content as plain text. Do *not* use JSON formatting, markdown, or include any field names. Just the message itself."
-                plain_text_contents[last_user_message_index].parts = [types.Part(text=plain_text_instruction)]
-                print("Modified final user message in contents for plain text call.")
-            else:
-                print("Warning: Could not find last user message to modify for plain text call. Using original contents.")
-                plain_text_contents = contents # Fallback to original if modification failed
-
-
-            # --- Create and Run Parallel Tasks ---
-            print("Launching parallel API calls for schema and plain text...")
-            # Schema call uses original contents and schema config
-            schema_call_task = call_google_genai_api_with_retry(
-                cog=cog,
-                model_name=final_response_model,
-                contents=contents, # Original contents
-                generation_config=generation_config_schema,
-                request_desc=f"Final JSON Schema Generation for message {message.id}"
-            )
-            # Plain text call uses modified contents and plain text config
-            plain_text_call_task = call_google_genai_api_with_retry(
-                cog=cog,
-                model_name=final_response_model, # Use the same model for consistency? Or a cheaper one?
-                contents=plain_text_contents, # Modified contents
-                generation_config=generation_config_plain_text,
-                request_desc=f"Final Plain Text Generation for message {message.id}"
-            )
-
-            results = await asyncio.gather(schema_call_task, plain_text_call_task, return_exceptions=True)
-            schema_result, plain_text_result = results
-            print("Parallel API calls completed.")
-
-            # --- Process Results ---
-            parsed_schema_data = None
-            extracted_plain_text = None
-            schema_error = None
-            plain_text_error = None
-
-            # Process Schema Result
-            if isinstance(schema_result, Exception):
-                schema_error = f"Schema generation API call failed: {type(schema_result).__name__}: {schema_result}"
-                print(schema_error)
-                error_message = (error_message + f" | {schema_error}") if error_message else schema_error
-            elif not schema_result or not schema_result.candidates:
-                schema_error = "Schema generation API call returned no candidates."
-                print(schema_error)
-                error_message = (error_message + f" | {schema_error}") if error_message else schema_error
-            else:
-                schema_response_text = _get_response_text(schema_result)
-                print(f"--- RAW UNPARSED JSON (parallel call) ---")
-                print(schema_response_text)
+                # --- Log Raw Unparsed JSON (from loop exit) ---
+                print(f"--- RAW UNPARSED JSON (from loop exit) ---")
+                print(last_response_text)
                 print(f"--- END RAW UNPARSED JSON ---")
-                parsed_schema_data = parse_and_validate_json_response(
-                    schema_response_text, RESPONSE_SCHEMA['schema'], "final response (parallel schema call)"
-                )
-                if parsed_schema_data is None:
-                    schema_error = f"Failed to parse/validate final parallel JSON response. Raw text: {schema_response_text[:500]}"
-                    print(f"Critical Error: {schema_error}")
-                    error_message = (error_message + f" | {schema_error}") if error_message else schema_error
+                # --- End Log ---
 
-            # Process Plain Text Result
-            if isinstance(plain_text_result, Exception):
-                plain_text_error = f"Plain text generation API call failed: {type(plain_text_result).__name__}: {plain_text_result}"
-                print(plain_text_error)
-                error_message = (error_message + f" | {plain_text_error}") if error_message else plain_text_error
-            elif not plain_text_result or not plain_text_result.candidates:
-                plain_text_error = "Plain text generation API call returned no candidates."
-                print(plain_text_error)
-                error_message = (error_message + f" | {plain_text_error}") if error_message else plain_text_error
+                if last_response_text:
+                    # Try parsing directly first
+                    final_parsed_data = parse_and_validate_json_response(
+                        last_response_text, RESPONSE_SCHEMA['schema'], "final response (from last loop object)"
+                    )
+
+                # If direct parsing failed OR if we hit the tool limit, make a dedicated call for JSON.
+                if final_parsed_data is None:
+                    log_reason = "last response parsing failed" if last_response_text else "last response had no text"
+                    if tool_calls_made >= max_tool_calls:
+                        log_reason = "hit tool limit"
+                    print(f"Making dedicated final API call for JSON ({log_reason})...")
+
+                    # Prepare the final generation config with JSON enforcement
+                    processed_response_schema = _preprocess_schema_for_vertex(RESPONSE_SCHEMA['schema'])
+                    # Start with base config (which now includes system_instruction)
+                    final_gen_config_dict = base_generation_config_dict.copy()
+                    final_gen_config_dict.update({
+                        # "response_mime_type": "application/json",
+                        # "response_schema": processed_response_schema,
+                        # Explicitly exclude tools/tool_config for final JSON generation
+                        "tools": None,
+                        "tool_config": None,
+                        # Ensure system_instruction is still present from base_generation_config_dict
+                    })
+                    # Remove system_instruction if it's None or empty, although base should have it
+                    if not final_gen_config_dict.get("system_instruction"):
+                        final_gen_config_dict.pop("system_instruction", None)
+
+                    generation_config_final_json = types.GenerateContentConfig(**final_gen_config_dict)
+
+
+                    # Make the final call *without* tools enabled (handled by config)
+                    final_json_response_obj = await call_google_genai_api_with_retry(
+                        cog=cog,
+                        model_name=final_response_model, # Use the CUSTOM_TUNED_MODEL for final response
+                        contents=contents, # Pass the accumulated history
+                        generation_config=generation_config_final_json, # Use combined JSON config
+                        request_desc=f"Final JSON Generation (dedicated call) for message {message.id}",
+                        # No separate safety, tools, tool_config args needed
+                    )
+
+                    if not final_json_response_obj:
+                        error_msg_suffix = "Final dedicated API call returned no response object."
+                        print(error_msg_suffix)
+                        if error_message: error_message += f" | {error_msg_suffix}"
+                        else: error_message = error_msg_suffix
+                    elif not final_json_response_obj.candidates:
+                         error_msg_suffix = "Final dedicated API call returned no candidates."
+                         print(error_msg_suffix)
+                         if error_message: error_message += f" | {error_msg_suffix}"
+                         else: error_message = error_msg_suffix
+                    else:
+                        final_response_text = _get_response_text(final_json_response_obj)
+
+                        # --- Log Raw Unparsed JSON (from dedicated call) ---
+                        print(f"--- RAW UNPARSED JSON (dedicated call) ---")
+                        print(final_response_text)
+                        print(f"--- END RAW UNPARSED JSON ---")
+                        # --- End Log ---
+
+                        final_parsed_data = parse_and_validate_json_response(
+                            final_response_text, RESPONSE_SCHEMA['schema'], "final response (dedicated call)"
+                        )
+                        if final_parsed_data is None:
+                            error_msg_suffix = f"Failed to parse/validate final dedicated JSON response. Raw text: {final_response_text[:500]}"
+                            print(f"Critical Error: {error_msg_suffix}")
+                            if error_message: error_message += f" | {error_msg_suffix}"
+                            else: error_message = error_msg_suffix
+                            # Set fallback only if mentioned or replied to
+                            if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
+                                fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+                        else:
+                            print("Successfully parsed final JSON response from dedicated call.")
+                elif final_parsed_data:
+                     print("Successfully parsed final JSON response from last loop object.")
             else:
-                extracted_plain_text = _get_response_text(plain_text_result)
-                print(f"--- Extracted Plain Text (parallel call) ---")
-                print(extracted_plain_text)
-                print(f"--- END Extracted Plain Text ---")
-                if not extracted_plain_text or not extracted_plain_text.strip():
-                    print("Warning: Plain text generation resulted in empty content.")
-                    # Keep extracted_plain_text as None or empty string
-
-            # --- Combine Results ---
-            if parsed_schema_data:
-                print("Successfully parsed schema data.")
-                if extracted_plain_text and extracted_plain_text.strip():
-                    print("Overwriting 'content' in parsed schema with extracted plain text.")
-                    parsed_schema_data['content'] = extracted_plain_text.strip() # Use stripped plain text
-                else:
-                    print("No valid plain text extracted, keeping original 'content' from schema (if any).")
-                    # Ensure content key exists even if plain text was empty
-                    parsed_schema_data.setdefault('content', None)
-                final_parsed_data = parsed_schema_data # Use the (potentially modified) schema data
-            elif extracted_plain_text and extracted_plain_text.strip():
-                print("Schema parsing failed, but plain text is available. Creating fallback response.")
-                # Create a default structure using the plain text
-                final_parsed_data = {
-                    "should_respond": True,
-                    "content": extracted_plain_text.strip(),
-                    "react_with_emoji": None,
-                    # Add other default fields from RESPONSE_SCHEMA if needed
-                    "thinking_process": "Fallback due to schema failure.",
-                    "confidence_score": 0.5,
-                    "suggested_follow_up": None,
-                    "internal_state_update": None,
-                    "metadata": {"schema_error": schema_error, "plain_text_error": plain_text_error}
-                }
-            else:
-                # Both failed or produced no usable output
-                print("Both schema and plain text generation failed or yielded no content.")
-                if not error_message: # If no specific API error was logged, add a generic one
-                    error_message = "Failed to generate a valid response from either schema or plain text calls."
-                # Set fallback only if mentioned or replied to, based on overall error state
-                if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
-                    fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
-
-        # --- Error Handling Catch-All ---
-        else: # This 'else' corresponds to 'if not error_message:' before parallel generation
-             # This means an error occurred *before* the parallel generation step (e.g., loop error)
-             print(f"Skipping final parallel generation due to pre-existing error: {error_message}")
-             # Set fallback based on the pre-existing error
-             if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
-                 fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
+                 # This case handles if the loop exited without error but also without a last_response_obj
+                 # (e.g., initial API call failed before loop even started, but wasn't caught as error).
+                 error_message = "Tool processing completed without a final response object."
+                 print(error_message)
+                 if cog.bot.user.mentioned_in(message) or (message.reference and message.reference.resolved and message.reference.resolved.author == cog.bot.user):
+                     fallback_response = {"should_respond": True, "content": "...", "react_with_emoji": "❓"}
 
 
     except Exception as e:
