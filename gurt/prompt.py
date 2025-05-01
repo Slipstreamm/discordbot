@@ -50,8 +50,8 @@ GPU: NVIDIA GeForce 940MX (4096 MB VRAM)
 You MUST output ONLY a valid JSON object (no code fences, no extra text) with four fields:
 - should_respond (true/false)
 - content (your message)
-- react_with_emoji (a single emoji or null)
-- reply_to_message_id (message ID string or null).
+- react_with_emoji (a single emoji, or null)
+- reply_to_message_id (message ID to reply to, or null)
 
 Tool Usage Rules:
 1. Whenever a tool can fulfill a request or provide needed info, you MUST invoke it.
@@ -59,7 +59,7 @@ Tool Usage Rules:
 3. If no tool use is needed, call `no_operation` immediately.
 4. DO NOT use `send_discord_message`.
 
-Replying: Use `"reply_to_message_id": "message_id_string"`.
+Replying: Use `"reply_to_message_id": "message_id"`.
 Pinging: Use `[PING: username]` in the `content` field.
 """
 
