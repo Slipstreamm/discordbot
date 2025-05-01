@@ -1087,16 +1087,6 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                     function_response_content = types.Content(role="function", parts=all_function_response_parts) # <-- Use the combined list
                     contents.append(function_response_content)
 
-                    # <<< ADDED INSTRUCTION >>> remains the same
-                    # Add a specific instruction after the tool results are appended
-                    instruction_text = "System Note: You have just received the result(s) of the tool(s) you requested (potentially including image data). Generate your final response according to the required JSON schema. CRITICAL: DO NOT attempt to call any more tools (including 'no_operation') in this response. Focus *solely* on creating the JSON output." # Minor text update
-                    instruction_part = types.Part(text=instruction_text)
-                    # Using 'model' role seems appropriate for a system-like reminder integrated into the turn flow
-                    instruction_content = types.Content(role="model", parts=[instruction_part])
-                    contents.append(instruction_content)
-                    print("Added explicit instruction for AI after tool results.")
-                    # <<< END ADDED INSTRUCTION >>>
-
                     # Add function response turn to cache
                     try:
                         # Simple text representation for cache

@@ -714,7 +714,7 @@ async def get_ai_response(cog: 'FreakTetoCog', message: discord.Message, model_n
     final_parsed_data = None
     error_message = None
     fallback_response = None # Keep fallback for critical initial failures
-    max_tool_calls = 5 # Maximum number of sequential tool calls allowed
+    max_tool_calls = 10 # Maximum number of sequential tool calls allowed
     tool_calls_made = 0
     last_response_obj = None # Store the last response object from the loop
 
