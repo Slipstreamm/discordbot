@@ -1167,17 +1167,30 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             generation_config_schema = types.GenerateContentConfig(**config_schema_dict)
 
             # Config for Plain Text Generation
+            # Create a modified system prompt for plain text generation
+            # Remove JSON instructions and ask only for the raw conversational content
+            plain_text_system_prompt = final_system_prompt # Start with the original
+            # Basic replacement - might need refinement based on prompt.py structure
+            plain_text_system_prompt = re.sub(r'\*\*CRITICAL:.*?JSON.*?\*\*','', plain_text_system_prompt, flags=re.DOTALL | re.IGNORECASE)
+            plain_text_system_prompt = re.sub(r'respond only with json matching the provided schema.*','', plain_text_system_prompt, flags=re.DOTALL | re.IGNORECASE)
+            plain_text_system_prompt += "\n\n**CRITICAL: Generate ONLY the raw, conversational message content as plain text. Do NOT use JSON formatting or include any field names.**"
+            print("--- Generated Plain Text System Prompt ---")
+            print(plain_text_system_prompt)
+            print("------------------------------------------")
+
+
             config_plain_text_dict = base_generation_config_dict.copy()
             config_plain_text_dict.update({
                  # Omit schema-related fields for plain text
-                 "response_mime_type": None, # Or ensure it's not set / set to "text/plain" if needed
-                 "response_schema": None,    # Or ensure it's not set
+                 "response_mime_type": "text/plain", # Explicitly ask for text/plain
+                 "response_schema": None,    # Ensure schema is not set
                  "tools": None,
-                 "tool_config": None
+                 "tool_config": None,
+                 "system_instruction": plain_text_system_prompt # Use the modified prompt
             })
-            # Remove system_instruction if None/empty
-            if not config_plain_text_dict.get("system_instruction"):
-                 config_plain_text_dict.pop("system_instruction", None)
+            # Ensure system_instruction is not removed if empty (though it shouldn't be here)
+            # if not config_plain_text_dict.get("system_instruction"):
+            #      config_plain_text_dict.pop("system_instruction", None) # Keep this commented
             generation_config_plain_text = types.GenerateContentConfig(**config_plain_text_dict)
 
             # --- Create and Run Parallel Tasks ---
