@@ -674,25 +674,46 @@ async def process_requested_tools(cog: 'GurtCog', function_call: types.FunctionC
 
     # Add image part if an original URL was found and seems valid
     if original_image_url and isinstance(original_image_url, str) and original_image_url.startswith('http'):
+        download_success = False
         try:
-            # More robust MIME type detection attempt (basic fallback)
-            # You might use libraries like 'mimetypes' or check headers if needed
-            image_ext = original_image_url.split('.')[-1].split('?')[0].lower()
-            mime_type = f"image/{image_ext}" if image_ext in ['png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'heif'] else "image/jpeg" # Default guess
+            # Download the image data using aiohttp session from cog
+            if not hasattr(cog, 'session') or not cog.session:
+                raise ValueError("aiohttp session not found in cog.")
 
-            # Validate against known supported image types for Gemini
-            supported_image_mimes = ["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"]
-            if mime_type not in supported_image_mimes:
-                print(f"Warning: Detected MIME type '{mime_type}' for {original_image_url} might not be supported by Gemini. Attempting anyway.")
-                # You could fallback to 'image/jpeg' or omit the part if strictness is required
+            print(f"Downloading image data from URL: {original_image_url}")
+            async with cog.session.get(original_image_url, timeout=15) as response: # Added timeout
+                if response.status == 200:
+                    image_bytes = await response.read()
+                    mime_type = response.content_type or "application/octet-stream" # Get MIME type from header
 
-            image_part = types.Part.from_uri(original_image_url, mime_type=mime_type)
-            parts_to_return.append(image_part)
-            print(f"Added image part for URL: {original_image_url} (MIME: {mime_type}) from tool '{function_name}' result.")
+                    # Validate against known supported image types for Gemini
+                    supported_image_mimes = ["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"]
+                    clean_mime_type = mime_type.split(';')[0].lower() # Clean MIME type
+
+                    if clean_mime_type in supported_image_mimes:
+                        # Use types.Part.from_data instead of from_uri
+                        image_part = types.Part(data=image_bytes, mime_type=clean_mime_type)
+                        parts_to_return.append(image_part)
+                        download_success = True
+                        print(f"Added image part (from data, {len(image_bytes)} bytes, MIME: {clean_mime_type}) from tool '{function_name}' result.")
+                    else:
+                        print(f"Warning: Downloaded image MIME type '{clean_mime_type}' from {original_image_url} might not be supported by Gemini. Skipping image part.")
+                else:
+                    print(f"Error downloading image from {original_image_url}: Status {response.status}")
+
+        except asyncio.TimeoutError:
+            print(f"Error downloading image from {original_image_url}: Request timed out.")
+        except aiohttp.ClientError as client_e:
+            print(f"Error downloading image from {original_image_url}: {client_e}")
+        except ValueError as val_e: # Catch missing session error
+            print(f"Error preparing image download: {val_e}")
         except Exception as e:
-            print(f"Error creating image part from URI {original_image_url}: {e}")
-            # Optionally add an error text part to inform the LLM
-            error_text_part = types.Part(text=f"[System Note: Failed to process image URI {original_image_url} from tool '{function_name}': {e}]")
+            print(f"Error downloading or creating image part from data ({original_image_url}): {e}")
+
+        # If download or processing failed, add an error note for the LLM
+        if not download_success:
+            error_text = f"[System Note: Failed to download or process image data from URL provided by tool '{function_name}'. URL: {original_image_url}]"
+            error_text_part = types.Part(text=error_text)
             parts_to_return.append(error_text_part)
 
     return parts_to_return # Return the list of parts (will contain 1 or 2+ parts)
