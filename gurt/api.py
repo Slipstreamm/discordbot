@@ -1096,8 +1096,8 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                     # Start with base config (which now includes system_instruction)
                     final_gen_config_dict = base_generation_config_dict.copy()
                     final_gen_config_dict.update({
-                        "response_mime_type": "application/json",
-                        "response_schema": processed_response_schema,
+                        # "response_mime_type": "application/json",
+                        # "response_schema": processed_response_schema,
                         # Explicitly exclude tools/tool_config for final JSON generation
                         "tools": None,
                         "tool_config": None,
