@@ -2517,91 +2517,6 @@ async def list_tools(cog: commands.Cog) -> Dict[str, Any]:
         print(error_message); traceback.print_exc()
         return {"error": error_message}
 
-
-# --- Tool Mapping ---
-# This dictionary maps tool names (used in the AI prompt) to their implementation functions.
-TOOL_MAPPING = {
-    "get_recent_messages": get_recent_messages,
-    "search_user_messages": search_user_messages,
-    "search_messages_by_content": search_messages_by_content,
-    "get_channel_info": get_channel_info,
-    "get_conversation_context": get_conversation_context,
-    "get_thread_context": get_thread_context,
-    "get_user_interaction_history": get_user_interaction_history,
-    "get_conversation_summary": get_conversation_summary,
-    "get_message_context": get_message_context,
-    "web_search": web_search,
-    # Point memory tools to the methods on the MemoryManager instance (accessed via cog)
-    "remember_user_fact": lambda cog, **kwargs: cog.memory_manager.add_user_fact(**kwargs),
-    "get_user_facts": lambda cog, **kwargs: cog.memory_manager.get_user_facts(**kwargs),
-    "remember_general_fact": lambda cog, **kwargs: cog.memory_manager.add_general_fact(**kwargs),
-    "get_general_facts": lambda cog, **kwargs: cog.memory_manager.get_general_facts(**kwargs),
-    "timeout_user": timeout_user,
-    "calculate": calculate,
-    "run_python_code": run_python_code,
-    "create_poll": create_poll,
-    "run_terminal_command": run_terminal_command,
-    "remove_timeout": remove_timeout,
-    "extract_web_content": extract_web_content,
-    "read_file_content": read_file_content, # Now unsafe
-    "write_file_content_unsafe": write_file_content_unsafe, # New unsafe tool
-    "execute_python_unsafe": execute_python_unsafe, # New unsafe tool
-    "send_discord_message": send_discord_message, # New tool
-    "create_new_tool": create_new_tool, # Added the meta-tool
-    "execute_internal_command": execute_internal_command, # Added internal command execution
-    "get_user_id": get_user_id, # Added user ID lookup tool
-    "no_operation": no_operation, # Added no-op tool
-    "restart_gurt_bot": restart_gurt_bot, # Tool to restart the Gurt bot
-    "run_git_pull": run_git_pull, # Tool to run git pull on the host
-    "get_channel_id": get_channel_id, # Tool to get channel id
-    # --- Batch 1 Additions ---
-    "get_guild_info": get_guild_info,
-    "list_guild_members": list_guild_members,
-    "get_user_avatar": get_user_avatar,
-    "get_bot_uptime": get_bot_uptime,
-    "schedule_message": schedule_message,
-    # --- End Batch 1 ---
-    # --- Batch 2 Additions ---
-    "delete_message": delete_message,
-    "edit_message": edit_message,
-    "get_voice_channel_info": get_voice_channel_info,
-    "move_user_to_voice_channel": move_user_to_voice_channel,
-    "get_guild_roles": get_guild_roles,
-    # --- End Batch 2 ---
-    # --- Batch 3 Additions ---
-    "assign_role_to_user": assign_role_to_user,
-    "remove_role_from_user": remove_role_from_user,
-    "fetch_emoji_list": fetch_emoji_list,
-    "get_guild_invites": get_guild_invites,
-    "purge_messages": purge_messages,
-    # --- End Batch 3 ---
-    # --- Batch 4 Additions ---
-    "get_bot_stats": get_bot_stats,
-    "get_weather": get_weather,
-    "translate_text": translate_text,
-    "remind_user": remind_user,
-    "fetch_random_image": fetch_random_image,
-    # --- End Batch 4 ---
-    # --- Random System/Meme Tools ---
-    "read_temps": read_temps,
-    "check_disk_space": check_disk_space,
-    "fetch_random_joke": fetch_random_joke,
-    # --- Guild/Channel Listing Tools ---
-    "list_bot_guilds": list_bot_guilds,
-    "list_guild_channels": list_guild_channels,
-    # --- Tool Listing Tool ---
-    "list_tools": list_tools,
-    # --- User Profile Tools ---
-    "get_user_username": get_user_username,
-    "get_user_display_name": get_user_display_name,
-    "get_user_avatar_url": get_user_avatar_url,
-    "get_user_status": get_user_status,
-    "get_user_activity": get_user_activity,
-    "get_user_roles": get_user_roles,
-    "get_user_profile_info": get_user_profile_info,
-    # --- End User Profile Tools ---
-}
-
 # --- User Profile Tools ---
 
 async def _get_user_or_member(cog: commands.Cog, user_id_str: str) -> Tuple[Optional[Union[discord.User, discord.Member]], Optional[Dict[str, Any]]]:
@@ -2863,3 +2778,85 @@ async def get_user_profile_info(cog: commands.Cog, user_id: str) -> Dict[str, An
 
 
 # --- Tool Mapping ---
+# This dictionary maps tool names (used in the AI prompt) to their implementation functions.
+TOOL_MAPPING = {
+    "get_recent_messages": get_recent_messages,
+    "search_user_messages": search_user_messages,
+    "search_messages_by_content": search_messages_by_content,
+    "get_channel_info": get_channel_info,
+    "get_conversation_context": get_conversation_context,
+    "get_thread_context": get_thread_context,
+    "get_user_interaction_history": get_user_interaction_history,
+    "get_conversation_summary": get_conversation_summary,
+    "get_message_context": get_message_context,
+    "web_search": web_search,
+    # Point memory tools to the methods on the MemoryManager instance (accessed via cog)
+    "remember_user_fact": lambda cog, **kwargs: cog.memory_manager.add_user_fact(**kwargs),
+    "get_user_facts": lambda cog, **kwargs: cog.memory_manager.get_user_facts(**kwargs),
+    "remember_general_fact": lambda cog, **kwargs: cog.memory_manager.add_general_fact(**kwargs),
+    "get_general_facts": lambda cog, **kwargs: cog.memory_manager.get_general_facts(**kwargs),
+    "timeout_user": timeout_user,
+    "calculate": calculate,
+    "run_python_code": run_python_code,
+    "create_poll": create_poll,
+    "run_terminal_command": run_terminal_command,
+    "remove_timeout": remove_timeout,
+    "extract_web_content": extract_web_content,
+    "read_file_content": read_file_content, # Now unsafe
+    "write_file_content_unsafe": write_file_content_unsafe, # New unsafe tool
+    "execute_python_unsafe": execute_python_unsafe, # New unsafe tool
+    "send_discord_message": send_discord_message, # New tool
+    "create_new_tool": create_new_tool, # Added the meta-tool
+    "execute_internal_command": execute_internal_command, # Added internal command execution
+    "get_user_id": get_user_id, # Added user ID lookup tool
+    "no_operation": no_operation, # Added no-op tool
+    "restart_gurt_bot": restart_gurt_bot, # Tool to restart the Gurt bot
+    "run_git_pull": run_git_pull, # Tool to run git pull on the host
+    "get_channel_id": get_channel_id, # Tool to get channel id
+    # --- Batch 1 Additions ---
+    "get_guild_info": get_guild_info,
+    "list_guild_members": list_guild_members,
+    "get_user_avatar": get_user_avatar,
+    "get_bot_uptime": get_bot_uptime,
+    "schedule_message": schedule_message,
+    # --- End Batch 1 ---
+    # --- Batch 2 Additions ---
+    "delete_message": delete_message,
+    "edit_message": edit_message,
+    "get_voice_channel_info": get_voice_channel_info,
+    "move_user_to_voice_channel": move_user_to_voice_channel,
+    "get_guild_roles": get_guild_roles,
+    # --- End Batch 2 ---
+    # --- Batch 3 Additions ---
+    "assign_role_to_user": assign_role_to_user,
+    "remove_role_from_user": remove_role_from_user,
+    "fetch_emoji_list": fetch_emoji_list,
+    "get_guild_invites": get_guild_invites,
+    "purge_messages": purge_messages,
+    # --- End Batch 3 ---
+    # --- Batch 4 Additions ---
+    "get_bot_stats": get_bot_stats,
+    "get_weather": get_weather,
+    "translate_text": translate_text,
+    "remind_user": remind_user,
+    "fetch_random_image": fetch_random_image,
+    # --- End Batch 4 ---
+    # --- Random System/Meme Tools ---
+    "read_temps": read_temps,
+    "check_disk_space": check_disk_space,
+    "fetch_random_joke": fetch_random_joke,
+    # --- Guild/Channel Listing Tools ---
+    "list_bot_guilds": list_bot_guilds,
+    "list_guild_channels": list_guild_channels,
+    # --- Tool Listing Tool ---
+    "list_tools": list_tools,
+    # --- User Profile Tools ---
+    "get_user_username": get_user_username,
+    "get_user_display_name": get_user_display_name,
+    "get_user_avatar_url": get_user_avatar_url,
+    "get_user_status": get_user_status,
+    "get_user_activity": get_user_activity,
+    "get_user_roles": get_user_roles,
+    "get_user_profile_info": get_user_profile_info,
+    # --- End User Profile Tools ---
+}
