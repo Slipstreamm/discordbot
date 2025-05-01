@@ -1193,19 +1193,39 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
             #      config_plain_text_dict.pop("system_instruction", None) # Keep this commented
             generation_config_plain_text = types.GenerateContentConfig(**config_plain_text_dict)
 
+            # --- Create Separate Contents for Plain Text Call ---
+            plain_text_contents = copy.deepcopy(contents)
+            # Find the last user message and replace its content for plain text generation
+            last_user_message_index = -1
+            for i in range(len(plain_text_contents) - 1, -1, -1):
+                if plain_text_contents[i].role == "user":
+                    last_user_message_index = i
+                    break
+
+            if last_user_message_index != -1:
+                plain_text_instruction = "Generate *only* the raw, conversational message content as plain text. Do *not* use JSON formatting, markdown, or include any field names. Just the message itself."
+                plain_text_contents[last_user_message_index].parts = [types.Part(text=plain_text_instruction)]
+                print("Modified final user message in contents for plain text call.")
+            else:
+                print("Warning: Could not find last user message to modify for plain text call. Using original contents.")
+                plain_text_contents = contents # Fallback to original if modification failed
+
+
             # --- Create and Run Parallel Tasks ---
             print("Launching parallel API calls for schema and plain text...")
+            # Schema call uses original contents and schema config
             schema_call_task = call_google_genai_api_with_retry(
                 cog=cog,
                 model_name=final_response_model,
-                contents=contents,
+                contents=contents, # Original contents
                 generation_config=generation_config_schema,
                 request_desc=f"Final JSON Schema Generation for message {message.id}"
             )
+            # Plain text call uses modified contents and plain text config
             plain_text_call_task = call_google_genai_api_with_retry(
                 cog=cog,
                 model_name=final_response_model, # Use the same model for consistency? Or a cheaper one?
-                contents=contents,
+                contents=plain_text_contents, # Modified contents
                 generation_config=generation_config_plain_text,
                 request_desc=f"Final Plain Text Generation for message {message.id}"
             )
