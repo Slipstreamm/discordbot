@@ -772,7 +772,7 @@ async def get_ai_response(cog: 'GurtCog', message: discord.Message, model_name: 
                  full_text = "\n".join(text_parts).strip()
                  if full_text: # Only add if there's some text content
                      # Use the new author_string here
-                     author_string = msg.get("author_string", msg.get("author", {}).get("display_name", "Unknown User"))
+                     author_string = msg.get("author_string", msg.get("author", {}).get("display_name", " "))
                      contents.append(types.Content(role=role, parts=[types.Part(text=f"{author_string}: {full_text}")]))
 
 

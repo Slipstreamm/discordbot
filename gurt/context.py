@@ -28,14 +28,14 @@ def gather_conversation_context(cog: 'GurtCog', channel_id: int, current_message
             # Build the content string, including reply and attachment info
             content_parts = []
             # FIX: Use the pre-formatted author_string which includes '(BOT)' tag if applicable.
-            # Fall back to display_name or 'Unknown User' if author_string is missing for some reason.
-            author_name = msg_data.get('author_string', msg_data.get('author', {}).get('display_name', 'Unknown User'))
+            # Fall back to display_name or ' ' if author_string is missing for some reason.
+            author_name = msg_data.get('author_string', msg_data.get('author', {}).get('display_name', ' '))
 
             message_id = msg_data['id'] # Get the message ID
 
             # Add reply prefix if applicable
             if msg_data.get("is_reply"):
-                reply_author = msg_data.get('replied_to_author_name', 'Unknown User')
+                reply_author = msg_data.get('replied_to_author_name', ' ')
                 reply_snippet = msg_data.get('replied_to_content_snippet') # Get value, could be None
                 # Keep snippet very short for context, handle None case
                 reply_snippet_short = '...' # Default if snippet is None or not a string
@@ -217,7 +217,7 @@ async def get_memory_context(cog: 'GurtCog', message: discord.Message) -> Option
                     dist = result.get('distance', 1.0)
                     similarity_score = 1.0 - dist
                     timestamp_str = datetime.datetime.fromtimestamp(meta.get('timestamp', 0)).strftime('%Y-%m-%d %H:%M') if meta.get('timestamp') else 'Unknown time'
-                    author_name = meta.get('display_name', meta.get('user_name', 'Unknown user'))
+                    author_name = meta.get('display_name', meta.get('user_name', ' '))
                     semantic_memory_parts.append(f"- (Similarity: {similarity_score:.2f}) {author_name} (at {timestamp_str}): {doc[:100]}")
                 if len(semantic_memory_parts) > 1: memory_parts.append("\n".join(semantic_memory_parts))
     except Exception as e: print(f"Error retrieving semantic memory context: {e}")
@@ -230,7 +230,7 @@ async def get_memory_context(cog: 'GurtCog', message: discord.Message) -> Option
             recent_attachments = messages_with_attachments[-5:] # Get last 5
             attachment_memory_parts = ["Recently Shared Files/Images:"]
             for msg in recent_attachments:
-                author_name = msg.get('author', {}).get('display_name', 'Unknown User')
+                author_name = msg.get('author', {}).get('display_name', ' ')
                 timestamp_str = 'Unknown time'
                 try:
                     # Safely parse timestamp

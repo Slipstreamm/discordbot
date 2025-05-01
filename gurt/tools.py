@@ -79,7 +79,7 @@ async def search_user_messages(cog: commands.Cog, user_id: str, limit: int, chan
         except ValueError: return {"error": f"Invalid user ID: {user_id}"}
 
         messages = []
-        user_name = "Unknown User"
+        user_name = " "
         async for message in channel.history(limit=500):
             if message.author.id == user_id_int:
                 formatted_msg = format_message(cog, message) # Use formatter
