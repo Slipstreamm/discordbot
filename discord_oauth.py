@@ -135,15 +135,36 @@ async def send_code_verifier_to_api(state: str, code_verifier: str) -> bool:
 
             # Send the code verifier to the API service
             print(f"Sending code verifier for state {state} to API service: {url}")
-            async with session.post(url, json=data) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    print(f"Failed to send code verifier to API service: {error_text}")
-                    return False
 
-                response_data = await resp.json()
-                print(f"Successfully sent code verifier to API service: {response_data}")
-                return True
+            # Try multiple times with increasing delays to ensure delivery
+            max_retries = 3
+            for retry in range(max_retries):
+                try:
+                    async with session.post(url, json=data) as resp:
+                        if resp.status == 200:
+                            response_data = await resp.json()
+                            print(f"Successfully sent code verifier to API service: {response_data}")
+                            return True
+                        else:
+                            error_text = await resp.text()
+                            print(f"Failed to send code verifier to API service (attempt {retry+1}/{max_retries}): {error_text}")
+                            if retry < max_retries - 1:
+                                # Wait before retrying, with exponential backoff
+                                wait_time = 2 ** retry
+                                print(f"Retrying in {wait_time} seconds...")
+                                await asyncio.sleep(wait_time)
+                            else:
+                                return False
+                except aiohttp.ClientError as ce:
+                    print(f"Connection error when sending code verifier (attempt {retry+1}/{max_retries}): {ce}")
+                    if retry < max_retries - 1:
+                        wait_time = 2 ** retry
+                        print(f"Retrying in {wait_time} seconds...")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        raise
+
+            return False
     except Exception as e:
         print(f"Error sending code verifier to API service: {e}")
         traceback.print_exc()
@@ -190,8 +211,25 @@ def get_auth_url(state: str, code_verifier: str) -> str:
     print(f"Stored code verifier for state {state}: {code_verifier[:10]}...")
 
     # If API OAuth is enabled, send the code verifier to the API service
+    # This is critical for the PKCE flow to work with the API server
     if API_OAUTH_ENABLED:
-        asyncio.create_task(send_code_verifier_to_api(state, code_verifier))
+        # Use a synchronous call to ensure the code verifier is sent before proceeding
+        # This is important because the user might click the auth URL immediately
+        loop = asyncio.get_event_loop()
+        send_success = False
+        try:
+            send_success = loop.run_until_complete(send_code_verifier_to_api(state, code_verifier))
+        except Exception as e:
+            print(f"Error in synchronous code verifier send: {e}")
+            # Fall back to async task if synchronous call fails
+            asyncio.create_task(send_code_verifier_to_api(state, code_verifier))
+
+        if not send_success:
+            print("Warning: Failed to send code verifier synchronously, falling back to async task")
+            # Try again asynchronously as a backup
+            asyncio.create_task(send_code_verifier_to_api(state, code_verifier))
+        else:
+            print(f"Successfully sent code verifier for state {state} to API service")
 
     return auth_url
 

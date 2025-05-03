@@ -279,7 +279,7 @@ async def auth(code: str, state: str = None, code_verifier: str = None, request:
         # Log the request details for debugging
         print(f"Received OAuth callback with code: {code[:10]}...")
         print(f"State: {state}")
-        print(f"Code verifier provided: {code_verifier is not None}")
+        print(f"Code verifier provided directly in URL: {code_verifier is not None}")
         print(f"Request URL: {request.url if request else 'No request object'}")
         print(f"Configured redirect URI: {DISCORD_REDIRECT_URI}")
 
@@ -312,20 +312,35 @@ async def auth(code: str, state: str = None, code_verifier: str = None, request:
                 "redirect_uri": actual_redirect_uri,
             }
 
-            # Add code_verifier if provided directly
+            # First try to get the code verifier from the store using the state parameter
+            # This is the most reliable method since the code verifier should have been stored
+            # by the Discord bot before the user was redirected here
+            stored_code_verifier = None
+            if state:
+                stored_code_verifier = code_verifier_store.get_code_verifier(state)
+                if stored_code_verifier:
+                    print(f"Found code_verifier in store for state {state}: {stored_code_verifier[:10]}...")
+                else:
+                    print(f"No code_verifier found in store for state {state}, will check other sources")
+
+            # If we have a code_verifier parameter directly in the URL, use that
             if code_verifier:
                 data["code_verifier"] = code_verifier
-                print(f"Using provided code_verifier parameter: {code_verifier[:10]}...")
+                print(f"Using code_verifier from URL parameter: {code_verifier[:10]}...")
+            # Otherwise use the stored code verifier if available
+            elif stored_code_verifier:
+                data["code_verifier"] = stored_code_verifier
+                print(f"Using code_verifier from store: {stored_code_verifier[:10]}...")
+                # Remove the code verifier from the store after using it
+                code_verifier_store.remove_code_verifier(state)
             else:
-                # Try to get the code verifier from the store using the state parameter
-                stored_code_verifier = code_verifier_store.get_code_verifier(state) if state else None
-                if stored_code_verifier:
-                    data["code_verifier"] = stored_code_verifier
-                    print(f"Using code_verifier from store for state {state}: {stored_code_verifier[:10]}...")
-                    # Remove the code verifier from the store after using it
-                    code_verifier_store.remove_code_verifier(state)
-                else:
-                    print(f"Warning: No code_verifier found for state {state}")
+                # If we still don't have a code verifier, log a warning
+                print(f"WARNING: No code_verifier found for state {state} - OAuth will likely fail")
+                # Return a more helpful error message
+                return {
+                    "message": "Authentication failed",
+                    "error": "Missing code_verifier. This is required for PKCE OAuth flow. Please ensure the code_verifier is properly sent to the API server."
+                }
 
             # Log the token exchange request for debugging
             print(f"Exchanging code for token with data: {data}")
@@ -1097,20 +1112,36 @@ async def store_code_verifier(request: Request):
         if not state or not code_verifier:
             raise HTTPException(status_code=400, detail="Missing state or code_verifier")
 
+        # Store the code verifier
         code_verifier_store.store_code_verifier(state, code_verifier)
+
+        # Clean up expired code verifiers
+        code_verifier_store.cleanup_expired()
+
+        # Log success
+        print(f"Successfully stored code verifier for state {state}")
         return {"success": True, "message": "Code verifier stored successfully"}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error storing code verifier: {str(e)}")
+        error_msg = f"Error storing code verifier: {str(e)}"
+        print(error_msg)
+        raise HTTPException(status_code=400, detail=error_msg)
 
 @api_app.get("/code_verifier/{state}")
 @discordapi_app.get("/code_verifier/{state}")
-async def get_code_verifier(state: str):
-    """Get the code verifier for a state"""
-    code_verifier = code_verifier_store.get_code_verifier(state)
-    if not code_verifier:
-        raise HTTPException(status_code=404, detail="No code verifier found for this state")
-
-    return {"code_verifier": code_verifier}
+async def check_code_verifier(state: str):
+    """Check if a code verifier exists for a state"""
+    try:
+        code_verifier = code_verifier_store.get_code_verifier(state)
+        if code_verifier:
+            # Don't return the actual code verifier for security reasons
+            # Just confirm it exists
+            return {"exists": True, "message": "Code verifier exists for this state"}
+        else:
+            return {"exists": False, "message": "No code verifier found for this state"}
+    except Exception as e:
+        error_msg = f"Error checking code verifier: {str(e)}"
+        print(error_msg)
+        raise HTTPException(status_code=400, detail=error_msg)
 
 # ============= Token Endpoints =============
 
