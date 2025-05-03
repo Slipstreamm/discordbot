@@ -8,29 +8,6 @@ class PingCog(commands.Cog, name="Ping"):
     def __init__(self, bot):
         self.bot = bot
 
-        # Create the main command group for this cog
-        self.ping_group = app_commands.Group(
-            name="ping",
-            description="Check the bot's response time"
-        )
-
-        # Register commands
-        self.register_commands()
-
-        # Add command group to the bot's tree
-        self.bot.tree.add_command(self.ping_group)
-
-    def register_commands(self):
-        """Register all commands for this cog"""
-        # Check command
-        check_command = app_commands.Command(
-            name="check",
-            description="Check the bot's response time",
-            callback=self.ping_check_callback,
-            parent=self.ping_group
-        )
-        self.ping_group.add_command(check_command)
-
     async def _ping_logic(self):
         """Core logic for the ping command."""
         latency = round(self.bot.latency * 1000)
@@ -43,9 +20,10 @@ class PingCog(commands.Cog, name="Ping"):
         response = await self._ping_logic()
         await ctx.reply(response)
 
-    # --- Slash Command Callbacks ---
-    async def ping_check_callback(self, interaction: discord.Interaction):
-        """Callback for /ping check command"""
+    # --- Slash Command ---
+    @app_commands.command(name="ping", description="Check the bot's response time")
+    async def ping_slash(self, interaction: discord.Interaction):
+        """Slash command for ping."""
         response = await self._ping_logic()
         await interaction.response.send_message(response)
 

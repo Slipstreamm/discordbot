@@ -33,33 +33,14 @@ class GamesCog(commands.Cog, name="Games"):
 
         # Create the main command group for this cog
         self.games_group = app_commands.Group(
-            name="games",
+            name="fun",
             description="Play various games with the bot or other users"
-        )
-
-        # Create subgroups
-        self.chess_group = app_commands.Group(
-            name="chess",
-            description="Chess-related commands",
-            parent=self.games_group
-        )
-
-        self.tictactoe_group = app_commands.Group(
-            name="tictactoe",
-            description="Tic-tac-toe game commands",
-            parent=self.games_group
-        )
-
-        self.dice_group = app_commands.Group(
-            name="dice",
-            description="Dice and coin games",
-            parent=self.games_group
         )
 
         # Register commands
         self.register_commands()
 
-        # Add command groups to the bot's tree
+        # Add command group to the bot's tree
         self.bot.tree.add_command(self.games_group)
 
     def _array_to_fen(self, board_array: List[List[str]], turn: chess.Color) -> str:
@@ -91,35 +72,35 @@ class GamesCog(commands.Cog, name="Games"):
     def register_commands(self):
         """Register all commands for this cog"""
 
-        # --- Dice Group Commands ---
+        # --- Dice Commands ---
         # Coinflip command
         coinflip_command = app_commands.Command(
             name="coinflip",
             description="Flip a coin and get Heads or Tails",
             callback=self.games_coinflip_callback,
-            parent=self.dice_group
+            parent=self.games_group
         )
-        self.dice_group.add_command(coinflip_command)
+        self.games_group.add_command(coinflip_command)
 
         # Roll command
         roll_command = app_commands.Command(
             name="roll",
             description="Roll a dice and get a number between 1 and 6",
             callback=self.games_roll_callback,
-            parent=self.dice_group
+            parent=self.games_group
         )
-        self.dice_group.add_command(roll_command)
+        self.games_group.add_command(roll_command)
 
         # Magic 8-ball command
         magic8ball_command = app_commands.Command(
             name="magic8ball",
             description="Ask the magic 8 ball a question",
             callback=self.games_magic8ball_callback,
-            parent=self.dice_group
+            parent=self.games_group
         )
-        self.dice_group.add_command(magic8ball_command)
+        self.games_group.add_command(magic8ball_command)
 
-        # --- Main Games Group Commands ---
+        # --- RPS Commands ---
         # RPS command
         rps_command = app_commands.Command(
             name="rps",
@@ -138,6 +119,7 @@ class GamesCog(commands.Cog, name="Games"):
         )
         self.games_group.add_command(rpschallenge_command)
 
+        # --- Other Game Commands ---
         # Guess command
         guess_command = app_commands.Command(
             name="guess",
@@ -156,52 +138,52 @@ class GamesCog(commands.Cog, name="Games"):
         )
         self.games_group.add_command(hangman_command)
 
-        # --- TicTacToe Group Commands ---
+        # --- TicTacToe Commands ---
         # TicTacToe command
         tictactoe_command = app_commands.Command(
-            name="play",
+            name="tictactoe",
             description="Challenge another user to a game of Tic-Tac-Toe",
             callback=self.games_tictactoe_callback,
-            parent=self.tictactoe_group
+            parent=self.games_group
         )
-        self.tictactoe_group.add_command(tictactoe_command)
+        self.games_group.add_command(tictactoe_command)
 
         # TicTacToe Bot command
         tictactoebot_command = app_commands.Command(
-            name="bot",
+            name="tictactoebot",
             description="Play a game of Tic-Tac-Toe against the bot",
             callback=self.games_tictactoebot_callback,
-            parent=self.tictactoe_group
+            parent=self.games_group
         )
-        self.tictactoe_group.add_command(tictactoebot_command)
+        self.games_group.add_command(tictactoebot_command)
 
-        # --- Chess Group Commands ---
+        # --- Chess Commands ---
         # Chess command
         chess_command = app_commands.Command(
-            name="play",
+            name="chess",
             description="Challenge another user to a game of chess",
             callback=self.games_chess_callback,
-            parent=self.chess_group
+            parent=self.games_group
         )
-        self.chess_group.add_command(chess_command)
+        self.games_group.add_command(chess_command)
 
         # Chess Bot command
         chessbot_command = app_commands.Command(
-            name="bot",
+            name="chessbot",
             description="Play chess against the bot",
             callback=self.games_chessbot_callback,
-            parent=self.chess_group
+            parent=self.games_group
         )
-        self.chess_group.add_command(chessbot_command)
+        self.games_group.add_command(chessbot_command)
 
         # Load Chess command
         loadchess_command = app_commands.Command(
-            name="load",
+            name="loadchess",
             description="Load a chess game from FEN, PGN, or array representation",
             callback=self.games_loadchess_callback,
-            parent=self.chess_group
+            parent=self.games_group
         )
-        self.chess_group.add_command(loadchess_command)
+        self.games_group.add_command(loadchess_command)
 
     async def cog_unload(self):
         """Clean up resources when the cog is unloaded."""
@@ -1164,5 +1146,5 @@ async def setup(bot: commands.Bot):
     print("Setting up GamesCog...")
     cog = GamesCog(bot)
     await bot.add_cog(cog)
-    print(f"GamesCog setup complete with command groups: {[cmd.name for cmd in bot.tree.get_commands() if cmd.name == 'games']}")
-    print(f"Available subgroups: {[group.name for group in cog.games_group.walk_commands() if isinstance(group, app_commands.Group)]}")
+    print(f"GamesCog setup complete with command group: {[cmd.name for cmd in bot.tree.get_commands() if cmd.name == 'games']}")
+    print(f"Available commands: {[cmd.name for cmd in cog.games_group.walk_commands() if isinstance(cmd, app_commands.Command)]}")

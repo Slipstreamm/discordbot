@@ -71,174 +71,143 @@ class EconomyCog(
         self.bot = bot
 
         # Create the main command group for this cog
-        self.economy_group = app_commands.Group(
-            name="economy",
+        self.econ_group = app_commands.Group(
+            name="econ",
             description="Economy system commands"
-        )
-
-        # Create subgroups
-        self.earning_group = app_commands.Group(
-            name="earning",
-            description="Commands for earning currency",
-            parent=self.economy_group
-        )
-
-        self.gambling_group = app_commands.Group(
-            name="gambling",
-            description="Gambling and games of chance",
-            parent=self.economy_group
-        )
-
-        self.utility_group = app_commands.Group(
-            name="utility",
-            description="Utility commands for the economy system",
-            parent=self.economy_group
-        )
-
-        self.risky_group = app_commands.Group(
-            name="risky",
-            description="High-risk, high-reward commands",
-            parent=self.economy_group
-        )
-
-        self.jobs_group = app_commands.Group(
-            name="jobs",
-            description="Job-related commands",
-            parent=self.economy_group
         )
 
         # Register commands
         self.register_commands()
 
-        # Add command groups to the bot's tree
-        self.bot.tree.add_command(self.economy_group)
+        # Add command group to the bot's tree
+        self.bot.tree.add_command(self.econ_group)
 
-        log.info("EconomyCog initialized with command groups.")
+        log.info("EconomyCog initialized with econ command group.")
 
     def register_commands(self):
         """Register all commands for this cog"""
 
-        # --- Earning Group Commands ---
+        # --- Earning Commands ---
         # Daily command
         daily_command = app_commands.Command(
             name="daily",
             description="Claim your daily reward",
             callback=self.economy_daily_callback,
-            parent=self.earning_group
+            parent=self.econ_group
         )
-        self.earning_group.add_command(daily_command)
+        self.econ_group.add_command(daily_command)
 
         # Beg command
         beg_command = app_commands.Command(
             name="beg",
             description="Beg for some spare change",
             callback=self.economy_beg_callback,
-            parent=self.earning_group
+            parent=self.econ_group
         )
-        self.earning_group.add_command(beg_command)
+        self.econ_group.add_command(beg_command)
 
         # Work command
         work_command = app_commands.Command(
             name="work",
             description="Do some work for a guaranteed reward",
             callback=self.economy_work_callback,
-            parent=self.earning_group
+            parent=self.econ_group
         )
-        self.earning_group.add_command(work_command)
+        self.econ_group.add_command(work_command)
 
         # Scavenge command
         scavenge_command = app_commands.Command(
             name="scavenge",
             description="Scavenge around for some spare change",
             callback=self.economy_scavenge_callback,
-            parent=self.earning_group
+            parent=self.econ_group
         )
-        self.earning_group.add_command(scavenge_command)
+        self.econ_group.add_command(scavenge_command)
 
-        # --- Gambling Group Commands ---
+        # --- Gambling Commands ---
         # Coinflip command
         coinflip_command = app_commands.Command(
             name="coinflip",
             description="Bet on a coin flip",
             callback=self.economy_coinflip_callback,
-            parent=self.gambling_group
+            parent=self.econ_group
         )
-        self.gambling_group.add_command(coinflip_command)
+        self.econ_group.add_command(coinflip_command)
 
         # Slots command
         slots_command = app_commands.Command(
             name="slots",
             description="Play the slot machine",
             callback=self.economy_slots_callback,
-            parent=self.gambling_group
+            parent=self.econ_group
         )
-        self.gambling_group.add_command(slots_command)
+        self.econ_group.add_command(slots_command)
 
-        # --- Utility Group Commands ---
+        # --- Utility Commands ---
         # Balance command
         balance_command = app_commands.Command(
             name="balance",
             description="Check your balance",
             callback=self.economy_balance_callback,
-            parent=self.utility_group
+            parent=self.econ_group
         )
-        self.utility_group.add_command(balance_command)
+        self.econ_group.add_command(balance_command)
 
         # Transfer command
         transfer_command = app_commands.Command(
             name="transfer",
             description="Transfer money to another user",
             callback=self.economy_transfer_callback,
-            parent=self.utility_group
+            parent=self.econ_group
         )
-        self.utility_group.add_command(transfer_command)
+        self.econ_group.add_command(transfer_command)
 
         # Leaderboard command
         leaderboard_command = app_commands.Command(
             name="leaderboard",
             description="View the economy leaderboard",
             callback=self.economy_leaderboard_callback,
-            parent=self.utility_group
+            parent=self.econ_group
         )
-        self.utility_group.add_command(leaderboard_command)
+        self.econ_group.add_command(leaderboard_command)
 
-        # --- Risky Group Commands ---
+        # --- Risky Commands ---
         # Rob command
         rob_command = app_commands.Command(
             name="rob",
             description="Attempt to rob another user",
             callback=self.economy_rob_callback,
-            parent=self.risky_group
+            parent=self.econ_group
         )
-        self.risky_group.add_command(rob_command)
+        self.econ_group.add_command(rob_command)
 
-        # --- Jobs Group Commands ---
+        # --- Jobs Commands ---
         # Apply command
         apply_command = app_commands.Command(
             name="apply",
             description="Apply for a job",
             callback=self.economy_apply_callback,
-            parent=self.jobs_group
+            parent=self.econ_group
         )
-        self.jobs_group.add_command(apply_command)
+        self.econ_group.add_command(apply_command)
 
         # Quit command
         quit_command = app_commands.Command(
             name="quit",
             description="Quit your current job",
             callback=self.economy_quit_callback,
-            parent=self.jobs_group
+            parent=self.econ_group
         )
-        self.jobs_group.add_command(quit_command)
+        self.econ_group.add_command(quit_command)
 
         # List command
-        list_command = app_commands.Command(
-            name="list",
+        joblist_command = app_commands.Command(
+            name="joblist",
             description="List available jobs",
             callback=self.economy_joblist_callback,
-            parent=self.jobs_group
+            parent=self.econ_group
         )
-        self.jobs_group.add_command(list_command)
+        self.econ_group.add_command(joblist_command)
 
     async def cog_load(self):
         """Called when the cog is loaded, ensures DB is initialized."""
@@ -843,6 +812,6 @@ async def setup(bot: commands.Bot):
     print("Setting up EconomyCog...")
     cog = EconomyCog(bot)
     await bot.add_cog(cog)
-    log.info("Combined EconomyCog added to bot with command groups.")
-    print(f"EconomyCog setup complete with command groups: {[cmd.name for cmd in bot.tree.get_commands() if cmd.name == 'economy']}")
-    print(f"Available subgroups: {[group.name for group in cog.economy_group.walk_commands() if isinstance(group, app_commands.Group)]}")
+    log.info("Combined EconomyCog added to bot with econ command group.")
+    print(f"EconomyCog setup complete with command group: {[cmd.name for cmd in bot.tree.get_commands() if cmd.name == 'econ']}")
+    print(f"Available commands: {[cmd.name for cmd in cog.econ_group.walk_commands() if isinstance(cmd, app_commands.Command)]}")
