@@ -7,10 +7,12 @@ import sys
 import asyncio
 import subprocess
 import importlib.util
-import argparse # Import argparse
+import argparse
+import logging # Add logging
 from commands import load_all_cogs, reload_all_cogs
 from error_handler import handle_error, patch_discord_methods, store_interaction_content
 from utils import reload_script
+from discordbot import settings_manager # Import the settings manager
 
 # Import the unified API service runner and the sync API module
 import sys
@@ -29,15 +31,38 @@ except ImportError:
 # Load environment variables from .env file
 load_dotenv()
 
+# --- Constants ---
+DEFAULT_PREFIX = "!"
+CORE_COGS = {'SettingsCog', 'HelpCog'} # Cogs that cannot be disabled
+
+# --- Dynamic Prefix Function ---
+async def get_prefix(bot_instance, message):
+    """Determines the command prefix based on guild settings or default."""
+    if not message.guild:
+        # Use default prefix in DMs
+        return commands.when_mentioned_or(DEFAULT_PREFIX)(bot_instance, message)
+
+    # Fetch prefix from settings manager (cache first, then DB)
+    prefix = await settings_manager.get_guild_prefix(message.guild.id, DEFAULT_PREFIX)
+    return commands.when_mentioned_or(prefix)(bot_instance, message)
+
+# --- Bot Setup ---
 # Set up intents (permissions)
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-# Create bot instance with command prefix '!' and enable the application commands
-bot = commands.Bot(command_prefix='!', intents=intents)
+# Create bot instance with the dynamic prefix function
+bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 bot.owner_id = int(os.getenv('OWNER_USER_ID'))
+bot.core_cogs = CORE_COGS # Attach core cogs list to bot instance
 
+# --- Logging Setup ---
+# Configure logging (adjust level and format as needed)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
+log = logging.getLogger(__name__) # Logger for main.py
+
+# --- Events ---
 @bot.event
 async def on_ready():
     print(f'{bot.user.name} has connected to Discord!')
@@ -87,14 +112,95 @@ async def on_shard_disconnect(shard_id):
     except Exception as e:
         print(f"Failed to reconnect shard {shard_id}: {e}")
 
-# Error handling
+# Error handling - Updated to handle custom check failures
 @bot.event
 async def on_command_error(ctx, error):
-    await handle_error(ctx, error)
+    if isinstance(error, CogDisabledError):
+        await ctx.send(str(error), ephemeral=True) # Send the error message from the exception
+        log.warning(f"Command '{ctx.command.qualified_name}' blocked for user {ctx.author.id} in guild {ctx.guild.id}: {error}")
+    elif isinstance(error, CommandPermissionError):
+        await ctx.send(str(error), ephemeral=True) # Send the error message from the exception
+        log.warning(f"Command '{ctx.command.qualified_name}' blocked for user {ctx.author.id} in guild {ctx.guild.id}: {error}")
+    else:
+        # Pass other errors to the original handler
+        await handle_error(ctx, error)
 
 @bot.tree.error
 async def on_app_command_error(interaction, error):
     await handle_error(interaction, error)
+
+# --- Global Command Checks ---
+
+# Need to import SettingsCog to access CORE_COGS, or define CORE_COGS here.
+# Let's import it, assuming it's safe to do so at the top level.
+# If it causes circular imports, CORE_COGS needs to be defined elsewhere or passed differently.
+try:
+    from discordbot.cogs import settings_cog # Import the cog itself
+except ImportError:
+    log.error("Could not import settings_cog.py for CORE_COGS definition. Cog checks might fail.")
+    settings_cog = None # Define as None to avoid NameError later
+
+class CogDisabledError(commands.CheckFailure):
+    """Custom exception for disabled cogs."""
+    def __init__(self, cog_name):
+        self.cog_name = cog_name
+        super().__init__(f"The module `{cog_name}` is disabled in this server.")
+
+class CommandPermissionError(commands.CheckFailure):
+    """Custom exception for insufficient command permissions based on roles."""
+    def __init__(self, command_name):
+        self.command_name = command_name
+        super().__init__(f"You do not have the required role to use the command `{command_name}`.")
+
+@bot.before_invoke
+async def global_command_checks(ctx: commands.Context):
+    """Global check run before any command invocation."""
+    # Ignore checks for DMs (or apply different logic if needed)
+    if not ctx.guild:
+        return
+
+    # Ignore checks for the bot owner
+    if await bot.is_owner(ctx.author):
+        return
+
+    command = ctx.command
+    if not command: # Should not happen with prefix commands, but good practice
+        return
+
+    cog = command.cog
+    cog_name = cog.qualified_name if cog else None
+    command_name = command.qualified_name
+    guild_id = ctx.guild.id
+
+    # Ensure author is a Member to get roles
+    if not isinstance(ctx.author, discord.Member):
+        log.warning(f"Could not perform permission check for user {ctx.author.id} (not a Member object). Allowing command '{command_name}'.")
+        return # Cannot check roles if not a Member object
+
+    member_roles_ids = [role.id for role in ctx.author.roles]
+
+    # 1. Check if the Cog is enabled
+    # Use CORE_COGS attached to the bot instance
+    if cog_name and cog_name not in bot.core_cogs: # Don't disable core cogs
+        # Assuming default is True if not explicitly set in DB
+        is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=True)
+        if not is_enabled:
+            log.warning(f"Command '{command_name}' blocked in guild {guild_id}: Cog '{cog_name}' is disabled.")
+            raise CogDisabledError(cog_name)
+
+    # 2. Check command permissions based on roles
+    # This check only applies if specific permissions HAVE been set for this command.
+    # If no permissions are set in the DB, check_command_permission returns True.
+    has_perm = await settings_manager.check_command_permission(guild_id, command_name, member_roles_ids)
+    if not has_perm:
+        log.warning(f"Command '{command_name}' blocked for user {ctx.author.id} in guild {guild_id}: Insufficient role permissions.")
+        raise CommandPermissionError(command_name)
+
+    # If both checks pass, the command proceeds.
+    log.debug(f"Command '{command_name}' passed global checks for user {ctx.author.id} in guild {guild_id}.")
+
+
+# --- Bot Commands ---
 
 @commands.command(name="restart", help="Restarts the bot. Owner only.")
 @commands.is_owner()
@@ -252,10 +358,13 @@ async def main(args): # Pass parsed args
     else:
         bot.ai_cogs_to_skip = [] # Ensure it exists even if empty
 
+    # Initialize pools before starting the bot logic
+    await settings_manager.initialize_pools()
 
     try:
         async with bot:
             # Load all cogs from the 'cogs' directory, skipping AI if requested
+            # This should now include WelcomeCog and SettingsCog if they are in the cogs dir
             await load_all_cogs(bot, skip_cogs=ai_cogs_to_skip)
 
             # --- Share GurtCog instance with the sync API ---
@@ -297,7 +406,9 @@ async def main(args): # Pass parsed args
     finally:
         # Terminate the Flask server process when the bot stops
         flask_process.terminate()
-        print("Flask server process terminated.")
+        log.info("Flask server process terminated.")
+        # Close database/cache pools
+        await settings_manager.close_pools()
 
 # Run the main async function
 if __name__ == '__main__':
@@ -314,6 +425,7 @@ if __name__ == '__main__':
     try:
         asyncio.run(main(args)) # Pass parsed args to main
     except KeyboardInterrupt:
-        print("Bot stopped by user.")
+        log.info("Bot stopped by user.")
     except Exception as e:
-        print(f"An error occurred running the bot: {e}")
+        log.exception(f"An error occurred running the bot: {e}")
+    # The finally block with pool closing is now correctly inside the main() function

@@ -1,0 +1,496 @@
+import asyncpg
+import redis.asyncio as redis
+import os
+import logging
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
+
+# --- Configuration ---
+POSTGRES_USER = os.getenv("POSTGRES_USER")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST")
+POSTGRES_DB = os.getenv("POSTGRES_SETTINGS_DB") # Use the new settings DB
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = os.getenv("REDIS_PORT", 6379)
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") # Optional
+
+DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}/{POSTGRES_DB}"
+REDIS_URL = f"redis://{':' + REDIS_PASSWORD + '@' if REDIS_PASSWORD else ''}{REDIS_HOST}:{REDIS_PORT}/0" # Use DB 0 for settings cache
+
+# --- Global Connection Pools ---
+pg_pool = None
+redis_pool = None
+
+# --- Logging ---
+log = logging.getLogger(__name__)
+
+# --- Connection Management ---
+async def initialize_pools():
+    """Initializes the PostgreSQL and Redis connection pools."""
+    global pg_pool, redis_pool
+    log.info("Initializing database and cache connection pools...")
+    try:
+        pg_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
+        log.info(f"PostgreSQL pool connected to {POSTGRES_HOST}/{POSTGRES_DB}")
+
+        redis_pool = redis.from_url(REDIS_URL, decode_responses=True)
+        await redis_pool.ping() # Test connection
+        log.info(f"Redis pool connected to {REDIS_HOST}:{REDIS_PORT}")
+
+        await initialize_database() # Ensure tables exist
+    except Exception as e:
+        log.exception(f"Failed to initialize connection pools: {e}")
+        # Depending on bot structure, might want to raise or exit here
+        raise
+
+async def close_pools():
+    """Closes the PostgreSQL and Redis connection pools gracefully."""
+    global pg_pool, redis_pool
+    log.info("Closing database and cache connection pools...")
+    if redis_pool:
+        try:
+            await redis_pool.close()
+            log.info("Redis pool closed.")
+        except Exception as e:
+            log.exception(f"Error closing Redis pool: {e}")
+        redis_pool = None # Ensure it's marked as closed
+
+    if pg_pool:
+        try:
+            await pg_pool.close()
+            log.info("PostgreSQL pool closed.")
+        except Exception as e:
+            log.exception(f"Error closing PostgreSQL pool: {e}")
+        pg_pool = None # Ensure it's marked as closed
+
+
+# --- Database Schema Initialization ---
+async def initialize_database():
+    """Creates necessary tables in the PostgreSQL database if they don't exist."""
+    if not pg_pool:
+        log.error("PostgreSQL pool not initialized. Cannot initialize database.")
+        return
+
+    log.info("Initializing database schema...")
+    async with pg_pool.acquire() as conn:
+        async with conn.transaction():
+            # Guilds table (to track known guilds, maybe store basic info later)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS guilds (
+                    guild_id BIGINT PRIMARY KEY
+                );
+            """)
+
+            # Guild Settings table (key-value store for various settings)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS guild_settings (
+                    guild_id BIGINT NOT NULL,
+                    setting_key TEXT NOT NULL,
+                    setting_value TEXT,
+                    PRIMARY KEY (guild_id, setting_key),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+            # Example setting_keys: 'prefix', 'welcome_channel_id', 'welcome_message', 'goodbye_channel_id', 'goodbye_message'
+
+            # Enabled Cogs table - Stores the explicit enabled/disabled state
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS enabled_cogs (
+                    guild_id BIGINT NOT NULL,
+                    cog_name TEXT NOT NULL,
+                    enabled BOOLEAN NOT NULL,
+                    PRIMARY KEY (guild_id, cog_name),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+
+            # Command Permissions table (simple role-based for now)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS command_permissions (
+                    guild_id BIGINT NOT NULL,
+                    command_name TEXT NOT NULL,
+                    allowed_role_id BIGINT NOT NULL,
+                    PRIMARY KEY (guild_id, command_name, allowed_role_id),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+            # Consider adding indexes later for performance on large tables
+            # await conn.execute("CREATE INDEX IF NOT EXISTS idx_guild_settings_guild ON guild_settings (guild_id);")
+            # await conn.execute("CREATE INDEX IF NOT EXISTS idx_enabled_cogs_guild ON enabled_cogs (guild_id);")
+            # await conn.execute("CREATE INDEX IF NOT EXISTS idx_command_permissions_guild ON command_permissions (guild_id);")
+
+    log.info("Database schema initialization complete.")
+
+
+# --- Helper Functions ---
+def _get_redis_key(guild_id: int, key_type: str, identifier: str = None) -> str:
+    """Generates a standardized Redis key."""
+    if identifier:
+        return f"guild:{guild_id}:{key_type}:{identifier}"
+    return f"guild:{guild_id}:{key_type}"
+
+# --- Settings Access Functions (Placeholders with Cache Logic) ---
+
+async def get_guild_prefix(guild_id: int, default_prefix: str) -> str:
+    """Gets the command prefix for a guild, checking cache first."""
+    if not pg_pool or not redis_pool:
+        log.warning("Pools not initialized, returning default prefix.")
+        return default_prefix
+
+    cache_key = _get_redis_key(guild_id, "prefix")
+    try:
+        cached_prefix = await redis_pool.get(cache_key)
+        if cached_prefix is not None:
+            log.debug(f"Cache hit for prefix (Guild: {guild_id})")
+            return cached_prefix
+    except Exception as e:
+        log.exception(f"Redis error getting prefix for guild {guild_id}: {e}")
+
+    log.debug(f"Cache miss for prefix (Guild: {guild_id})")
+    async with pg_pool.acquire() as conn:
+        prefix = await conn.fetchval(
+            "SELECT setting_value FROM guild_settings WHERE guild_id = $1 AND setting_key = 'prefix'",
+            guild_id
+        )
+
+    final_prefix = prefix if prefix is not None else default_prefix
+
+    # Cache the result (even if it's the default, to avoid future DB lookups)
+    try:
+        await redis_pool.set(cache_key, final_prefix, ex=3600) # Cache for 1 hour
+    except Exception as e:
+        log.exception(f"Redis error setting prefix for guild {guild_id}: {e}")
+
+    return final_prefix
+
+async def set_guild_prefix(guild_id: int, prefix: str):
+    """Sets the command prefix for a guild and updates the cache."""
+    if not pg_pool or not redis_pool:
+        log.error("Pools not initialized, cannot set prefix.")
+        return False # Indicate failure
+
+    cache_key = _get_redis_key(guild_id, "prefix")
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            # Upsert the setting
+            await conn.execute(
+                """
+                INSERT INTO guild_settings (guild_id, setting_key, setting_value)
+                VALUES ($1, 'prefix', $2)
+                ON CONFLICT (guild_id, setting_key) DO UPDATE SET setting_value = $2;
+                """,
+                guild_id, prefix
+            )
+
+        # Update cache
+        await redis_pool.set(cache_key, prefix, ex=3600) # Cache for 1 hour
+        log.info(f"Set prefix for guild {guild_id} to '{prefix}'")
+        return True # Indicate success
+    except Exception as e:
+        log.exception(f"Database or Redis error setting prefix for guild {guild_id}: {e}")
+        # Attempt to invalidate cache on error to prevent stale data
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+            log.exception(f"Failed to invalidate Redis cache for prefix (Guild: {guild_id}): {redis_err}")
+        return False # Indicate failure
+
+# --- Generic Settings Functions ---
+
+async def get_setting(guild_id: int, key: str, default=None):
+    """Gets a specific setting for a guild, checking cache first."""
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, returning default for setting '{key}'.")
+        return default
+
+    cache_key = _get_redis_key(guild_id, "setting", key)
+    try:
+        cached_value = await redis_pool.get(cache_key)
+        if cached_value is not None:
+            # Note: Redis stores everything as strings. Consider type conversion if needed.
+            log.debug(f"Cache hit for setting '{key}' (Guild: {guild_id})")
+            return cached_value
+    except Exception as e:
+        log.exception(f"Redis error getting setting '{key}' for guild {guild_id}: {e}")
+
+    log.debug(f"Cache miss for setting '{key}' (Guild: {guild_id})")
+    async with pg_pool.acquire() as conn:
+        value = await conn.fetchval(
+            "SELECT setting_value FROM guild_settings WHERE guild_id = $1 AND setting_key = $2",
+            guild_id, key
+        )
+
+    final_value = value if value is not None else default
+
+    # Cache the result (even if None or default, cache the absence or default value)
+    # Store None as a special marker, e.g., "None" string, or handle appropriately
+    value_to_cache = final_value if final_value is not None else "__NONE__" # Marker for None
+    try:
+        await redis_pool.set(cache_key, value_to_cache, ex=3600) # Cache for 1 hour
+    except Exception as e:
+        log.exception(f"Redis error setting cache for setting '{key}' for guild {guild_id}: {e}")
+
+    return final_value
+
+
+async def set_setting(guild_id: int, key: str, value: str | None):
+    """Sets a specific setting for a guild and updates/invalidates the cache.
+       Setting value to None effectively deletes the setting."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot set setting '{key}'.")
+        return False
+
+    cache_key = _get_redis_key(guild_id, "setting", key)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+
+            if value is not None:
+                # Upsert the setting
+                await conn.execute(
+                    """
+                    INSERT INTO guild_settings (guild_id, setting_key, setting_value)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (guild_id, setting_key) DO UPDATE SET setting_value = $3;
+                    """,
+                    guild_id, key, str(value) # Ensure value is string
+                )
+                # Update cache
+                await redis_pool.set(cache_key, str(value), ex=3600)
+                log.info(f"Set setting '{key}' for guild {guild_id}")
+            else:
+                # Delete the setting if value is None
+                await conn.execute(
+                    "DELETE FROM guild_settings WHERE guild_id = $1 AND setting_key = $2",
+                    guild_id, key
+                )
+                # Invalidate cache
+                await redis_pool.delete(cache_key)
+                log.info(f"Deleted setting '{key}' for guild {guild_id}")
+
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error setting setting '{key}' for guild {guild_id}: {e}")
+        # Attempt to invalidate cache on error
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+            log.exception(f"Failed to invalidate Redis cache for setting '{key}' (Guild: {guild_id}): {redis_err}")
+        return False
+
+# --- Cog Enablement Functions ---
+
+async def is_cog_enabled(guild_id: int, cog_name: str, default_enabled: bool = True) -> bool:
+    """Checks if a cog is enabled for a guild, checking cache first.
+       Uses default_enabled if no specific setting is found."""
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, returning default for cog '{cog_name}'.")
+        return default_enabled
+
+    cache_key = _get_redis_key(guild_id, "cog_enabled", cog_name)
+    try:
+        cached_value = await redis_pool.get(cache_key)
+        if cached_value is not None:
+            log.debug(f"Cache hit for cog enabled status '{cog_name}' (Guild: {guild_id})")
+            return cached_value == "True" # Redis stores strings
+    except Exception as e:
+        log.exception(f"Redis error getting cog enabled status for '{cog_name}' (Guild: {guild_id}): {e}")
+
+    log.debug(f"Cache miss for cog enabled status '{cog_name}' (Guild: {guild_id})")
+    db_enabled_status = None
+    try:
+        async with pg_pool.acquire() as conn:
+            db_enabled_status = await conn.fetchval(
+                "SELECT enabled FROM enabled_cogs WHERE guild_id = $1 AND cog_name = $2",
+                guild_id, cog_name
+            )
+    except Exception as e:
+        log.exception(f"Database error getting cog enabled status for '{cog_name}' (Guild: {guild_id}): {e}")
+        # Fallback to default on DB error after cache miss
+        return default_enabled
+
+    final_status = db_enabled_status if db_enabled_status is not None else default_enabled
+
+    # Cache the result (True or False)
+    try:
+        await redis_pool.set(cache_key, str(final_status), ex=3600) # Cache for 1 hour
+    except Exception as e:
+        log.exception(f"Redis error setting cache for cog enabled status '{cog_name}' (Guild: {guild_id}): {e}")
+
+    return final_status
+
+
+async def set_cog_enabled(guild_id: int, cog_name: str, enabled: bool):
+    """Sets the enabled status for a cog in a guild and updates the cache."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot set cog enabled status for '{cog_name}'.")
+        return False
+
+    cache_key = _get_redis_key(guild_id, "cog_enabled", cog_name)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            # Upsert the enabled status
+            await conn.execute(
+                """
+                INSERT INTO enabled_cogs (guild_id, cog_name, enabled)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (guild_id, cog_name) DO UPDATE SET enabled = $3;
+                """,
+                guild_id, cog_name, enabled
+            )
+
+        # Update cache
+        await redis_pool.set(cache_key, str(enabled), ex=3600)
+        log.info(f"Set cog '{cog_name}' enabled status to {enabled} for guild {guild_id}")
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error setting cog enabled status for '{cog_name}' in guild {guild_id}: {e}")
+        # Attempt to invalidate cache on error
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+             log.exception(f"Failed to invalidate Redis cache for cog enabled status '{cog_name}' (Guild: {guild_id}): {redis_err}")
+        return False
+
+# --- Command Permission Functions ---
+
+async def add_command_permission(guild_id: int, command_name: str, role_id: int) -> bool:
+    """Adds permission for a role to use a command and invalidates cache."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot add permission for command '{command_name}'.")
+        return False
+
+    cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            # Add the permission rule
+            await conn.execute(
+                """
+                INSERT INTO command_permissions (guild_id, command_name, allowed_role_id)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (guild_id, command_name, allowed_role_id) DO NOTHING;
+                """,
+                guild_id, command_name, role_id
+            )
+
+        # Invalidate cache after DB operation succeeds
+        await redis_pool.delete(cache_key)
+        log.info(f"Added permission for role {role_id} to use command '{command_name}' in guild {guild_id}")
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error adding permission for command '{command_name}' in guild {guild_id}: {e}")
+        # Attempt to invalidate cache even on error
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+             log.exception(f"Failed to invalidate Redis cache for command permissions '{command_name}' (Guild: {guild_id}): {redis_err}")
+        return False
+
+
+async def remove_command_permission(guild_id: int, command_name: str, role_id: int) -> bool:
+    """Removes permission for a role to use a command and invalidates cache."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot remove permission for command '{command_name}'.")
+        return False
+
+    cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists (though unlikely to be needed for delete)
+            # await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            # Remove the permission rule
+            await conn.execute(
+                """
+                DELETE FROM command_permissions
+                WHERE guild_id = $1 AND command_name = $2 AND allowed_role_id = $3;
+                """,
+                guild_id, command_name, role_id
+            )
+
+        # Invalidate cache after DB operation succeeds
+        await redis_pool.delete(cache_key)
+        log.info(f"Removed permission for role {role_id} to use command '{command_name}' in guild {guild_id}")
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error removing permission for command '{command_name}' in guild {guild_id}: {e}")
+        # Attempt to invalidate cache even on error
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+             log.exception(f"Failed to invalidate Redis cache for command permissions '{command_name}' (Guild: {guild_id}): {redis_err}")
+        return False
+
+
+async def check_command_permission(guild_id: int, command_name: str, member_roles_ids: list[int]) -> bool:
+    """Checks if any of the member's roles have permission for the command.
+       Returns True if allowed, False otherwise.
+       If no permissions are set for the command in the DB, it defaults to allowed by this check.
+    """
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, defaulting to allowed for command '{command_name}'.")
+        return True # Default to allowed if system isn't ready
+
+    cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
+    allowed_role_ids_str = set()
+
+    try:
+        # Check cache first - stores a set of allowed role IDs as strings
+        if await redis_pool.exists(cache_key):
+            cached_roles = await redis_pool.smembers(cache_key)
+            # Handle the empty set marker
+            if cached_roles == {"__EMPTY_SET__"}:
+                 log.debug(f"Cache hit (empty set) for cmd perms '{command_name}' (Guild: {guild_id}). Command allowed by default.")
+                 return True # No specific restrictions found
+            allowed_role_ids_str = cached_roles
+            log.debug(f"Cache hit for cmd perms '{command_name}' (Guild: {guild_id})")
+        else:
+            # Cache miss - fetch from DB
+            log.debug(f"Cache miss for cmd perms '{command_name}' (Guild: {guild_id})")
+            async with pg_pool.acquire() as conn:
+                records = await conn.fetch(
+                    "SELECT allowed_role_id FROM command_permissions WHERE guild_id = $1 AND command_name = $2",
+                    guild_id, command_name
+                )
+            # Convert fetched role IDs (BIGINT) to strings for Redis set
+            allowed_role_ids_str = {str(record['allowed_role_id']) for record in records}
+
+            # Cache the result (even if empty)
+            try:
+                async with redis_pool.pipeline(transaction=True) as pipe:
+                    pipe.delete(cache_key) # Ensure clean state
+                    if allowed_role_ids_str:
+                        pipe.sadd(cache_key, *allowed_role_ids_str)
+                    else:
+                        pipe.sadd(cache_key, "__EMPTY_SET__") # Marker for empty set
+                    pipe.expire(cache_key, 3600) # Cache for 1 hour
+                    await pipe.execute()
+            except Exception as e:
+                log.exception(f"Redis error setting cache for cmd perms '{command_name}' (Guild: {guild_id}): {e}")
+
+    except Exception as e:
+        log.exception(f"Error checking command permission for '{command_name}' (Guild: {guild_id}): {e}")
+        return True # Default to allowed on error
+
+    # --- Permission Check Logic ---
+    if not allowed_role_ids_str or allowed_role_ids_str == {"__EMPTY_SET__"}:
+        # If no permissions are defined in our system for this command, allow it.
+        # Other checks (like @commands.is_owner()) might still apply.
+        return True
+    else:
+        # Check if any of the member's roles intersect with the allowed roles
+        member_roles_ids_str = {str(role_id) for role_id in member_roles_ids}
+        if member_roles_ids_str.intersection(allowed_role_ids_str):
+            log.debug(f"Permission granted for '{command_name}' (Guild: {guild_id}) via role intersection.")
+            return True # Member has at least one allowed role
+        else:
+            log.debug(f"Permission denied for '{command_name}' (Guild: {guild_id}). Member roles {member_roles_ids_str} not in allowed roles {allowed_role_ids_str}.")
+            return False # Member has none of the specifically allowed roles
