@@ -1,6 +1,7 @@
 import discord
 from discord import ui # Added for views/buttons
 from discord.ext import commands, tasks
+from discord import app_commands
 import asyncio
 import yt_dlp as youtube_dl
 import logging
@@ -28,7 +29,7 @@ YDL_OPTS_BASE = {
     'default_search': 'ytsearch', # Default to YouTube search
     'source_address': '0.0.0.0', # Bind to all IPs for better connectivity
     'cookiefile': 'cookies.txt'
-    
+
 }
 
 FFMPEG_OPTIONS = {
@@ -59,13 +60,42 @@ class Song:
         else:
             return f"{minutes:02d}:{seconds:02d}"
 
-class AudioCog(commands.Cog):
+class AudioCog(commands.Cog, name="Audio"):
+    """Cog for audio playback commands"""
+
     def __init__(self, bot):
         self.bot = bot
         self.queues = {} # Dictionary to hold queues per guild {guild_id: deque()}
         self.current_song = {} # Dictionary for current song per guild {guild_id: Song}
         self.voice_clients = {} # Dictionary for voice clients per guild {guild_id: discord.VoiceClient}
-        self.play_next_song.start() # Start the background task
+
+        # Create the main command group for this cog
+        self.audio_group = app_commands.Group(
+            name="audio",
+            description="Audio playback commands"
+        )
+
+        # Create subgroups
+        self.playback_group = app_commands.Group(
+            name="playback",
+            description="Playback control commands",
+            parent=self.audio_group
+        )
+
+        self.queue_group = app_commands.Group(
+            name="queue",
+            description="Queue management commands",
+            parent=self.audio_group
+        )
+
+        # Register commands
+        self.register_commands()
+
+        # Add command groups to the bot's tree
+        self.bot.tree.add_command(self.audio_group)
+
+        # Start the background task
+        self.play_next_song.start()
 
     def get_queue(self, guild_id):
         """Gets the queue for a guild, creating it if it doesn't exist."""
@@ -87,6 +117,102 @@ class AudioCog(commands.Cog):
                  # Use asyncio.create_task for fire-and-forget disconnect
                  asyncio.create_task(vc.disconnect(force=True))
             log.info(f"Cleaned up resources for guild {guild_id}")
+
+    def register_commands(self):
+        """Register all commands for this cog"""
+
+        # --- Playback Group Commands ---
+        # Play command
+        play_command = app_commands.Command(
+            name="play",
+            description="Play a song or add it to the queue",
+            callback=self.audio_play_callback,
+            parent=self.playback_group
+        )
+        self.playback_group.add_command(play_command)
+
+        # Pause command
+        pause_command = app_commands.Command(
+            name="pause",
+            description="Pause the current playback",
+            callback=self.audio_pause_callback,
+            parent=self.playback_group
+        )
+        self.playback_group.add_command(pause_command)
+
+        # Resume command
+        resume_command = app_commands.Command(
+            name="resume",
+            description="Resume paused playback",
+            callback=self.audio_resume_callback,
+            parent=self.playback_group
+        )
+        self.playback_group.add_command(resume_command)
+
+        # Skip command
+        skip_command = app_commands.Command(
+            name="skip",
+            description="Skip the current song",
+            callback=self.audio_skip_callback,
+            parent=self.playback_group
+        )
+        self.playback_group.add_command(skip_command)
+
+        # Stop command
+        stop_command = app_commands.Command(
+            name="stop",
+            description="Stop playback and clear the queue",
+            callback=self.audio_stop_callback,
+            parent=self.playback_group
+        )
+        self.playback_group.add_command(stop_command)
+
+        # --- Queue Group Commands ---
+        # List command
+        list_command = app_commands.Command(
+            name="list",
+            description="Display the current song queue",
+            callback=self.audio_queue_list_callback,
+            parent=self.queue_group
+        )
+        self.queue_group.add_command(list_command)
+
+        # Clear command
+        clear_command = app_commands.Command(
+            name="clear",
+            description="Clear the song queue",
+            callback=self.audio_queue_clear_callback,
+            parent=self.queue_group
+        )
+        self.queue_group.add_command(clear_command)
+
+        # --- Main Audio Group Commands ---
+        # Join command
+        join_command = app_commands.Command(
+            name="join",
+            description="Join your voice channel",
+            callback=self.audio_join_callback,
+            parent=self.audio_group
+        )
+        self.audio_group.add_command(join_command)
+
+        # Leave command
+        leave_command = app_commands.Command(
+            name="leave",
+            description="Leave the voice channel",
+            callback=self.audio_leave_callback,
+            parent=self.audio_group
+        )
+        self.audio_group.add_command(leave_command)
+
+        # Search command
+        search_command = app_commands.Command(
+            name="search",
+            description="Search for songs on YouTube",
+            callback=self.audio_search_callback,
+            parent=self.audio_group
+        )
+        self.audio_group.add_command(search_command)
 
     async def cog_unload(self):
         """Cog unload cleanup."""
@@ -225,7 +351,7 @@ class AudioCog(commands.Cog):
     async def _ensure_voice_connection(self, ctx_or_interaction):
         """Ensures the bot is connected to the user's voice channel. Accepts Context or Interaction."""
         is_interaction = isinstance(ctx_or_interaction, discord.Interaction)
-        
+
         if is_interaction:
             guild = ctx_or_interaction.guild
             author = ctx_or_interaction.user
@@ -264,7 +390,325 @@ class AudioCog(commands.Cog):
 
         return vc
 
-    # --- Commands ---
+    # --- Command Callbacks ---
+
+    # Audio group callbacks
+    async def audio_join_callback(self, interaction: discord.Interaction):
+        """Callback for /audio join command"""
+        try:
+            await self._ensure_voice_connection(interaction)
+            await interaction.response.send_message(f"Connected to **{interaction.user.voice.channel.name}**.")
+        except commands.CommandError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
+        except Exception as e:
+            log.error(f"Error in join command: {e}")
+            await interaction.response.send_message("An unexpected error occurred while trying to join.", ephemeral=True)
+
+    async def audio_leave_callback(self, interaction: discord.Interaction):
+        """Callback for /audio leave command"""
+        vc = self.voice_clients.get(interaction.guild.id)
+        if not vc or not vc.is_connected():
+            await interaction.response.send_message("I am not connected to a voice channel.", ephemeral=True)
+            return
+
+        log.info(f"Disconnecting from voice channel in guild {interaction.guild.id}")
+        await interaction.response.send_message(f"Disconnecting from **{vc.channel.name}**.")
+        self.cleanup(interaction.guild.id) # This handles the disconnect and queue clearing
+
+    async def audio_search_callback(self, interaction: discord.Interaction, query: str, max_results: int = 10):
+        """Callback for /audio search command"""
+        # Defer the response since search might take time
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            # Perform the search
+            results = await self._search_youtube(query, max_results)
+
+            if not results:
+                await interaction.followup.send("No results found for your search query.", ephemeral=True)
+                return
+
+            # Create a formatted list of results
+            result_list = []
+            for i, result in enumerate(results):
+                title = result.get('title', 'Unknown Title')
+                duration = result.get('duration')
+                duration_str = "N/A"
+                if duration:
+                    minutes, seconds = divmod(duration, 60)
+                    hours, minutes = divmod(minutes, 60)
+                    if hours > 0:
+                        duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                    else:
+                        duration_str = f"{minutes:02d}:{seconds:02d}"
+
+                result_list.append(f"**{i+1}.** {title} ({duration_str})")
+
+            # Create an embed with the results
+            embed = discord.Embed(
+                title=f"Search Results for '{query}'",
+                description="\n".join(result_list),
+                color=discord.Color.blue()
+            )
+
+            # Create a view with buttons to select a result
+            view = SearchResultsView(self, interaction.user, results)
+
+            # Send the results
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+        except Exception as e:
+            log.error(f"Error in search command: {e}")
+            await interaction.followup.send(f"An error occurred while searching: {e}", ephemeral=True)
+
+    # Playback group callbacks
+    async def audio_play_callback(self, interaction: discord.Interaction, query: str):
+        """Callback for /audio playback play command"""
+        # Defer the response since this might take time
+        await interaction.response.defer()
+
+        try:
+            vc = await self._ensure_voice_connection(interaction)
+        except commands.CommandError as e:
+            await interaction.followup.send(str(e), ephemeral=True)
+            return
+        except Exception as e:
+            log.error(f"Error ensuring voice connection in play command: {e}")
+            await interaction.followup.send("An unexpected error occurred before playing.", ephemeral=True)
+            return
+
+        queue = self.get_queue(interaction.guild.id)
+        songs_added = 0
+        playlist_title = None
+        song_to_announce = None # Store the single song if added
+
+        try:
+            # info now contains full data for playlist or single video
+            info, is_playlist, is_search = await self._extract_info(query)
+
+            if not info:
+                await interaction.followup.send("Could not find anything matching your query.", ephemeral=True)
+                return
+
+            if is_playlist:
+                playlist_title = info.get('title', 'Unnamed Playlist')
+                log.info(f"Adding playlist '{playlist_title}' to queue for guild {interaction.guild.id}")
+                entries = info.get('entries', []) # Should contain full entry info now
+
+                if not entries:
+                    await interaction.followup.send(f"Playlist '{playlist_title}' seems to be empty or could not be loaded.", ephemeral=True)
+                    return
+
+                for entry in entries:
+                    if not entry: continue
+                    # Extract stream URL directly from the entry info
+                    stream_url = entry.get('url') # yt-dlp often provides the best stream URL here
+                    if not stream_url: # Fallback to formats if needed
+                        formats = entry.get('formats', [])
+                        for f in formats:
+                            # Prioritize opus or known good audio codecs
+                            if f.get('url') and f.get('acodec') != 'none' and (f.get('vcodec') == 'none' or f.get('acodec') == 'opus'):
+                                stream_url = f['url']
+                                break
+                        # Last resort fallback if still no URL
+                        if not stream_url and formats:
+                             for f in formats:
+                                 if f.get('url') and f.get('acodec') != 'none':
+                                     stream_url = f['url']
+                                     break
+
+                    if not stream_url:
+                        log.warning(f"Could not find playable stream URL for playlist entry: {entry.get('title', entry.get('id'))}")
+                        await interaction.followup.send(f"⚠️ Could not get audio for '{entry.get('title', 'an item')}' from playlist.", ephemeral=True)
+                        continue
+
+                    try:
+                        song = Song(
+                            source_url=stream_url,
+                            title=entry.get('title', 'Unknown Title'),
+                            webpage_url=entry.get('webpage_url', entry.get('original_url')), # Use original_url as fallback
+                            duration=entry.get('duration'),
+                            requested_by=interaction.user
+                        )
+                        queue.append(song)
+                        songs_added += 1
+                    except Exception as song_e:
+                         log.error(f"Error creating Song object for entry {entry.get('title', entry.get('id'))}: {song_e}")
+                         await interaction.followup.send(f"⚠️ Error processing metadata for '{entry.get('title', 'an item')}' from playlist.", ephemeral=True)
+
+            else: # Single video or search result
+                # 'info' should be the dictionary for the single video here
+                stream_url = info.get('url')
+                if not stream_url: # Fallback if 'url' isn't top-level
+                     formats = info.get('formats', [])
+                     for f in formats:
+                         # Prioritize opus or known good audio codecs
+                         if f.get('url') and f.get('acodec') != 'none' and (f.get('vcodec') == 'none' or f.get('acodec') == 'opus'):
+                             stream_url = f['url']
+                             break
+                     # Last resort fallback if still no URL
+                     if not stream_url and formats:
+                          for f in formats:
+                              if f.get('url') and f.get('acodec') != 'none':
+                                  stream_url = f['url']
+                                  break
+                if not stream_url:
+                     await interaction.followup.send("Could not extract a playable audio stream for the video.", ephemeral=True)
+                     return
+
+                song = Song(
+                    source_url=stream_url,
+                    title=info.get('title', 'Unknown Title'),
+                    webpage_url=info.get('webpage_url'),
+                    duration=info.get('duration'),
+                    requested_by=interaction.user
+                )
+                queue.append(song)
+                songs_added = 1
+                song_to_announce = song # Store for announcement
+                log.info(f"Added song '{song.title}' to queue for guild {interaction.guild.id}")
+
+        except commands.CommandError as e:
+            await interaction.followup.send(str(e), ephemeral=True)
+            return
+        except Exception as e:
+            log.exception(f"Error during song processing in play command: {e}") # Log full traceback
+            await interaction.followup.send("An unexpected error occurred while processing your request.", ephemeral=True)
+            return
+
+        # --- Send confirmation message ---
+        if songs_added > 0:
+            if is_playlist:
+                await interaction.followup.send(f"✅ Added **{songs_added}** songs from playlist **'{playlist_title}'** to the queue.")
+            elif song_to_announce: # Check if a single song was added
+                # For single adds, show position if queue was not empty before adding
+                queue_pos = len(queue) # Position is the current length (after adding)
+                if vc.is_playing() or vc.is_paused() or queue_pos > 1: # If something playing or queue had items before this add
+                     await interaction.followup.send(f"✅ Added **{song_to_announce.title}** to the queue (position #{queue_pos}).")
+                else:
+                     # If nothing was playing and queue was empty, this song will play next
+                     # The loop will handle the "Now Playing" implicitly, so just confirm add
+                     await interaction.followup.send(f"✅ Added **{song_to_announce.title}** to the queue.")
+                     # No need to explicitly start playback here, the loop handles it.
+        else:
+             # This case might happen if playlist extraction failed for all entries or search failed
+             if not is_playlist and is_search:
+                 # If it was a search and nothing was added, the earlier message handles it
+                 pass # Already sent "Could not find anything..."
+             else:
+                 await interaction.followup.send("Could not add any songs from the provided source.", ephemeral=True)
+
+    async def audio_pause_callback(self, interaction: discord.Interaction):
+        """Callback for /audio playback pause command"""
+        vc = self.voice_clients.get(interaction.guild.id)
+        if not vc or not vc.is_playing():
+            await interaction.response.send_message("I am not playing anything right now.", ephemeral=True)
+            return
+        if vc.is_paused():
+            await interaction.response.send_message("Playback is already paused.", ephemeral=True)
+            return
+
+        vc.pause()
+        await interaction.response.send_message("⏸️ Playback paused.")
+        log.info(f"Playback paused in guild {interaction.guild.id}")
+
+    async def audio_resume_callback(self, interaction: discord.Interaction):
+        """Callback for /audio playback resume command"""
+        vc = self.voice_clients.get(interaction.guild.id)
+        if not vc or not vc.is_connected():
+            await interaction.response.send_message("I am not connected to a voice channel.", ephemeral=True)
+            return
+        if not vc.is_paused():
+            await interaction.response.send_message("Playback is not paused.", ephemeral=True)
+            return
+
+        vc.resume()
+        await interaction.response.send_message("▶️ Playback resumed.")
+        log.info(f"Playback resumed in guild {interaction.guild.id}")
+
+    async def audio_skip_callback(self, interaction: discord.Interaction):
+        """Callback for /audio playback skip command"""
+        vc = self.voice_clients.get(interaction.guild.id)
+        if not vc or not vc.is_playing():
+            await interaction.response.send_message("I am not playing anything to skip.", ephemeral=True)
+            return
+
+        current = self.get_current_song(interaction.guild.id)
+        await interaction.response.send_message(f"⏭️ Skipping **{current.title if current else 'the current song'}**...")
+        vc.stop() # Triggers the 'after' callback, which lets the loop play the next song
+        log.info(f"Song skipped in guild {interaction.guild.id} by {interaction.user}")
+        # The loop will handle playing the next song
+
+    async def audio_stop_callback(self, interaction: discord.Interaction):
+        """Callback for /audio playback stop command"""
+        vc = self.voice_clients.get(interaction.guild.id)
+        if not vc or not vc.is_connected():
+            await interaction.response.send_message("I am not connected to a voice channel.", ephemeral=True)
+            return
+
+        queue = self.get_queue(interaction.guild.id)
+        queue.clear()
+        self.current_song[interaction.guild.id] = None # Clear current song immediately
+
+        if vc.is_playing() or vc.is_paused():
+            vc.stop() # Stop playback
+            await interaction.response.send_message("⏹️ Playback stopped and queue cleared.")
+            log.info(f"Playback stopped and queue cleared in guild {interaction.guild.id} by {interaction.user}")
+        else:
+             await interaction.response.send_message("⏹️ Queue cleared.") # If nothing was playing, just confirm queue clear
+             log.info(f"Queue cleared in guild {interaction.guild.id} by {interaction.user} (nothing was playing).")
+
+    # Queue group callbacks
+    async def audio_queue_list_callback(self, interaction: discord.Interaction):
+        """Callback for /audio queue list command"""
+        queue = self.get_queue(interaction.guild.id)
+        current = self.get_current_song(interaction.guild.id)
+
+        if not queue and not current:
+            await interaction.response.send_message("The queue is empty and nothing is playing.", ephemeral=True)
+            return
+
+        # Create an embed for the queue
+        embed = discord.Embed(
+            title="Music Queue",
+            color=discord.Color.blue()
+        )
+
+        # Add the current song
+        if current:
+            embed.add_field(
+                name="Now Playing",
+                value=f"{current} - Requested by {current.requested_by.mention}",
+                inline=False
+            )
+
+        # Add the queue
+        if queue:
+            queue_text = ""
+            for i, song in enumerate(queue):
+                queue_text += f"**{i+1}.** {song} - Requested by {song.requested_by.mention}\n"
+
+            embed.add_field(
+                name="Queue",
+                value=queue_text if queue_text else "The queue is empty.",
+                inline=False
+            )
+
+        await interaction.response.send_message(embed=embed)
+
+    async def audio_queue_clear_callback(self, interaction: discord.Interaction):
+        """Callback for /audio queue clear command"""
+        queue = self.get_queue(interaction.guild.id)
+
+        if not queue:
+            await interaction.response.send_message("The queue is already empty.", ephemeral=True)
+            return
+
+        queue.clear()
+        await interaction.response.send_message("✅ Queue cleared.")
+        log.info(f"Queue cleared in guild {interaction.guild.id} by {interaction.user}")
+
+    # --- Legacy Commands ---
 
     @commands.command(name="join", aliases=['connect'])
     async def join(self, ctx: commands.Context):
@@ -616,7 +1060,12 @@ class AudioCog(commands.Cog):
             # pass # Let global handler take care of it unless specific handling is needed
 
 async def setup(bot):
-    await bot.add_cog(AudioCog(bot))
+    """Set up the AudioCog with the bot."""
+    print("Setting up AudioCog...")
+    cog = AudioCog(bot)
+    await bot.add_cog(cog)
+    print(f"AudioCog setup complete with command groups: {[cmd.name for cmd in bot.tree.get_commands() if cmd.name == 'audio']}")
+    print(f"Available subgroups: {[group.name for group in cog.audio_group.walk_commands() if isinstance(group, app_commands.Group)]}")
     log.info("AudioCog loaded successfully.")
 
 # --- Paginated Search Result View ---
@@ -694,7 +1143,7 @@ class PaginatedSearchResultView(ui.View):
                 value=f"[{uploader}]({url}) | `{duration_fmt}`",
                 inline=False
             )
-        
+
         embed.set_footer(text=f"Showing results {start_index + 1}-{end_index} of {len(self.results)}")
         return embed
 

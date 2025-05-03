@@ -14,7 +14,7 @@ import ast
 
 # Import game implementations from separate files
 from .games.chess_game import (
-    generate_board_image, MoveInputModal, ChessView, ChessBotView, 
+    generate_board_image, MoveInputModal, ChessView, ChessBotView,
     get_stockfish_path
 )
 from .games.coinflip_game import CoinFlipView
@@ -22,12 +22,45 @@ from .games.tictactoe_game import TicTacToeView, BotTicTacToeView
 from .games.rps_game import RockPaperScissorsView
 from .games.basic_games import roll_dice, flip_coin, magic8ball_response, play_hangman
 
-class GamesCog(commands.Cog):
+class GamesCog(commands.Cog, name="Games"):
+    """Cog for game-related commands"""
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         # Store active bot game views to manage engine resources
         self.active_chess_bot_views = {} # Store by message ID
         self.ttt_games = {} # Store TicTacToe game instances by user ID
+
+        # Create the main command group for this cog
+        self.games_group = app_commands.Group(
+            name="games",
+            description="Play various games with the bot or other users"
+        )
+
+        # Create subgroups
+        self.chess_group = app_commands.Group(
+            name="chess",
+            description="Chess-related commands",
+            parent=self.games_group
+        )
+
+        self.tictactoe_group = app_commands.Group(
+            name="tictactoe",
+            description="Tic-tac-toe game commands",
+            parent=self.games_group
+        )
+
+        self.dice_group = app_commands.Group(
+            name="dice",
+            description="Dice and coin games",
+            parent=self.games_group
+        )
+
+        # Register commands
+        self.register_commands()
+
+        # Add command groups to the bot's tree
+        self.bot.tree.add_command(self.games_group)
 
     def _array_to_fen(self, board_array: List[List[str]], turn: chess.Color) -> str:
         """Converts an 8x8 array representation to a basic FEN string."""
@@ -55,6 +88,121 @@ class GamesCog(commands.Cog):
         fen = f"{piece_placement} {turn_char} - - 0 1"
         return fen
 
+    def register_commands(self):
+        """Register all commands for this cog"""
+
+        # --- Dice Group Commands ---
+        # Coinflip command
+        coinflip_command = app_commands.Command(
+            name="coinflip",
+            description="Flip a coin and get Heads or Tails",
+            callback=self.games_coinflip_callback,
+            parent=self.dice_group
+        )
+        self.dice_group.add_command(coinflip_command)
+
+        # Roll command
+        roll_command = app_commands.Command(
+            name="roll",
+            description="Roll a dice and get a number between 1 and 6",
+            callback=self.games_roll_callback,
+            parent=self.dice_group
+        )
+        self.dice_group.add_command(roll_command)
+
+        # Magic 8-ball command
+        magic8ball_command = app_commands.Command(
+            name="magic8ball",
+            description="Ask the magic 8 ball a question",
+            callback=self.games_magic8ball_callback,
+            parent=self.dice_group
+        )
+        self.dice_group.add_command(magic8ball_command)
+
+        # --- Main Games Group Commands ---
+        # RPS command
+        rps_command = app_commands.Command(
+            name="rps",
+            description="Play Rock-Paper-Scissors against the bot",
+            callback=self.games_rps_callback,
+            parent=self.games_group
+        )
+        self.games_group.add_command(rps_command)
+
+        # RPS Challenge command
+        rpschallenge_command = app_commands.Command(
+            name="rpschallenge",
+            description="Challenge another user to a game of Rock-Paper-Scissors",
+            callback=self.games_rpschallenge_callback,
+            parent=self.games_group
+        )
+        self.games_group.add_command(rpschallenge_command)
+
+        # Guess command
+        guess_command = app_commands.Command(
+            name="guess",
+            description="Guess the number I'm thinking of (1-100)",
+            callback=self.games_guess_callback,
+            parent=self.games_group
+        )
+        self.games_group.add_command(guess_command)
+
+        # Hangman command
+        hangman_command = app_commands.Command(
+            name="hangman",
+            description="Play a game of Hangman",
+            callback=self.games_hangman_callback,
+            parent=self.games_group
+        )
+        self.games_group.add_command(hangman_command)
+
+        # --- TicTacToe Group Commands ---
+        # TicTacToe command
+        tictactoe_command = app_commands.Command(
+            name="play",
+            description="Challenge another user to a game of Tic-Tac-Toe",
+            callback=self.games_tictactoe_callback,
+            parent=self.tictactoe_group
+        )
+        self.tictactoe_group.add_command(tictactoe_command)
+
+        # TicTacToe Bot command
+        tictactoebot_command = app_commands.Command(
+            name="bot",
+            description="Play a game of Tic-Tac-Toe against the bot",
+            callback=self.games_tictactoebot_callback,
+            parent=self.tictactoe_group
+        )
+        self.tictactoe_group.add_command(tictactoebot_command)
+
+        # --- Chess Group Commands ---
+        # Chess command
+        chess_command = app_commands.Command(
+            name="play",
+            description="Challenge another user to a game of chess",
+            callback=self.games_chess_callback,
+            parent=self.chess_group
+        )
+        self.chess_group.add_command(chess_command)
+
+        # Chess Bot command
+        chessbot_command = app_commands.Command(
+            name="bot",
+            description="Play chess against the bot",
+            callback=self.games_chessbot_callback,
+            parent=self.chess_group
+        )
+        self.chess_group.add_command(chessbot_command)
+
+        # Load Chess command
+        loadchess_command = app_commands.Command(
+            name="load",
+            description="Load a chess game from FEN, PGN, or array representation",
+            callback=self.games_loadchess_callback,
+            parent=self.chess_group
+        )
+        self.chess_group.add_command(loadchess_command)
+
     async def cog_unload(self):
         """Clean up resources when the cog is unloaded."""
         print("Unloading GamesCog, closing active chess engines...")
@@ -66,6 +214,354 @@ class GamesCog(commands.Cog):
         self.active_chess_bot_views.clear()
         print("GamesCog unloaded.")
 
+    # --- Command Callbacks ---
+    # Dice group callbacks
+    async def games_coinflip_callback(self, interaction: discord.Interaction):
+        """Callback for /games dice coinflip command"""
+        result = flip_coin()
+        await interaction.response.send_message(f"The coin landed on **{result}**! 🪙")
+
+    async def games_roll_callback(self, interaction: discord.Interaction):
+        """Callback for /games dice roll command"""
+        result = roll_dice()
+        await interaction.response.send_message(f"You rolled a **{result}**! 🎲")
+
+    async def games_magic8ball_callback(self, interaction: discord.Interaction, question: str = None):
+        """Callback for /games dice magic8ball command"""
+        response = magic8ball_response()
+        await interaction.response.send_message(f"🎱 {response}")
+
+    # Games group callbacks
+    async def games_rps_callback(self, interaction: discord.Interaction, choice: app_commands.Choice[str]):
+        """Callback for /games rps command"""
+        choices = ["Rock", "Paper", "Scissors"]
+        bot_choice = random.choice(choices)
+        user_choice = choice.value # Get value from choice
+
+        if user_choice == bot_choice:
+            result = "It's a tie!"
+        elif (user_choice == "Rock" and bot_choice == "Scissors") or \
+             (user_choice == "Paper" and bot_choice == "Rock") or \
+             (user_choice == "Scissors" and bot_choice == "Paper"):
+            result = "You win! 🎉"
+        else:
+            result = "You lose! 😢"
+
+        emojis = {
+            "Rock": "🪨",
+            "Paper": "📄",
+            "Scissors": "✂️"
+        }
+
+        await interaction.response.send_message(
+            f"You chose **{user_choice}** {emojis[user_choice]}\n"
+            f"I chose **{bot_choice}** {emojis[bot_choice]}\n\n"
+            f"{result}"
+        )
+
+    async def games_rpschallenge_callback(self, interaction: discord.Interaction, opponent: discord.Member):
+        """Callback for /games rpschallenge command"""
+        initiator = interaction.user
+
+        if opponent == initiator:
+            await interaction.response.send_message("You cannot challenge yourself!", ephemeral=True)
+            return
+        if opponent.bot:
+            await interaction.response.send_message("You cannot challenge a bot!", ephemeral=True)
+            return
+
+        view = RockPaperScissorsView(initiator, opponent)
+        initial_message = f"Rock Paper Scissors: {initiator.mention} vs {opponent.mention}\n\nChoose your move!"
+        await interaction.response.send_message(initial_message, view=view)
+        message = await interaction.original_response()
+        view.message = message
+
+    async def games_guess_callback(self, interaction: discord.Interaction, guess: int):
+        """Callback for /games guess command"""
+        # Simple implementation: generate number per guess (no state needed)
+        number_to_guess = random.randint(1, 100)
+
+        if guess < 1 or guess > 100:
+            await interaction.response.send_message("Please guess a number between 1 and 100.", ephemeral=True)
+            return
+
+        if guess == number_to_guess:
+            await interaction.response.send_message(f"🎉 Correct! The number was **{number_to_guess}**.")
+        elif guess < number_to_guess:
+            await interaction.response.send_message(f"Too low! The number was {number_to_guess}.")
+        else:
+            await interaction.response.send_message(f"Too high! The number was {number_to_guess}.")
+
+    async def games_hangman_callback(self, interaction: discord.Interaction):
+        """Callback for /games hangman command"""
+        await play_hangman(self.bot, interaction.channel, interaction.user)
+
+    # TicTacToe group callbacks
+    async def games_tictactoe_callback(self, interaction: discord.Interaction, opponent: discord.Member):
+        """Callback for /games tictactoe play command"""
+        initiator = interaction.user
+
+        if opponent == initiator:
+            await interaction.response.send_message("You cannot challenge yourself!", ephemeral=True)
+            return
+        if opponent.bot:
+            await interaction.response.send_message("You cannot challenge a bot! Use `/games tictactoe bot` instead.", ephemeral=True)
+            return
+
+        view = TicTacToeView(initiator, opponent)
+        initial_message = f"Tic Tac Toe: {initiator.mention} (X) vs {opponent.mention} (O)\n\nTurn: **{initiator.mention} (X)**"
+        await interaction.response.send_message(initial_message, view=view)
+        message = await interaction.original_response()
+        view.message = message # Store message for timeout handling
+
+    async def games_tictactoebot_callback(self, interaction: discord.Interaction, difficulty: app_commands.Choice[str] = None):
+        """Callback for /games tictactoe bot command"""
+        # Use default if no choice is made (discord.py handles default value assignment)
+        difficulty_value = difficulty.value if difficulty else "minimax"
+
+        # Ensure tictactoe module is importable
+        try:
+            import sys
+            import os
+            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if parent_dir not in sys.path:
+                sys.path.append(parent_dir)
+            from tictactoe import TicTacToe # Assuming tictactoe.py is in the parent directory
+        except ImportError:
+            await interaction.response.send_message("Error: TicTacToe game engine module not found.", ephemeral=True)
+            return
+        except Exception as e:
+             await interaction.response.send_message(f"Error importing TicTacToe module: {e}", ephemeral=True)
+             return
+
+        # Create a new game instance
+        try:
+            game = TicTacToe(ai_player='O', ai_difficulty=difficulty_value)
+        except Exception as e:
+             await interaction.response.send_message(f"Error initializing TicTacToe game: {e}", ephemeral=True)
+             return
+
+        # Create a view for the user interface
+        view = BotTicTacToeView(game, interaction.user)
+        await interaction.response.send_message(
+            f"Tic Tac Toe: {interaction.user.mention} (X) vs Bot (O) - Difficulty: {difficulty_value.capitalize()}\n\nYour turn!",
+            view=view
+        )
+        view.message = await interaction.original_response()
+
+    # Chess group callbacks
+    async def games_chess_callback(self, interaction: discord.Interaction, opponent: discord.Member):
+        """Callback for /games chess play command"""
+        initiator = interaction.user
+
+        if opponent == initiator:
+            await interaction.response.send_message("You cannot challenge yourself!", ephemeral=True)
+            return
+        if opponent.bot:
+            await interaction.response.send_message("You cannot challenge a bot! Use `/games chess bot` instead.", ephemeral=True)
+            return
+
+        # Initiator is white, opponent is black
+        view = ChessView(initiator, opponent)
+        initial_status = f"Turn: **{initiator.mention}** (White)"
+        initial_message = f"Chess: {initiator.mention} (White) vs {opponent.mention} (Black)\n\n{initial_status}"
+        board_image = generate_board_image(view.board) # Generate initial board image
+
+        await interaction.response.send_message(initial_message, file=board_image, view=view)
+        message = await interaction.original_response()
+        view.message = message
+
+        # Send initial DMs
+        asyncio.create_task(view._send_or_update_dm(view.white_player))
+        asyncio.create_task(view._send_or_update_dm(view.black_player))
+
+    async def games_chessbot_callback(self, interaction: discord.Interaction, color: app_commands.Choice[str] = None, variant: app_commands.Choice[str] = None, skill_level: int = 10, think_time: float = 1.0):
+        """Callback for /games chess bot command"""
+        player = interaction.user
+        player_color_str = color.value if color else "white"
+        variant_str = variant.value if variant else "standard"
+        player_color = chess.WHITE if player_color_str == "white" else chess.BLACK
+
+        # Validate inputs
+        skill_level = max(0, min(20, skill_level))
+        think_time = max(0.1, min(5.0, think_time))
+
+        # Check if variant is supported (currently standard and chess960)
+        supported_variants = ["standard", "chess960"]
+        if variant_str not in supported_variants:
+            await interaction.response.send_message(f"Sorry, the variant '{variant_str}' is not currently supported. Choose from: {', '.join(supported_variants)}", ephemeral=True)
+            return
+
+        # Defer response as engine start might take a moment
+        await interaction.response.defer()
+
+        view = ChessBotView(player, player_color, variant_str, skill_level, think_time)
+
+        # Start the engine asynchronously
+        # Store interaction temporarily for potential error reporting during init
+        view._interaction = interaction
+        await view.start_engine()
+        del view._interaction # Remove temporary attribute
+
+        if view.engine is None or view.is_finished(): # Check if engine failed or view stopped during init
+             # Error message should have been sent by start_engine or view stopped itself
+             # Ensure we don't try to send another response if already handled
+             # No need to send another message here, start_engine handles it.
+             print("ChessBotView: Engine failed to start, stopping command execution.")
+             return # Stop if engine failed
+
+        # Determine initial message based on who moves first
+        initial_status_prefix = "Your turn." if player_color == chess.WHITE else "Bot is thinking..."
+        initial_message_content = view.get_board_message(initial_status_prefix)
+        board_image = generate_board_image(view.board, perspective_white=(player_color == chess.WHITE))
+
+        # Send the initial game state using followup
+        message = await interaction.followup.send(initial_message_content, file=board_image, view=view, wait=True)
+        view.message = message
+        self.active_chess_bot_views[message.id] = view # Track the view
+
+        # Send initial DM to player
+        asyncio.create_task(view._send_or_update_dm())
+
+        # If bot moves first (player chose black), trigger its move
+        if player_color == chess.BLACK:
+            # Don't await this, let it run in the background
+            asyncio.create_task(view.make_bot_move())
+
+    async def games_loadchess_callback(self, interaction: discord.Interaction, state: str, turn: Optional[app_commands.Choice[str]] = None, opponent: Optional[discord.Member] = None, color: Optional[app_commands.Choice[str]] = None, skill_level: int = 10, think_time: float = 1.0):
+        """Callback for /games chess load command"""
+        await interaction.response.defer()
+        initiator = interaction.user
+        board = None
+        load_error = None
+        loaded_pgn_game = None # To store the loaded PGN game object if parsed
+
+        # --- Input Validation ---
+        if not opponent and not color:
+            await interaction.followup.send("The 'color' parameter is required when playing against the bot.", ephemeral=True)
+            return
+
+        # --- Parsing Logic ---
+        state_trimmed = state.strip()
+
+        # 1. Try parsing as PGN
+        if state_trimmed.startswith("[Event") or ('.' in state_trimmed and ('O-O' in state_trimmed or 'x' in state_trimmed or state_trimmed[0].isdigit())):
+            try:
+                pgn_io = io.StringIO(state_trimmed)
+                loaded_pgn_game = chess.pgn.read_game(pgn_io)
+                if loaded_pgn_game is None:
+                    raise ValueError("Could not parse PGN data.")
+                # Get the board state from the end of the main line
+                board = loaded_pgn_game.end().board()
+                print("[Debug] Parsed as PGN.")
+            except Exception as e:
+                load_error = f"Could not parse as PGN: {e}. Trying other formats."
+                print(f"[Debug] PGN parsing failed: {e}")
+                loaded_pgn_game = None # Reset if PGN parsing failed
+
+        # 2. Try parsing as FEN (if not already parsed as PGN)
+        if board is None and '/' in state_trimmed and (' w ' in state_trimmed or ' b ' in state_trimmed):
+            try:
+                board = chess.Board(fen=state_trimmed)
+                print(f"[Debug] Parsed as FEN: {state_trimmed}")
+            except ValueError as e:
+                load_error = f"Invalid FEN string: {e}. Trying array format."
+                print(f"[Error] FEN parsing failed: {e}")
+            except Exception as e:
+                load_error = f"Unexpected FEN parsing error: {e}. Trying array format."
+                print(f"[Error] Unexpected FEN parsing error: {e}")
+
+        # 3. Try parsing as Array (if not parsed as PGN or FEN)
+        if board is None:
+            try:
+                # Check if it looks like a list before eval
+                if not state_trimmed.startswith('[') or not state_trimmed.endswith(']'):
+                     raise ValueError("Input does not look like a list array.")
+
+                board_array = ast.literal_eval(state_trimmed)
+                print("[Debug] Attempting to parse as array...")
+
+                if not isinstance(board_array, list) or len(board_array) != 8 or \
+                   not all(isinstance(row, list) and len(row) == 8 for row in board_array):
+                    raise ValueError("Invalid array structure. Must be 8x8 list.")
+
+                if not turn:
+                    load_error = "The 'turn' parameter is required when providing a board array."
+                else:
+                    turn_color = chess.WHITE if turn.value == "white" else chess.BLACK
+                    fen = self._array_to_fen(board_array, turn_color)
+                    print(f"[Debug] Converted array to FEN: {fen}")
+                    board = chess.Board(fen=fen)
+
+            except (ValueError, SyntaxError, TypeError) as e:
+                # If PGN/FEN failed, this is the final error message
+                load_error = f"Invalid state format. Could not parse as PGN, FEN, or Python list array. Error: {e}"
+                print(f"[Error] Array parsing failed: {e}")
+            except Exception as e:
+                load_error = f"Error parsing array state: {e}"
+                print(f"[Error] Unexpected array parsing error: {e}")
+
+        # --- Final Check and Error Handling ---
+        if board is None:
+            final_error = load_error or "Failed to load board state from the provided input."
+            await interaction.followup.send(final_error, ephemeral=True)
+            return
+
+        # --- Game Setup ---
+        if opponent:
+            # Player vs Player
+            if opponent == initiator:
+                await interaction.followup.send("You cannot challenge yourself!", ephemeral=True)
+                return
+            if opponent.bot:
+                await interaction.followup.send("You cannot challenge a bot! Use `/games chess bot` or load without opponent.", ephemeral=True)
+                return
+
+            white_player = initiator if board.turn == chess.WHITE else opponent
+            black_player = opponent if board.turn == chess.WHITE else initiator
+
+            view = ChessView(white_player, black_player, board=board) # Pass loaded board
+            # If loaded from PGN, set the game object in the view
+            if loaded_pgn_game:
+                view.game_pgn = loaded_pgn_game
+                view.pgn_node = loaded_pgn_game.end() # Start from the end node
+
+            current_player_mention = white_player.mention if board.turn == chess.WHITE else black_player.mention
+            turn_color_name = "White" if board.turn == chess.WHITE else "Black"
+            initial_status = f"Turn: **{current_player_mention}** ({turn_color_name})"
+            if board.is_check(): initial_status += " **Check!**"
+            initial_message = f"Loaded Chess Game: {white_player.mention} (White) vs {black_player.mention} (Black)\n\n{initial_status}"
+            perspective_white = (board.turn == chess.WHITE)
+            board_image = generate_board_image(view.board, perspective_white=perspective_white)
+
+            message = await interaction.followup.send(initial_message, file=board_image, view=view, wait=True)
+            view.message = message
+
+            # Send initial DMs
+            asyncio.create_task(view._send_or_update_dm(view.white_player))
+            asyncio.create_task(view._send_or_update_dm(view.black_player))
+
+        else:
+            # Player vs Bot
+            player = initiator
+            # Color is now required, checked at the start
+            player_color = chess.WHITE if color.value == "white" else chess.BLACK
+
+            skill_level = max(0, min(20, skill_level))
+            think_time = max(0.1, min(5.0, think_time))
+            variant_str = "chess960" if board.chess960 else "standard"
+
+            view = ChessBotView(player, player_color, variant_str, skill_level, think_time, board=board) # Pass loaded board
+            # If loaded from PGN, set the game object in the view
+            if loaded_pgn_game:
+                view.game_pgn = loaded_pgn_game
+                view.pgn_node = loaded_pgn_game.end() # Start from the end node
+
+            view._interaction = interaction # For error reporting during start
+            await view.start_engine()
+            if hasattr(view, '_interaction'): del view._interaction
+
+    # --- Legacy Commands (kept for backward compatibility) ---
     @app_commands.command(name="coinflipbet", description="Challenge another user to a coin flip game.")
     @app_commands.describe(
         opponent="The user you want to challenge."
@@ -88,27 +584,6 @@ class GamesCog(commands.Cog):
         await interaction.response.send_message(initial_message, view=view)
         message = await interaction.original_response()
         view.message = message
-
-    @app_commands.command(name="coinflip", description="Flip a coin and get Heads or Tails.")
-    async def coinflip(self, interaction: discord.Interaction):
-        """Flips a coin and returns Heads or Tails."""
-        result = flip_coin()
-        await interaction.response.send_message(f"The coin landed on **{result}**! 🪙")
-
-    @app_commands.command(name="roll", description="Roll a dice and get a number between 1 and 6.")
-    async def roll(self, interaction: discord.Interaction):
-        """Rolls a dice and returns a number between 1 and 6."""
-        result = roll_dice()
-        await interaction.response.send_message(f"You rolled a **{result}**! 🎲")
-
-    @app_commands.command(name="magic8ball", description="Ask the magic 8 ball a question.")
-    @app_commands.describe(
-        question="The question you want to ask the magic 8 ball."
-    )
-    async def magic8ball(self, interaction: discord.Interaction, question: str):
-        """Provides a random response to a yes/no question."""
-        response = magic8ball_response()
-        await interaction.response.send_message(f"🎱 {response}")
 
     @app_commands.command(name="rps", description="Play Rock-Paper-Scissors against the bot.")
     @app_commands.describe(choice="Your choice: Rock, Paper, or Scissors.")
@@ -685,4 +1160,9 @@ class GamesCog(commands.Cog):
             await ctx.send(f"Too high! The number was {number_to_guess}.")
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(GamesCog(bot))
+    """Set up the GamesCog with the bot."""
+    print("Setting up GamesCog...")
+    cog = GamesCog(bot)
+    await bot.add_cog(cog)
+    print(f"GamesCog setup complete with command groups: {[cmd.name for cmd in bot.tree.get_commands() if cmd.name == 'games']}")
+    print(f"Available subgroups: {[group.name for group in cog.games_group.walk_commands() if isinstance(group, app_commands.Group)]}")
