@@ -16,11 +16,11 @@ class GamblingCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.hybrid_command(name="coinflip", aliases=["cf"], description="Gamble your money on a coin flip.")
-    async def coinflip(self, ctx: commands.Context, amount: int, choice: str):
+    @commands.hybrid_command(name="moneyflip", aliases=["mf"], description="Gamble your money on a coin flip.") # Renamed to avoid conflict
+    async def moneyflip(self, ctx: commands.Context, amount: int, choice: str): # Renamed function
         """Bets a certain amount on a coin flip (heads or tails)."""
         user_id = ctx.author.id
-        command_name = "coinflip" # Cooldown specific to coinflip
+        command_name = "moneyflip" # Update command name for cooldown tracking
         cooldown_duration = datetime.timedelta(seconds=10) # Short cooldown
 
         choice = choice.lower()
