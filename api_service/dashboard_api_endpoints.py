@@ -4,9 +4,9 @@ These endpoints provide additional functionality for the dashboard UI.
 """
 
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Import the dependencies from api_server.py
 try:
@@ -64,6 +64,28 @@ class Role(BaseModel):
 class Command(BaseModel):
     name: str
     description: Optional[str] = None
+
+class Conversation(BaseModel):
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int
+
+class Message(BaseModel):
+    id: str
+    content: str
+    role: str  # 'user' or 'assistant'
+    created_at: str
+
+class GlobalSettings(BaseModel):
+    system_message: Optional[str] = None
+    character: Optional[str] = None
+    character_info: Optional[str] = None
+    custom_instructions: Optional[str] = None
+    model: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
 
 # --- Endpoints ---
 @router.get("/guilds/{guild_id}/channels", response_model=List[Channel])
@@ -419,4 +441,113 @@ async def sync_guild_commands(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error syncing commands: {str(e)}"
+        )
+
+# --- Global Settings Endpoints ---
+
+@router.get("/settings", response_model=GlobalSettings)
+async def get_global_settings(
+    _user: dict = Depends(get_dashboard_user)
+):
+    """Get global settings for the current user."""
+    try:
+        # This would normally fetch settings from the database
+        # For now, we'll return a mock response
+        settings = GlobalSettings(
+            system_message="You are a helpful assistant.",
+            character="Kasane Teto",
+            character_info="Kasane Teto is a cheerful and energetic character.",
+            custom_instructions="Be helpful and friendly.",
+            model="gpt-4",
+            temperature=0.7,
+            max_tokens=2048
+        )
+        return settings
+    except Exception as e:
+        log.error(f"Error getting global settings: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting global settings: {str(e)}"
+        )
+
+@router.post("/settings", status_code=status.HTTP_200_OK)
+async def update_global_settings(
+    settings: GlobalSettings,
+    _user: dict = Depends(get_dashboard_user)
+):
+    """Update global settings for the current user."""
+    try:
+        # This would normally update settings in the database
+        # For now, we'll just return a success message
+        return {"message": "Settings updated successfully"}
+    except Exception as e:
+        log.error(f"Error updating global settings: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating global settings: {str(e)}"
+        )
+
+# --- Conversations Endpoints ---
+
+@router.get("/conversations", response_model=List[Conversation])
+async def get_conversations(
+    _user: dict = Depends(get_dashboard_user)
+):
+    """Get all conversations for the current user."""
+    try:
+        # This would normally fetch conversations from the database
+        # For now, we'll return a mock response
+        conversations = [
+            Conversation(
+                id="1",
+                title="Conversation 1",
+                created_at="2023-01-01T00:00:00Z",
+                updated_at="2023-01-01T01:00:00Z",
+                message_count=10
+            ),
+            Conversation(
+                id="2",
+                title="Conversation 2",
+                created_at="2023-01-02T00:00:00Z",
+                updated_at="2023-01-02T01:00:00Z",
+                message_count=5
+            )
+        ]
+        return conversations
+    except Exception as e:
+        log.error(f"Error getting conversations: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting conversations: {str(e)}"
+        )
+
+@router.get("/conversations/{conversation_id}", response_model=List[Message])
+async def get_conversation_messages(
+    conversation_id: str,
+    _user: dict = Depends(get_dashboard_user)
+):
+    """Get all messages for a conversation."""
+    try:
+        # This would normally fetch messages from the database
+        # For now, we'll return a mock response
+        messages = [
+            Message(
+                id="1",
+                content="Hello, how are you?",
+                role="user",
+                created_at="2023-01-01T00:00:00Z"
+            ),
+            Message(
+                id="2",
+                content="I'm doing well, thank you for asking!",
+                role="assistant",
+                created_at="2023-01-01T00:00:01Z"
+            )
+        ]
+        return messages
+    except Exception as e:
+        log.error(f"Error getting conversation messages: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting conversation messages: {str(e)}"
         )
