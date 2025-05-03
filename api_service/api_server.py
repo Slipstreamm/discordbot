@@ -231,6 +231,22 @@ except ImportError as e:
     log.error(f"Could not import dashboard API endpoints: {e}")
     log.error("Dashboard API endpoints will not be available")
 
+# Import command customization models and endpoints
+try:
+    # Try relative import first
+    try:
+        from .command_customization_endpoints import router as customization_router
+    except ImportError:
+        # Fall back to absolute import
+        from command_customization_endpoints import router as customization_router
+
+    # Add the command customization router to the dashboard API app
+    dashboard_api_app.include_router(customization_router, prefix="/commands", tags=["Command Customization"])
+    log.info("Command customization endpoints loaded successfully")
+except ImportError as e:
+    log.error(f"Could not import command customization endpoints: {e}")
+    log.error("Command customization endpoints will not be available")
+
 # Mount the API apps at their respective paths
 app.mount("/api", api_app)
 app.mount("/discordapi", discordapi_app)

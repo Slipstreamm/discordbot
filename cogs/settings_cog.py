@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import logging
 from discordbot import settings_manager # Assuming settings_manager is accessible
+from discordbot import command_customization # Import command customization utilities
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -385,11 +386,18 @@ class SettingsCog(commands.Cog, name="Settings"):
             guild = ctx.guild
             await ctx.send("Syncing commands with Discord... This may take a moment.")
 
-            # Sync commands for this guild specifically
-            synced = await self.bot.tree.sync(guild=guild)
+            # Use the command_customization module to sync commands with customizations
+            try:
+                synced = await command_customization.register_guild_commands(self.bot, guild)
 
-            await ctx.send(f"Successfully synced {len(synced)} commands for this server.")
-            log.info(f"Commands synced for guild {guild.id} by {ctx.author.name}")
+                await ctx.send(f"Successfully synced {len(synced)} commands for this server with customizations.")
+                log.info(f"Commands synced with customizations for guild {guild.id} by {ctx.author.name}")
+            except Exception as e:
+                log.error(f"Failed to sync commands with customizations: {e}")
+                # Fall back to regular sync if customization sync fails
+                synced = await self.bot.tree.sync(guild=guild)
+                await ctx.send(f"Failed to apply customizations, but synced {len(synced)} commands for this server.")
+                log.info(f"Commands synced (without customizations) for guild {guild.id} by {ctx.author.name}")
         except Exception as e:
             await ctx.send(f"Failed to sync commands: {str(e)}")
             log.error(f"Failed to sync commands for guild {ctx.guild.id}: {e}")
