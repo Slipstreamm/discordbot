@@ -215,6 +215,22 @@ dashboard_api_app = FastAPI(
     openapi_url="/openapi.json"
 )
 
+# Import dashboard API endpoints
+try:
+    # Try relative import first
+    try:
+        from .dashboard_api_endpoints import router as dashboard_router
+    except ImportError:
+        # Fall back to absolute import
+        from dashboard_api_endpoints import router as dashboard_router
+
+    # Add the dashboard router to the dashboard API app
+    dashboard_api_app.include_router(dashboard_router)
+    log.info("Dashboard API endpoints loaded successfully")
+except ImportError as e:
+    log.error(f"Could not import dashboard API endpoints: {e}")
+    log.error("Dashboard API endpoints will not be available")
+
 # Mount the API apps at their respective paths
 app.mount("/api", api_app)
 app.mount("/discordapi", discordapi_app)

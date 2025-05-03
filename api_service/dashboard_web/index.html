@@ -17,66 +17,274 @@
         <h2>Welcome, <span id="username">User</span>!</h2>
         <button id="logout-button">Logout</button>
 
+        <div class="dashboard-nav">
+            <button id="nav-server-settings" class="nav-button active">Server Settings</button>
+            <button id="nav-ai-settings" class="nav-button">AI Settings</button>
+            <button id="nav-conversations" class="nav-button">Conversations</button>
+        </div>
+
         <hr>
 
-        <h3>Manage Server Settings</h3>
-        <label for="guild-select">Select Server:</label>
-        <select name="guilds" id="guild-select">
-            <option value="">--Please choose a server--</option>
-        </select>
+        <!-- Server Settings Section -->
+        <div id="server-settings-section" class="dashboard-section">
+            <h3>Manage Server Settings</h3>
+            <label for="guild-select">Select Server:</label>
+            <select name="guilds" id="guild-select">
+                <option value="">--Please choose a server--</option>
+            </select>
 
-        <div id="settings-form" style="display: none;">
-            <h4>Prefix</h4>
-            <label for="prefix-input">Command Prefix:</label>
-            <input type="text" id="prefix-input" name="prefix" maxlength="10">
-            <button id="save-prefix-button">Save Prefix</button>
-            <p id="prefix-feedback"></p>
+            <div id="settings-form" style="display: none;">
+                <h4>Prefix</h4>
+                <label for="prefix-input">Command Prefix:</label>
+                <input type="text" id="prefix-input" name="prefix" maxlength="10">
+                <button id="save-prefix-button">Save Prefix</button>
+                <p id="prefix-feedback"></p>
 
-            <h4>Welcome Messages</h4>
-            <label for="welcome-channel">Welcome Channel ID:</label> <!-- Changed label -->
-            <input type="text" id="welcome-channel" name="welcome_channel_id" placeholder="Enter Channel ID"> <!-- Changed to text input -->
-            <br>
-            <label for="welcome-message">Welcome Message Template:</label><br>
-            <textarea id="welcome-message" name="welcome_message" rows="4" cols="50" placeholder="Use {user} for mention, {username} for name, {server} for server name."></textarea><br>
-            <button id="save-welcome-button">Save Welcome Settings</button>
-            <button id="disable-welcome-button">Disable Welcome</button>
-            <p id="welcome-feedback"></p>
+                <h4>Welcome Messages</h4>
+                <div class="settings-card">
+                    <div class="form-group">
+                        <label for="welcome-channel">Welcome Channel:</label>
+                        <div class="channel-select-container">
+                            <input type="text" id="welcome-channel" name="welcome_channel_id" placeholder="Enter Channel ID">
+                            <select id="welcome-channel-select" class="channel-dropdown">
+                                <option value="">-- Select Channel --</option>
+                                <!-- Will be populated by JS -->
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="welcome-message">Welcome Message Template:</label>
+                        <textarea id="welcome-message" name="welcome_message" rows="4" cols="50" placeholder="Use {user} for mention, {username} for name, {server} for server name."></textarea>
+                    </div>
+                    <div class="button-group">
+                        <button id="save-welcome-button">Save Welcome Settings</button>
+                        <button id="disable-welcome-button">Disable Welcome</button>
+                    </div>
+                    <p id="welcome-feedback"></p>
+                </div>
 
-            <h4>Goodbye Messages</h4>
-             <label for="goodbye-channel">Goodbye Channel ID:</label> <!-- Changed label -->
-            <input type="text" id="goodbye-channel" name="goodbye_channel_id" placeholder="Enter Channel ID"> <!-- Changed to text input -->
-             <br>
-            <label for="goodbye-message">Goodbye Message Template:</label><br>
-            <textarea id="goodbye-message" name="goodbye_message" rows="4" cols="50" placeholder="Use {username} for name, {server} for server name."></textarea><br>
-            <button id="save-goodbye-button">Save Goodbye Settings</button>
-            <button id="disable-goodbye-button">Disable Goodbye</button>
-            <p id="goodbye-feedback"></p>
+                <h4>Goodbye Messages</h4>
+                <div class="settings-card">
+                    <div class="form-group">
+                        <label for="goodbye-channel">Goodbye Channel:</label>
+                        <div class="channel-select-container">
+                            <input type="text" id="goodbye-channel" name="goodbye_channel_id" placeholder="Enter Channel ID">
+                            <select id="goodbye-channel-select" class="channel-dropdown">
+                                <option value="">-- Select Channel --</option>
+                                <!-- Will be populated by JS -->
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="goodbye-message">Goodbye Message Template:</label>
+                        <textarea id="goodbye-message" name="goodbye_message" rows="4" cols="50" placeholder="Use {username} for name, {server} for server name."></textarea>
+                    </div>
+                    <div class="button-group">
+                        <button id="save-goodbye-button">Save Goodbye Settings</button>
+                        <button id="disable-goodbye-button">Disable Goodbye</button>
+                    </div>
+                    <p id="goodbye-feedback"></p>
+                </div>
 
-            <h4>Enabled Modules (Cogs)</h4>
-            <div id="cogs-list">
-                <!-- Cog checkboxes will be populated by JS -->
+                <h4>Enabled Modules (Cogs)</h4>
+                <div class="settings-card">
+                    <div class="cogs-container">
+                        <div id="cogs-list">
+                            <!-- Cog checkboxes will be populated by JS -->
+                        </div>
+                    </div>
+                    <div class="button-group">
+                        <button id="save-cogs-button">Save Module Settings</button>
+                    </div>
+                    <p id="cogs-feedback"></p>
+                </div>
+
+                <h4>Command Permissions</h4>
+                <div class="settings-card">
+                    <div class="form-group">
+                        <label for="command-select">Command:</label>
+                        <select id="command-select">
+                            <!-- Will be populated by JS -->
+                            <option value="">-- Select Command --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="role-select">Role:</label>
+                        <select id="role-select">
+                            <!-- Will be populated by JS -->
+                            <option value="">-- Select Role --</option>
+                        </select>
+                    </div>
+                    <div class="button-group">
+                        <button id="add-perm-button">Allow Role</button>
+                        <button id="remove-perm-button">Disallow Role</button>
+                    </div>
+                    <div id="current-perms">
+                        <!-- Current permissions will be listed here -->
+                    </div>
+                    <p id="perms-feedback"></p>
+                </div>
             </div>
-            <button id="save-cogs-button">Save Module Settings</button>
-            <p id="cogs-feedback"></p>
+        </div>
 
-            <h4>Command Permissions</h4>
-             <label for="command-select">Command:</label>
-             <select id="command-select">
-                 <!-- TODO: Populate commands dynamically -->
-                 <option value="">-- Select Command --</option>
-             </select>
-             <label for="role-select">Role:</label>
-             <select id="role-select">
-                 <!-- TODO: Populate roles dynamically -->
-                 <option value="">-- Select Role --</option>
-             </select>
-             <button id="add-perm-button">Allow Role</button>
-             <button id="remove-perm-button">Disallow Role</button>
-             <div id="current-perms">
-                 <!-- Current permissions will be listed here -->
-             </div>
-             <p id="perms-feedback"></p>
+        <!-- AI Settings Section -->
+        <div id="ai-settings-section" class="dashboard-section" style="display: none;">
+            <h3>AI Settings</h3>
+            <div class="settings-card">
+                <h4>General AI Settings</h4>
+                <div class="form-group">
+                    <label for="ai-model-select">AI Model:</label>
+                    <select id="ai-model-select">
+                        <option value="openai/gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                        <option value="openai/gpt-4">GPT-4</option>
+                        <option value="anthropic/claude-3-opus">Claude 3 Opus</option>
+                        <option value="anthropic/claude-3-sonnet">Claude 3 Sonnet</option>
+                        <option value="google/gemini-2.5-flash-preview">Gemini 2.5 Flash</option>
+                        <option value="google/gemini-2.5-pro-preview">Gemini 2.5 Pro</option>
+                        <!-- More models will be populated dynamically if available -->
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="ai-temperature">Temperature: <span id="temperature-value">0.7</span></label>
+                    <input type="range" id="ai-temperature" min="0" max="2" step="0.1" value="0.7">
+                </div>
+                <div class="form-group">
+                    <label for="ai-max-tokens">Max Tokens:</label>
+                    <input type="number" id="ai-max-tokens" min="100" max="8000" step="100" value="1000">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="ai-reasoning-enabled">
+                        Enable Reasoning
+                    </label>
+                </div>
+                <div class="form-group" id="reasoning-effort-group">
+                    <label for="ai-reasoning-effort">Reasoning Effort:</label>
+                    <select id="ai-reasoning-effort">
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="ai-web-search-enabled">
+                        Enable Web Search
+                    </label>
+                </div>
+                <div class="button-group">
+                    <button id="save-ai-settings-button">Save AI Settings</button>
+                    <button id="reset-ai-settings-button">Reset to Defaults</button>
+                </div>
+                <p id="ai-settings-feedback"></p>
+            </div>
 
+            <div class="settings-card">
+                <h4>Character Settings</h4>
+                <div class="form-group">
+                    <label for="ai-character">Character Name:</label>
+                    <input type="text" id="ai-character" placeholder="e.g., Kasane Teto">
+                </div>
+                <div class="form-group">
+                    <label for="ai-character-info">Character Information:</label>
+                    <textarea id="ai-character-info" rows="4" placeholder="Describe the character's personality, background, etc."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="ai-character-breakdown">
+                        Enable Character Breakdown
+                    </label>
+                </div>
+                <div class="button-group">
+                    <button id="save-character-settings-button">Save Character Settings</button>
+                    <button id="clear-character-settings-button">Clear Character</button>
+                </div>
+                <p id="character-settings-feedback"></p>
+            </div>
+
+            <div class="settings-card">
+                <h4>System Prompt</h4>
+                <div class="form-group">
+                    <textarea id="ai-system-prompt" rows="6" placeholder="Enter a system prompt to guide the AI's behavior..."></textarea>
+                </div>
+                <div class="button-group">
+                    <button id="save-system-prompt-button">Save System Prompt</button>
+                    <button id="reset-system-prompt-button">Reset to Default</button>
+                </div>
+                <p id="system-prompt-feedback"></p>
+            </div>
+
+            <div class="settings-card">
+                <h4>Custom Instructions</h4>
+                <div class="form-group">
+                    <textarea id="ai-custom-instructions" rows="6" placeholder="Enter custom instructions for the AI..."></textarea>
+                </div>
+                <div class="button-group">
+                    <button id="save-custom-instructions-button">Save Custom Instructions</button>
+                    <button id="clear-custom-instructions-button">Clear Instructions</button>
+                </div>
+                <p id="custom-instructions-feedback"></p>
+            </div>
+        </div>
+
+        <!-- Conversations Section -->
+        <div id="conversations-section" class="dashboard-section" style="display: none;">
+            <h3>AI Conversations</h3>
+
+            <div class="conversations-header">
+                <div class="search-container">
+                    <input type="text" id="conversation-search" placeholder="Search conversations...">
+                </div>
+                <button id="new-conversation-button">New Conversation</button>
+            </div>
+
+            <div class="conversations-list-container">
+                <div id="conversations-list">
+                    <!-- Will be populated by JS -->
+                    <div class="no-conversations">No conversations found. Start a new conversation!</div>
+                </div>
+            </div>
+
+            <div id="conversation-detail" style="display: none;">
+                <div class="conversation-header">
+                    <h4 id="conversation-title">Conversation Title</h4>
+                    <div class="conversation-actions">
+                        <button id="rename-conversation-button">Rename</button>
+                        <button id="delete-conversation-button">Delete</button>
+                        <button id="export-conversation-button">Export</button>
+                    </div>
+                </div>
+
+                <div class="conversation-messages" id="conversation-messages">
+                    <!-- Will be populated by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for renaming conversations -->
+    <div id="rename-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h4>Rename Conversation</h4>
+            <input type="text" id="new-conversation-title" placeholder="Enter new title">
+            <div class="button-group">
+                <button id="confirm-rename-button">Rename</button>
+                <button id="cancel-rename-button">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for creating new conversations -->
+    <div id="new-conversation-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h4>Create New Conversation</h4>
+            <input type="text" id="new-conversation-name" placeholder="Enter conversation title">
+            <div class="button-group">
+                <button id="create-conversation-button">Create</button>
+                <button id="cancel-create-button">Cancel</button>
+            </div>
         </div>
     </div>
 
