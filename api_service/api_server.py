@@ -737,6 +737,51 @@ async def dashboard_logout(request: Request):
     log.info(f"Dashboard: User {user_id} logged out.")
     return
 
+@dashboard_api_app.get("/auth/status", tags=["Dashboard Authentication"])
+async def dashboard_auth_status(request: Request):
+    """Checks if the user is authenticated in the dashboard session."""
+    user_id = request.session.get('user_id')
+    username = request.session.get('username')
+    access_token = request.session.get('access_token')
+
+    if not user_id or not username or not access_token:
+        log.debug("Dashboard: Auth status check - user not authenticated")
+        return {"authenticated": False, "message": "User is not authenticated"}
+
+    # Verify the token is still valid with Discord
+    try:
+        if not http_session:
+            log.error("Dashboard: aiohttp session not initialized.")
+            return {"authenticated": False, "message": "Internal server error: HTTP session not ready"}
+
+        user_headers = {'Authorization': f'Bearer {access_token}'}
+        async with http_session.get(DISCORD_USER_URL, headers=user_headers) as resp:
+            if resp.status != 200:
+                log.warning(f"Dashboard: Auth status check - invalid token for user {user_id}")
+                # Clear the invalid session
+                request.session.clear()
+                return {"authenticated": False, "message": "Discord token invalid or expired"}
+
+            # Token is valid, get the latest user data
+            user_data = await resp.json()
+
+            # Update session with latest data
+            request.session['username'] = user_data.get('username')
+            request.session['avatar'] = user_data.get('avatar')
+
+            log.debug(f"Dashboard: Auth status check - user {user_id} is authenticated")
+            return {
+                "authenticated": True,
+                "user": {
+                    "id": user_id,
+                    "username": user_data.get('username'),
+                    "avatar": user_data.get('avatar')
+                }
+            }
+    except Exception as e:
+        log.exception(f"Dashboard: Error checking auth status: {e}")
+        return {"authenticated": False, "message": f"Error checking auth status: {str(e)}"}
+
 # --- Dashboard User Endpoints ---
 @dashboard_api_app.get("/user/me", tags=["Dashboard User"])
 async def dashboard_get_user_me(current_user: dict = Depends(get_dashboard_user)):
@@ -745,7 +790,28 @@ async def dashboard_get_user_me(current_user: dict = Depends(get_dashboard_user)
     # del user_info['access_token'] # Optional: Don't expose token to frontend
     return user_info
 
+@dashboard_api_app.get("/auth/user", tags=["Dashboard Authentication"])
+async def dashboard_get_auth_user(request: Request):
+    """Returns information about the currently logged-in dashboard user for the frontend."""
+    user_id = request.session.get('user_id')
+    username = request.session.get('username')
+    avatar = request.session.get('avatar')
+
+    if not user_id or not username:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return {
+        "id": user_id,
+        "username": username,
+        "avatar": avatar
+    }
+
 @dashboard_api_app.get("/user/guilds", tags=["Dashboard User"])
+@dashboard_api_app.get("/guilds", tags=["Dashboard Guild Settings"])
 async def dashboard_get_user_guilds(current_user: dict = Depends(get_dashboard_user)):
     """Returns a list of guilds the user is an administrator in AND the bot is also in."""
     global http_session # Use the global aiohttp session

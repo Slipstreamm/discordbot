@@ -5,7 +5,7 @@
 // Toast notification system
 const Toast = {
   container: null,
-  
+
   /**
    * Initialize the toast container
    */
@@ -17,7 +17,7 @@ const Toast = {
       document.body.appendChild(this.container);
     }
   },
-  
+
   /**
    * Show a toast notification
    * @param {string} message - The message to display
@@ -27,11 +27,11 @@ const Toast = {
    */
   show(message, type = 'info', title = '', duration = 5000) {
     this.init();
-    
+
     // Create toast element
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    
+
     // Create icon based on type
     let iconSvg = '';
     switch (type) {
@@ -47,7 +47,7 @@ const Toast = {
       default: // info
         iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#5865F2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>';
     }
-    
+
     // Set toast content
     toast.innerHTML = `
       <div class="toast-icon">${iconSvg}</div>
@@ -57,22 +57,22 @@ const Toast = {
       </div>
       <button class="toast-close">&times;</button>
     `;
-    
+
     // Add to container
     this.container.appendChild(toast);
-    
+
     // Add close event
     const closeBtn = toast.querySelector('.toast-close');
     closeBtn.addEventListener('click', () => this.hide(toast));
-    
+
     // Auto-hide after duration
     if (duration) {
       setTimeout(() => this.hide(toast), duration);
     }
-    
+
     return toast;
   },
-  
+
   /**
    * Hide a toast notification
    * @param {HTMLElement} toast - The toast element to hide
@@ -85,7 +85,7 @@ const Toast = {
       }
     }, 300); // Match animation duration
   },
-  
+
   /**
    * Show a success toast
    * @param {string} message - The message to display
@@ -94,7 +94,7 @@ const Toast = {
   success(message, title = 'Success') {
     return this.show(message, 'success', title);
   },
-  
+
   /**
    * Show an error toast
    * @param {string} message - The message to display
@@ -103,7 +103,7 @@ const Toast = {
   error(message, title = 'Error') {
     return this.show(message, 'error', title);
   },
-  
+
   /**
    * Show a warning toast
    * @param {string} message - The message to display
@@ -112,7 +112,7 @@ const Toast = {
   warning(message, title = 'Warning') {
     return this.show(message, 'warning', title);
   },
-  
+
   /**
    * Show an info toast
    * @param {string} message - The message to display
@@ -136,7 +136,10 @@ const API = {
     // Set default headers
     options.headers = options.headers || {};
     options.headers['Content-Type'] = options.headers['Content-Type'] || 'application/json';
-    
+
+    // Always include credentials for session cookies
+    options.credentials = options.credentials || 'same-origin';
+
     // Add loading state
     if (loadingElement) {
       if (loadingElement.tagName === 'BUTTON') {
@@ -149,23 +152,25 @@ const API = {
           overlay = document.createElement('div');
           overlay.className = 'loading-overlay';
           overlay.innerHTML = '<div class="loading-spinner"></div>';
-          
+
           // Make sure the element has position relative for absolute positioning
           const computedStyle = window.getComputedStyle(loadingElement);
           if (computedStyle.position === 'static') {
             loadingElement.style.position = 'relative';
           }
-          
+
           loadingElement.appendChild(overlay);
         } else {
           overlay.style.display = 'flex';
         }
       }
     }
-    
+
     try {
+      console.log(`API Request: ${options.method || 'GET'} ${url}`);
       const response = await fetch(url, options);
-      
+      console.log(`API Response: ${response.status} ${response.statusText}`);
+
       // Parse JSON response
       let data;
       const contentType = response.headers.get('content-type');
@@ -174,7 +179,7 @@ const API = {
       } else {
         data = await response.text();
       }
-      
+
       // Remove loading state
       if (loadingElement) {
         if (loadingElement.tagName === 'BUTTON') {
@@ -187,15 +192,28 @@ const API = {
           }
         }
       }
-      
+
       // Handle error responses
       if (!response.ok) {
-        const error = new Error(data.message || data.error || 'API request failed');
+        const errorMessage = data.detail || data.message || data.error || 'API request failed';
+        console.error(`API Error (${response.status}): ${errorMessage}`, data);
+
+        const error = new Error(errorMessage);
         error.status = response.status;
         error.data = data;
+
+        // Handle authentication errors
+        if (response.status === 401) {
+          console.log('Authentication error detected, redirecting to login');
+          // Redirect to login after a short delay to show the error
+          setTimeout(() => {
+            window.location.href = '/dashboard/api/auth/login';
+          }, 2000);
+        }
+
         throw error;
       }
-      
+
       return data;
     } catch (error) {
       // Remove loading state
@@ -210,14 +228,14 @@ const API = {
           }
         }
       }
-      
+
       // Show error toast
       Toast.error(error.message || 'An error occurred');
-      
+
       throw error;
     }
   },
-  
+
   /**
    * Make a GET request
    * @param {string} url - The API endpoint URL
@@ -227,7 +245,7 @@ const API = {
   async get(url, loadingElement = null) {
     return this.request(url, { method: 'GET' }, loadingElement);
   },
-  
+
   /**
    * Make a POST request
    * @param {string} url - The API endpoint URL
@@ -245,7 +263,7 @@ const API = {
       loadingElement
     );
   },
-  
+
   /**
    * Make a PUT request
    * @param {string} url - The API endpoint URL
@@ -263,7 +281,7 @@ const API = {
       loadingElement
     );
   },
-  
+
   /**
    * Make a DELETE request
    * @param {string} url - The API endpoint URL
@@ -288,7 +306,7 @@ const Modal = {
       document.body.style.overflow = 'hidden'; // Prevent scrolling
     }
   },
-  
+
   /**
    * Close a modal
    * @param {string} modalId - The ID of the modal to close
@@ -300,7 +318,7 @@ const Modal = {
       document.body.style.overflow = ''; // Restore scrolling
     }
   },
-  
+
   /**
    * Initialize modal close buttons
    */
@@ -315,7 +333,7 @@ const Modal = {
         }
       });
     });
-    
+
     // Close modal when clicking outside the modal content
     document.querySelectorAll('.modal').forEach(modal => {
       modal.addEventListener('click', (event) => {
@@ -338,7 +356,7 @@ const Form = {
   serialize(form) {
     const formData = new FormData(form);
     const data = {};
-    
+
     for (const [key, value] of formData.entries()) {
       // Handle checkboxes
       if (form.elements[key].type === 'checkbox') {
@@ -347,10 +365,10 @@ const Form = {
         data[key] = value;
       }
     }
-    
+
     return data;
   },
-  
+
   /**
    * Populate a form with data
    * @param {HTMLFormElement} form - The form element
@@ -360,7 +378,7 @@ const Form = {
     for (const key in data) {
       if (form.elements[key]) {
         const element = form.elements[key];
-        
+
         if (element.type === 'checkbox') {
           element.checked = Boolean(data[key]);
         } else if (element.type === 'radio') {
@@ -371,14 +389,14 @@ const Form = {
         } else {
           element.value = data[key];
         }
-        
+
         // Trigger change event for elements like select
         const event = new Event('change');
         element.dispatchEvent(event);
       }
     }
   },
-  
+
   /**
    * Validate a form
    * @param {HTMLFormElement} form - The form element
@@ -386,12 +404,12 @@ const Form = {
    */
   validate(form) {
     let isValid = true;
-    
+
     // Remove existing error messages
     form.querySelectorAll('.form-error').forEach(error => {
       error.remove();
     });
-    
+
     // Check required fields
     form.querySelectorAll('[required]').forEach(field => {
       if (!field.value.trim()) {
@@ -399,7 +417,7 @@ const Form = {
         this.showError(field, 'This field is required');
       }
     });
-    
+
     // Check email fields
     form.querySelectorAll('input[type="email"]').forEach(field => {
       if (field.value && !this.isValidEmail(field.value)) {
@@ -407,10 +425,10 @@ const Form = {
         this.showError(field, 'Please enter a valid email address');
       }
     });
-    
+
     return isValid;
   },
-  
+
   /**
    * Show an error message for a form field
    * @param {HTMLElement} field - The form field
@@ -424,13 +442,13 @@ const Form = {
     error.style.color = 'var(--danger-color)';
     error.style.fontSize = '0.875rem';
     error.style.marginTop = '0.25rem';
-    
+
     // Add error class to field
     field.classList.add('is-invalid');
-    
+
     // Insert error after field
     field.parentNode.insertBefore(error, field.nextSibling);
-    
+
     // Add event listener to remove error when field is changed
     field.addEventListener('input', () => {
       field.classList.remove('is-invalid');
@@ -439,7 +457,7 @@ const Form = {
       }
     }, { once: true });
   },
-  
+
   /**
    * Check if an email is valid
    * @param {string} email - The email to check
@@ -462,7 +480,7 @@ const DOM = {
    */
   createElement(tag, attrs = {}, children = []) {
     const element = document.createElement(tag);
-    
+
     // Set attributes
     for (const key in attrs) {
       if (key === 'className') {
@@ -476,7 +494,7 @@ const DOM = {
         element.setAttribute(key, attrs[key]);
       }
     }
-    
+
     // Add children
     if (Array.isArray(children)) {
       children.forEach(child => {
@@ -489,10 +507,10 @@ const DOM = {
     } else if (typeof children === 'string') {
       element.textContent = children;
     }
-    
+
     return element;
   },
-  
+
   /**
    * Create a loading spinner
    * @param {string} size - The size of the spinner (sm, md, lg)
@@ -503,7 +521,7 @@ const DOM = {
     spinner.className = `loading-spinner loading-spinner-${size}`;
     return spinner;
   },
-  
+
   /**
    * Show a loading spinner in a container
    * @param {HTMLElement} container - The container element
@@ -513,18 +531,18 @@ const DOM = {
   showSpinner(container, size = 'md') {
     // Clear container
     container.innerHTML = '';
-    
+
     // Create spinner container
     const spinnerContainer = document.createElement('div');
     spinnerContainer.className = 'loading-spinner-container';
-    
+
     // Create spinner
     const spinner = this.createSpinner(size);
     spinnerContainer.appendChild(spinner);
-    
+
     // Add to container
     container.appendChild(spinnerContainer);
-    
+
     return spinnerContainer;
   }
 };
