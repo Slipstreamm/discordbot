@@ -1,9 +1,10 @@
 import discord
 from discord.ext import commands
 import logging
+import asyncio
 
-# Import command classes from submodules
-from .economy.database import init_db
+# Import command classes and db functions from submodules
+from .economy.database import init_db, close_db # Import close_db
 from .economy.earning import EarningCommands
 from .economy.gambling import GamblingCommands
 from .economy.utility import UtilityCommands
@@ -43,6 +44,15 @@ class EconomyCog(
             log.error(f"EconomyCog failed to initialize database during load: {e}", exc_info=True)
             # Prevent the cog from loading if DB init fails
             raise commands.ExtensionFailed(self.qualified_name, e) from e
+
+    async def cog_unload(self):
+        """Called when the cog is unloaded, closes DB connections."""
+        log.info("Unloading EconomyCog (combined)...")
+        # Schedule the close_db function to run in the bot's event loop
+        # Using ensure_future or create_task is generally safer within cogs
+        asyncio.ensure_future(close_db())
+        log.info("Scheduled database connection closure.")
+
 
 # --- Setup Function ---
 
