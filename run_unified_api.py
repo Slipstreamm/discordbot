@@ -7,6 +7,11 @@ from dotenv import load_dotenv
 # Add the api_service directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'api_service'))
 
+# Add the discordbot directory to the Python path (for settings_manager)
+discordbot_path = os.path.dirname(__file__)
+if discordbot_path not in sys.path:
+    sys.path.append(discordbot_path)
+
 # Load environment variables
 load_dotenv()
 

@@ -118,12 +118,16 @@ from api_models import (
 import code_verifier_store
 
 # Ensure discordbot is in path to import settings_manager
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+discordbot_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if discordbot_path not in sys.path:
+    sys.path.insert(0, discordbot_path)
+
 try:
     from discordbot import settings_manager
+    log.info("Successfully imported settings_manager module")
 except ImportError as e:
-    print(f"ERROR: Could not import discordbot.settings_manager: {e}")
-    print("Ensure the API is run from the project root or discordbot is in PYTHONPATH.")
+    log.error(f"Could not import discordbot.settings_manager: {e}")
+    log.error("Ensure the API is run from the project root or discordbot is in PYTHONPATH.")
     settings_manager = None # Set to None to indicate failure
 
 # ============= API Setup =============
@@ -145,13 +149,20 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
     http_session = aiohttp.ClientSession()
     log.info("aiohttp session started.")
 
-    # Initialize settings_manager pools if available
-    # REMOVED: Pool initialization is handled by the main bot process (discordbot/main.py)
-    # The API will rely on the pools being initialized before it receives requests.
-    if not settings_manager:
-         log.error("settings_manager not imported. Dashboard endpoints requiring DB/cache will fail.")
-    elif not settings_manager.pg_pool or not settings_manager.redis_pool:
-         log.warning("settings_manager pools appear uninitialized. Ensure the main bot initializes them.")
+    # Initialize settings_manager pools for the API server
+    # This is necessary because the API server runs in a different thread/event loop
+    # than the main bot, so it needs its own connection pools
+    if settings_manager:
+        log.info("Initializing database and cache connection pools for API server...")
+        try:
+            # Initialize the pools in the settings_manager module
+            await settings_manager.initialize_pools()
+            log.info("Database and cache connection pools initialized for API server.")
+        except Exception as e:
+            log.exception(f"Failed to initialize connection pools for API server: {e}")
+            log.error("Dashboard endpoints requiring DB/cache will fail.")
+    else:
+        log.error("settings_manager not imported. Dashboard endpoints requiring DB/cache will fail.")
 
     yield
 
@@ -161,6 +172,12 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
     # Save existing database data
     db.save_data()
     log.info("Existing database saved.")
+
+    # Close database/cache pools if they were initialized
+    if settings_manager and (settings_manager.pg_pool or settings_manager.redis_pool):
+        log.info("Closing database and cache connection pools for API server...")
+        await settings_manager.close_pools()
+        log.info("Database and cache connection pools closed for API server.")
 
     # Close aiohttp session
     if http_session:
@@ -698,10 +715,14 @@ async def dashboard_get_user_guilds(current_user: dict = Depends(get_dashboard_u
         log.debug(f"Dashboard: Fetched {len(user_guilds)} guilds for user {current_user['user_id']}")
 
         # 2. Fetch guilds the bot is in from our DB
-        bot_guild_ids = await settings_manager.get_bot_guild_ids()
-        if bot_guild_ids is None:
-            log.error("Dashboard: Failed to fetch bot guild IDs from settings_manager.")
-            raise HTTPException(status_code=500, detail="Could not retrieve bot's guild list.")
+        try:
+            bot_guild_ids = await settings_manager.get_bot_guild_ids()
+            if bot_guild_ids is None:
+                log.error("Dashboard: Failed to fetch bot guild IDs from settings_manager.")
+                raise HTTPException(status_code=500, detail="Could not retrieve bot's guild list.")
+        except Exception as e:
+            log.exception("Dashboard: Exception while fetching bot guild IDs from settings_manager.")
+            raise HTTPException(status_code=500, detail="Database error while retrieving bot's guild list.")
 
         # 3. Filter user guilds
         manageable_guilds = []
