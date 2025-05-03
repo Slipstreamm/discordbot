@@ -1,0 +1,98 @@
+body {
+    font-family: sans-serif;
+    margin: 2em;
+    background-color: #f4f4f4;
+}
+
+h1, h2, h3, h4 {
+    color: #333;
+}
+
+#dashboard-section, #settings-form {
+    background-color: #fff;
+    padding: 1.5em;
+    border-radius: 8px;
+    margin-top: 1em;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+label {
+    display: block;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+    font-weight: bold;
+}
+
+input[type="text"],
+select,
+textarea {
+    width: 95%;
+    padding: 8px;
+    margin-bottom: 1em;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+textarea {
+    resize: vertical;
+}
+
+button {
+    padding: 10px 15px;
+    background-color: #5865F2; /* Discord blue */
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-right: 5px;
+    margin-top: 5px;
+}
+
+button:hover {
+    background-color: #4752C4;
+}
+
+#logout-button {
+    background-color: #dc3545; /* Red */
+}
+#logout-button:hover {
+    background-color: #c82333;
+}
+
+button[id^="disable-"] {
+    background-color: #ffc107; /* Yellow/Orange */
+    color: #333;
+}
+button[id^="disable-"]:hover {
+    background-color: #e0a800;
+}
+
+
+hr {
+    border: 0;
+    height: 1px;
+    background: #ddd;
+    margin: 2em 0;
+}
+
+#cogs-list div {
+    margin-bottom: 0.5em;
+}
+
+#cogs-list label {
+    display: inline-block;
+    margin-left: 5px;
+    font-weight: normal;
+}
+
+/* Feedback messages */
+p[id$="-feedback"] {
+    font-style: italic;
+    color: green;
+    margin-top: 5px;
+    min-height: 1em; /* Reserve space */
+}
+
+p[id$="-feedback"].error {
+    color: red;
+}

@@ -12,8 +12,11 @@ google-cloud-storage
 beautifulsoup4
 requests
 fastapi
-uvicorn
+uvicorn[standard] # Use standard install for performance features like websockets if needed later
 python-multipart
+python-jose[cryptography] # For JWT handling in auth
+itsdangerous # For secure session cookies
+pydantic-settings # For loading config from .env
 tenacity
 cachetools
 pillow

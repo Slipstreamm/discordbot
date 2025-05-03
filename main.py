@@ -65,11 +65,45 @@ log = logging.getLogger(__name__) # Logger for main.py
 # --- Events ---
 @bot.event
 async def on_ready():
-    print(f'{bot.user.name} has connected to Discord!')
-    print(f'Bot ID: {bot.user.id}')
+    log.info(f'{bot.user.name} has connected to Discord!')
+    log.info(f'Bot ID: {bot.user.id}')
     # Set the bot's status
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="!help"))
-    print("Bot status set to 'Listening to !help'")
+    log.info("Bot status set to 'Listening to !help'")
+
+    # --- Add current guilds to DB ---
+    if settings_manager and settings_manager.pg_pool:
+        log.info("Syncing guilds with database...")
+        try:
+            async with settings_manager.pg_pool.acquire() as conn:
+                # Get guilds bot is currently in
+                current_guild_ids = {guild.id for guild in bot.guilds}
+                log.debug(f"Bot is currently in {len(current_guild_ids)} guilds.")
+
+                # Get guilds currently in DB
+                db_records = await conn.fetch("SELECT guild_id FROM guilds")
+                db_guild_ids = {record['guild_id'] for record in db_records}
+                log.debug(f"Found {len(db_guild_ids)} guilds in database.")
+
+                # Add guilds bot joined while offline
+                guilds_to_add = current_guild_ids - db_guild_ids
+                if guilds_to_add:
+                    log.info(f"Adding {len(guilds_to_add)} new guilds to database: {guilds_to_add}")
+                    await conn.executemany("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT DO NOTHING;",
+                                           [(guild_id,) for guild_id in guilds_to_add])
+
+                # Remove guilds bot left while offline
+                guilds_to_remove = db_guild_ids - current_guild_ids
+                if guilds_to_remove:
+                    log.info(f"Removing {len(guilds_to_remove)} guilds from database: {guilds_to_remove}")
+                    await conn.execute("DELETE FROM guilds WHERE guild_id = ANY($1::bigint[])", list(guilds_to_remove))
+
+            log.info("Guild sync with database complete.")
+        except Exception as e:
+            log.exception("Error syncing guilds with database on ready.")
+    else:
+        log.warning("Settings manager not available or pool not initialized, skipping guild sync.")
+    # -----------------------------
 
     # Patch Discord methods to store message content
     try:
@@ -111,6 +145,36 @@ async def on_shard_disconnect(shard_id):
         print(f"Shard {shard_id} reconnected successfully.")
     except Exception as e:
         print(f"Failed to reconnect shard {shard_id}: {e}")
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    """Adds guild to database when bot joins."""
+    log.info(f"Joined guild: {guild.name} ({guild.id})")
+    if settings_manager and settings_manager.pg_pool:
+        try:
+            async with settings_manager.pg_pool.acquire() as conn:
+                 await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT DO NOTHING;", guild.id)
+            log.info(f"Added guild {guild.id} to database.")
+        except Exception as e:
+            log.exception(f"Failed to add guild {guild.id} to database on join.")
+    else:
+        log.warning("Settings manager not available or pool not initialized, cannot add guild on join.")
+
+@bot.event
+async def on_guild_remove(guild: discord.Guild):
+    """Removes guild from database when bot leaves."""
+    log.info(f"Left guild: {guild.name} ({guild.id})")
+    if settings_manager and settings_manager.pg_pool:
+        try:
+            async with settings_manager.pg_pool.acquire() as conn:
+                # Note: Cascading deletes should handle related settings in other tables
+                await conn.execute("DELETE FROM guilds WHERE guild_id = $1", guild.id)
+            log.info(f"Removed guild {guild.id} from database.")
+        except Exception as e:
+            log.exception(f"Failed to remove guild {guild.id} from database on leave.")
+    else:
+        log.warning("Settings manager not available or pool not initialized, cannot remove guild on leave.")
+
 
 # Error handling - Updated to handle custom check failures
 @bot.event

@@ -494,3 +494,71 @@ async def check_command_permission(guild_id: int, command_name: str, member_role
         else:
             log.debug(f"Permission denied for '{command_name}' (Guild: {guild_id}). Member roles {member_roles_ids_str} not in allowed roles {allowed_role_ids_str}.")
             return False # Member has none of the specifically allowed roles
+
+
+async def get_command_permissions(guild_id: int, command_name: str) -> set[int] | None:
+    """Gets the set of allowed role IDs for a specific command, checking cache first. Returns None on error."""
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, cannot get permissions for command '{command_name}'.")
+        return None
+
+    cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
+    try:
+        # Check cache first
+        if await redis_pool.exists(cache_key):
+            cached_roles_str = await redis_pool.smembers(cache_key)
+            if cached_roles_str == {"__EMPTY_SET__"}:
+                log.debug(f"Cache hit (empty set) for cmd perms '{command_name}' (Guild: {guild_id}).")
+                return set() # Return empty set if explicitly empty
+            allowed_role_ids = {int(role_id) for role_id in cached_roles_str}
+            log.debug(f"Cache hit for cmd perms '{command_name}' (Guild: {guild_id})")
+            return allowed_role_ids
+    except Exception as e:
+        log.exception(f"Redis error getting cmd perms for '{command_name}' (Guild: {guild_id}): {e}")
+        # Fall through to DB query on Redis error
+
+    log.debug(f"Cache miss for cmd perms '{command_name}' (Guild: {guild_id})")
+    try:
+        async with pg_pool.acquire() as conn:
+            records = await conn.fetch(
+                "SELECT allowed_role_id FROM command_permissions WHERE guild_id = $1 AND command_name = $2",
+                guild_id, command_name
+            )
+        allowed_role_ids = {record['allowed_role_id'] for record in records}
+
+        # Cache the result
+        try:
+            allowed_role_ids_str = {str(role_id) for role_id in allowed_role_ids}
+            async with redis_pool.pipeline(transaction=True) as pipe:
+                pipe.delete(cache_key) # Ensure clean state
+                if allowed_role_ids_str:
+                    pipe.sadd(cache_key, *allowed_role_ids_str)
+                else:
+                    pipe.sadd(cache_key, "__EMPTY_SET__") # Marker for empty set
+                pipe.expire(cache_key, 3600) # Cache for 1 hour
+                await pipe.execute()
+        except Exception as e:
+            log.exception(f"Redis error setting cache for cmd perms '{command_name}' (Guild: {guild_id}): {e}")
+
+        return allowed_role_ids
+    except Exception as e:
+        log.exception(f"Database error getting cmd perms for '{command_name}' (Guild: {guild_id}): {e}")
+        return None # Indicate error
+
+
+# --- Bot Guild Information ---
+
+async def get_bot_guild_ids() -> set[int] | None:
+    """Gets the set of all guild IDs known to the bot from the guilds table. Returns None on error."""
+    if not pg_pool:
+        log.error("Pools not initialized, cannot get bot guild IDs.")
+        return None
+    try:
+        async with pg_pool.acquire() as conn:
+            records = await conn.fetch("SELECT guild_id FROM guilds")
+        guild_ids = {record['guild_id'] for record in records}
+        log.debug(f"Fetched {len(guild_ids)} guild IDs from database.")
+        return guild_ids
+    except Exception as e:
+        log.exception("Database error fetching bot guild IDs.")
+        return None
