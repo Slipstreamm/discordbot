@@ -12,7 +12,7 @@ import logging # Add logging
 from commands import load_all_cogs, reload_all_cogs
 from error_handler import handle_error, patch_discord_methods, store_interaction_content
 from utils import reload_script
-from discordbot import settings_manager # Import the settings manager
+import settings_manager # Import the settings manager
 
 # Import the unified API service runner and the sync API module
 import sys
