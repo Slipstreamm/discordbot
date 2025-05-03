@@ -32,7 +32,7 @@ def run_unified_api():
                 "api_server:app",
                 host=api_host,
                 port=api_port,
-                log_level="info",
+                log_level="debug", # Increase log level
                 ssl_certfile=ssl_cert,
                 ssl_keyfile=ssl_key
             )
@@ -42,7 +42,7 @@ def run_unified_api():
                 "api_server:app",
                 host=api_host,
                 port=api_port,
-                log_level="info"
+                log_level="debug" # Increase log level
             )
     except Exception as e:
         print(f"Error starting unified API service: {e}")
