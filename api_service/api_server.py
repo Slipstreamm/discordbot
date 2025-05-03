@@ -1,20 +1,31 @@
 import os
 import json
-import asyncio
-import datetime
-from typing import Dict, List, Optional, Any, Union
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response
+import sys
+from typing import Dict, List, Optional, Any
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.sessions import SessionMiddleware # Import SessionMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 import aiohttp
 from database import Database # Existing DB
 import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
-from typing import Dict, List, Optional, Any, Union # Ensure this is imported
+from contextlib import asynccontextmanager
+
+# --- Logging Configuration ---
+# Configure logging
+log = logging.getLogger("api_server")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("api_server.log")
+    ]
+)
 
 # --- Configuration Loading ---
 # Determine the path to the .env file relative to this api_server.py file
@@ -62,6 +73,7 @@ settings = get_api_settings()
 
 # --- Constants derived from settings ---
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
+DISCORD_API_ENDPOINT = DISCORD_API_BASE_URL  # Alias for backward compatibility
 DISCORD_AUTH_URL = (
     f"https://discord.com/api/oauth2/authorize?client_id={settings.DISCORD_CLIENT_ID}"
     f"&redirect_uri={settings.DISCORD_REDIRECT_URI}&response_type=code&scope=identify guilds"
@@ -69,6 +81,7 @@ DISCORD_AUTH_URL = (
 DISCORD_TOKEN_URL = f"{DISCORD_API_BASE_URL}/oauth2/token"
 DISCORD_USER_URL = f"{DISCORD_API_BASE_URL}/users/@me"
 DISCORD_USER_GUILDS_URL = f"{DISCORD_API_BASE_URL}/users/@me/guilds"
+DISCORD_REDIRECT_URI = settings.DISCORD_REDIRECT_URI  # Make it accessible directly
 
 
 # --- Gurt Stats Storage (IPC) ---
@@ -81,9 +94,7 @@ if not settings.GURT_STATS_PUSH_SECRET:
 from api_models import (
     Conversation,
     UserSettings,
-    Message,
     GetConversationsResponse,
-    GetSettingsResponse,
     UpdateSettingsRequest,
     UpdateConversationRequest,
     ApiResponse
@@ -101,8 +112,47 @@ except ImportError as e:
 
 # ============= API Setup =============
 
-# Create the FastAPI app
-app = FastAPI(title="Unified API Service")
+# Define lifespan context manager for FastAPI
+@asynccontextmanager
+async def lifespan(_: FastAPI):  # Underscore indicates unused but required parameter
+    """Lifespan event handler for FastAPI app."""
+    global http_session
+
+    # Startup: Initialize resources
+    log.info("Starting API server...")
+
+    # Initialize existing database
+    db.load_data()
+    log.info("Existing database loaded.")
+
+    # Start aiohttp session
+    http_session = aiohttp.ClientSession()
+    log.info("aiohttp session started.")
+
+    # Initialize settings_manager pools if available
+    # REMOVED: Pool initialization is handled by the main bot process (discordbot/main.py)
+    # The API will rely on the pools being initialized before it receives requests.
+    if not settings_manager:
+         log.error("settings_manager not imported. Dashboard endpoints requiring DB/cache will fail.")
+    elif not settings_manager.pg_pool or not settings_manager.redis_pool:
+         log.warning("settings_manager pools appear uninitialized. Ensure the main bot initializes them.")
+
+    yield
+
+    # Shutdown: Clean up resources
+    log.info("Shutting down API server...")
+
+    # Save existing database data
+    db.save_data()
+    log.info("Existing database saved.")
+
+    # Close aiohttp session
+    if http_session:
+        await http_session.close()
+        log.info("aiohttp session closed.")
+
+# Create the FastAPI app with lifespan
+app = FastAPI(title="Unified API Service", lifespan=lifespan)
 
 # Add Session Middleware for Dashboard Auth
 # Uses DASHBOARD_SECRET_KEY from settings
@@ -245,7 +295,7 @@ async def auth(code: str, state: str = None, code_verifier: str = None, request:
             referer = request.headers.get("referer") if request else None
             if referer and "code=" in referer:
                 # Extract the redirect URI from the referer
-                from urllib.parse import urlparse, parse_qs
+                from urllib.parse import urlparse
                 parsed_url = urlparse(referer)
                 base_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
                 print(f"Extracted base URL from referer: {base_url}")
@@ -604,7 +654,7 @@ async def dashboard_get_user_guilds(current_user: dict = Depends(get_dashboard_u
 async def dashboard_get_guild_settings(
     guild_id: int,
     current_user: dict = Depends(get_dashboard_user),
-    is_admin: bool = Depends(verify_dashboard_guild_admin)
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Fetches the current settings for a specific guild for the dashboard."""
     if not settings_manager:
@@ -668,7 +718,7 @@ async def dashboard_update_guild_settings(
     guild_id: int,
     settings_update: GuildSettingsUpdate,
     current_user: dict = Depends(get_dashboard_user),
-    is_admin: bool = Depends(verify_dashboard_guild_admin)
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Updates specific settings for a guild via the dashboard."""
     if not settings_manager:
@@ -722,7 +772,7 @@ async def dashboard_update_guild_settings(
 async def dashboard_get_all_guild_command_permissions(
     guild_id: int,
     current_user: dict = Depends(get_dashboard_user),
-    is_admin: bool = Depends(verify_dashboard_guild_admin)
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Fetches all command permissions currently set for the guild for the dashboard."""
     if not settings_manager:
@@ -757,7 +807,7 @@ async def dashboard_add_guild_command_permission(
     guild_id: int,
     permission: CommandPermission,
     current_user: dict = Depends(get_dashboard_user),
-    is_admin: bool = Depends(verify_dashboard_guild_admin)
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Adds a role permission for a specific command via the dashboard."""
     if not settings_manager:
@@ -782,7 +832,7 @@ async def dashboard_remove_guild_command_permission(
     guild_id: int,
     permission: CommandPermission,
     current_user: dict = Depends(get_dashboard_user),
-    is_admin: bool = Depends(verify_dashboard_guild_admin)
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Removes a role permission for a specific command via the dashboard."""
     if not settings_manager:
@@ -1029,42 +1079,7 @@ async def discordapi_sync_conversations(request: Request, user_id: str = Depends
         response["deprecation_message"] = "This endpoint (/discordapi/sync) is deprecated. Please use /api/sync instead."
     return response
 
-# ============= Server Startup/Shutdown Events =============
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize resources on API startup."""
-    global http_session
-    # Initialize existing database
-    db.load_data()
-    log.info("Existing database loaded.")
-    # Start aiohttp session
-    http_session = aiohttp.ClientSession()
-    log.info("aiohttp session started.")
-    # Initialize settings_manager pools if available
-    # REMOVED: Pool initialization is handled by the main bot process (discordbot/main.py)
-    # The API will rely on the pools being initialized before it receives requests.
-    if not settings_manager:
-         log.error("settings_manager not imported. Dashboard endpoints requiring DB/cache will fail.")
-    elif not settings_manager.pg_pool or not settings_manager.redis_pool:
-         log.warning("settings_manager pools appear uninitialized. Ensure the main bot initializes them.")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up resources on API shutdown."""
-    global http_session # Ensure http_session is accessible
-    # Save existing database data
-    db.save_data()
-    log.info("Existing database saved.")
-    # Close aiohttp session
-    if http_session:
-        await http_session.close()
-        log.info("aiohttp session closed.")
-    # Close settings_manager pools if available and initialized
-    # REMOVED: Pool closing is handled by the main bot process (discordbot/main.py)
-    # if settings_manager and settings_manager.pg_pool: # Check if pool was initialized
-    #     await settings_manager.close_pools()
-    #     log.info("Settings manager pools closed.")
+# Note: Server startup/shutdown events are now handled by the lifespan context manager above
 
 
 # ============= Code Verifier Endpoints =============
@@ -1168,12 +1183,7 @@ async def delete_token_by_user_id(user_id: str):
 
     return {"success": True, "message": "Token deleted successfully"}
 
-# ============= Server Shutdown =============
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Save all data on shutdown"""
-    db.save_data()
+# Note: Server shutdown is now handled by the lifespan context manager above
 
 # ============= Gurt Stats Endpoints (IPC Approach) =============
 
