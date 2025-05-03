@@ -499,6 +499,27 @@ class CommandPermission(BaseModel):
 class CommandPermissionsResponse(BaseModel):
     permissions: Dict[str, List[str]] # Command name -> List of allowed role IDs
 
+class CommandCustomizationResponse(BaseModel):
+    command_customizations: Dict[str, str] = {} # Original command name -> Custom command name
+    group_customizations: Dict[str, str] = {} # Original group name -> Custom group name
+    command_aliases: Dict[str, List[str]] = {} # Original command name -> List of aliases
+
+class CommandCustomizationUpdate(BaseModel):
+    command_name: str
+    custom_name: Optional[str] = None # If None, removes customization
+
+class GroupCustomizationUpdate(BaseModel):
+    group_name: str
+    custom_name: Optional[str] = None # If None, removes customization
+
+class CommandAliasAdd(BaseModel):
+    command_name: str
+    alias_name: str
+
+class CommandAliasRemove(BaseModel):
+    command_name: str
+    alias_name: str
+
 # --- Authentication Dependency (Dashboard Specific) ---
 # Note: This uses session cookies set by the dashboard auth flow
 async def get_dashboard_user(request: Request) -> dict:

@@ -2,10 +2,13 @@ import discord
 from discord.ext import commands
 import logging
 from discordbot import settings_manager # Assuming settings_manager is accessible
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
-# CORE_COGS definition moved to main.py
+# Get CORE_COGS from bot instance
+def get_core_cogs(bot):
+    return getattr(bot, 'core_cogs', {'SettingsCog', 'HelpCog'})
 
 class SettingsCog(commands.Cog, name="Settings"):
     """Commands for server administrators to configure the bot."""
@@ -65,7 +68,8 @@ class SettingsCog(commands.Cog, name="Settings"):
             await ctx.send(f"Error: Cog `{cog_name}` not found.")
             return
 
-        if cog_name in CORE_COGS:
+        core_cogs = get_core_cogs(self.bot)
+        if cog_name in core_cogs:
              await ctx.send(f"Error: Core cog `{cog_name}` cannot be disabled/enabled.")
              return
 
@@ -88,7 +92,8 @@ class SettingsCog(commands.Cog, name="Settings"):
             await ctx.send(f"Error: Cog `{cog_name}` not found.")
             return
 
-        if cog_name in CORE_COGS:
+        core_cogs = get_core_cogs(self.bot)
+        if cog_name in core_cogs:
              await ctx.send(f"Error: Core cog `{cog_name}` cannot be disabled.")
              return
 
@@ -114,8 +119,8 @@ class SettingsCog(commands.Cog, name="Settings"):
 
         embed = discord.Embed(title="Available Modules (Cogs)", color=discord.Color.blue())
         lines = []
-        # Use the CORE_COGS defined at the top of this file
-        core_cogs_list = CORE_COGS
+        # Get core cogs from bot instance
+        core_cogs_list = get_core_cogs(self.bot)
 
         for cog_name in sorted(self.bot.cogs.keys()):
             is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=default_behavior)
@@ -172,6 +177,223 @@ class SettingsCog(commands.Cog, name="Settings"):
             await ctx.send(f"Failed to remove permission for command `{command_name}`. Check logs.")
             log.error(f"Failed to remove permission for command '{command_name}', role {role_id} in guild {guild_id}")
 
+    # --- Command Customization Management ---
+    @commands.command(name='setcmdname', help="Sets a custom name for a slash command in this server. Usage: `setcmdname <original_name> <custom_name>`")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def set_command_name(self, ctx: commands.Context, original_name: str, custom_name: str):
+        """Sets a custom name for a slash command in the current guild."""
+        # Validate the original command exists
+        command_found = False
+        for cmd in self.bot.tree.get_commands():
+            if cmd.name == original_name:
+                command_found = True
+                break
+
+        if not command_found:
+            await ctx.send(f"Error: Slash command `{original_name}` not found.")
+            return
+
+        # Validate custom name format (Discord has restrictions on command names)
+        if not custom_name.islower() or not custom_name.replace('_', '').isalnum():
+            await ctx.send("Error: Custom command names must be lowercase and contain only letters, numbers, and underscores.")
+            return
+
+        if len(custom_name) < 1 or len(custom_name) > 32:
+            await ctx.send("Error: Custom command names must be between 1 and 32 characters long.")
+            return
+
+        guild_id = ctx.guild.id
+        success = await settings_manager.set_custom_command_name(guild_id, original_name, custom_name)
+
+        if success:
+            await ctx.send(f"Command `{original_name}` will now appear as `{custom_name}` in this server.\n"
+                          f"Note: You'll need to restart the bot or use `/sync` for changes to take effect.")
+            log.info(f"Custom command name set for '{original_name}' to '{custom_name}' in guild {guild_id} by {ctx.author.name}")
+        else:
+            await ctx.send(f"Failed to set custom command name. Check logs.")
+            log.error(f"Failed to set custom command name for '{original_name}' in guild {guild_id}")
+
+    @commands.command(name='resetcmdname', help="Resets a slash command to its original name. Usage: `resetcmdname <original_name>`")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def reset_command_name(self, ctx: commands.Context, original_name: str):
+        """Resets a slash command to its original name in the current guild."""
+        guild_id = ctx.guild.id
+        success = await settings_manager.set_custom_command_name(guild_id, original_name, None)
+
+        if success:
+            await ctx.send(f"Command `{original_name}` has been reset to its original name in this server.\n"
+                          f"Note: You'll need to restart the bot or use `/sync` for changes to take effect.")
+            log.info(f"Custom command name reset for '{original_name}' in guild {guild_id} by {ctx.author.name}")
+        else:
+            await ctx.send(f"Failed to reset command name. Check logs.")
+            log.error(f"Failed to reset command name for '{original_name}' in guild {guild_id}")
+
+    @commands.command(name='setgroupname', help="Sets a custom name for a command group. Usage: `setgroupname <original_name> <custom_name>`")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def set_group_name(self, ctx: commands.Context, original_name: str, custom_name: str):
+        """Sets a custom name for a command group in the current guild."""
+        # Validate the original group exists
+        group_found = False
+        for cmd in self.bot.tree.get_commands():
+            if hasattr(cmd, 'parent') and cmd.parent and cmd.parent.name == original_name:
+                group_found = True
+                break
+
+        if not group_found:
+            await ctx.send(f"Error: Command group `{original_name}` not found.")
+            return
+
+        # Validate custom name format (Discord has restrictions on command names)
+        if not custom_name.islower() or not custom_name.replace('_', '').isalnum():
+            await ctx.send("Error: Custom group names must be lowercase and contain only letters, numbers, and underscores.")
+            return
+
+        if len(custom_name) < 1 or len(custom_name) > 32:
+            await ctx.send("Error: Custom group names must be between 1 and 32 characters long.")
+            return
+
+        guild_id = ctx.guild.id
+        success = await settings_manager.set_custom_group_name(guild_id, original_name, custom_name)
+
+        if success:
+            await ctx.send(f"Command group `{original_name}` will now appear as `{custom_name}` in this server.\n"
+                          f"Note: You'll need to restart the bot or use `/sync` for changes to take effect.")
+            log.info(f"Custom group name set for '{original_name}' to '{custom_name}' in guild {guild_id} by {ctx.author.name}")
+        else:
+            await ctx.send(f"Failed to set custom group name. Check logs.")
+            log.error(f"Failed to set custom group name for '{original_name}' in guild {guild_id}")
+
+    @commands.command(name='resetgroupname', help="Resets a command group to its original name. Usage: `resetgroupname <original_name>`")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def reset_group_name(self, ctx: commands.Context, original_name: str):
+        """Resets a command group to its original name in the current guild."""
+        guild_id = ctx.guild.id
+        success = await settings_manager.set_custom_group_name(guild_id, original_name, None)
+
+        if success:
+            await ctx.send(f"Command group `{original_name}` has been reset to its original name in this server.\n"
+                          f"Note: You'll need to restart the bot or use `/sync` for changes to take effect.")
+            log.info(f"Custom group name reset for '{original_name}' in guild {guild_id} by {ctx.author.name}")
+        else:
+            await ctx.send(f"Failed to reset group name. Check logs.")
+            log.error(f"Failed to reset group name for '{original_name}' in guild {guild_id}")
+
+    @commands.command(name='addcmdalias', help="Adds an alias for a command. Usage: `addcmdalias <original_name> <alias_name>`")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def add_command_alias(self, ctx: commands.Context, original_name: str, alias_name: str):
+        """Adds an alias for a command in the current guild."""
+        # Validate the original command exists
+        command = self.bot.get_command(original_name)
+        if not command:
+            await ctx.send(f"Error: Command `{original_name}` not found.")
+            return
+
+        # Validate alias format
+        if not alias_name.islower() or not alias_name.replace('_', '').isalnum():
+            await ctx.send("Error: Aliases must be lowercase and contain only letters, numbers, and underscores.")
+            return
+
+        if len(alias_name) < 1 or len(alias_name) > 32:
+            await ctx.send("Error: Aliases must be between 1 and 32 characters long.")
+            return
+
+        guild_id = ctx.guild.id
+        success = await settings_manager.add_command_alias(guild_id, original_name, alias_name)
+
+        if success:
+            await ctx.send(f"Added alias `{alias_name}` for command `{original_name}` in this server.")
+            log.info(f"Command alias added for '{original_name}': '{alias_name}' in guild {guild_id} by {ctx.author.name}")
+        else:
+            await ctx.send(f"Failed to add command alias. Check logs.")
+            log.error(f"Failed to add command alias for '{original_name}' in guild {guild_id}")
+
+    @commands.command(name='removecmdalias', help="Removes an alias for a command. Usage: `removecmdalias <original_name> <alias_name>`")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def remove_command_alias(self, ctx: commands.Context, original_name: str, alias_name: str):
+        """Removes an alias for a command in the current guild."""
+        guild_id = ctx.guild.id
+        success = await settings_manager.remove_command_alias(guild_id, original_name, alias_name)
+
+        if success:
+            await ctx.send(f"Removed alias `{alias_name}` for command `{original_name}` in this server.")
+            log.info(f"Command alias removed for '{original_name}': '{alias_name}' in guild {guild_id} by {ctx.author.name}")
+        else:
+            await ctx.send(f"Failed to remove command alias. Check logs.")
+            log.error(f"Failed to remove command alias for '{original_name}' in guild {guild_id}")
+
+    @commands.command(name='listcmdaliases', help="Lists all command aliases for this server.")
+    @commands.guild_only()
+    async def list_command_aliases(self, ctx: commands.Context):
+        """Lists all command aliases for the current guild."""
+        guild_id = ctx.guild.id
+        aliases_dict = await settings_manager.get_all_command_aliases(guild_id)
+
+        if aliases_dict is None:
+            await ctx.send("Failed to retrieve command aliases. Check logs.")
+            return
+
+        if not aliases_dict:
+            await ctx.send("No command aliases are set for this server.")
+            return
+
+        embed = discord.Embed(title="Command Aliases", color=discord.Color.blue())
+        for cmd_name, aliases in aliases_dict.items():
+            embed.add_field(name=f"Command: {cmd_name}", value=", ".join([f"`{alias}`" for alias in aliases]), inline=False)
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name='listcustomcmds', help="Lists all custom command names for this server.")
+    @commands.guild_only()
+    async def list_custom_commands(self, ctx: commands.Context):
+        """Lists all custom command names for the current guild."""
+        guild_id = ctx.guild.id
+        cmd_customizations = await settings_manager.get_all_command_customizations(guild_id)
+        group_customizations = await settings_manager.get_all_group_customizations(guild_id)
+
+        if cmd_customizations is None or group_customizations is None:
+            await ctx.send("Failed to retrieve command customizations. Check logs.")
+            return
+
+        if not cmd_customizations and not group_customizations:
+            await ctx.send("No command customizations are set for this server.")
+            return
+
+        embed = discord.Embed(title="Command Customizations", color=discord.Color.blue())
+
+        if cmd_customizations:
+            cmd_text = "\n".join([f"`{orig}` → `{custom}`" for orig, custom in cmd_customizations.items()])
+            embed.add_field(name="Custom Command Names", value=cmd_text, inline=False)
+
+        if group_customizations:
+            group_text = "\n".join([f"`{orig}` → `{custom}`" for orig, custom in group_customizations.items()])
+            embed.add_field(name="Custom Group Names", value=group_text, inline=False)
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name='synccmds', help="Syncs slash commands with Discord to apply customizations.")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def sync_commands(self, ctx: commands.Context):
+        """Syncs slash commands with Discord to apply customizations."""
+        try:
+            guild = ctx.guild
+            await ctx.send("Syncing commands with Discord... This may take a moment.")
+
+            # Sync commands for this guild specifically
+            synced = await self.bot.tree.sync(guild=guild)
+
+            await ctx.send(f"Successfully synced {len(synced)} commands for this server.")
+            log.info(f"Commands synced for guild {guild.id} by {ctx.author.name}")
+        except Exception as e:
+            await ctx.send(f"Failed to sync commands: {str(e)}")
+            log.error(f"Failed to sync commands for guild {ctx.guild.id}: {e}")
+
     # TODO: Add command to list permissions?
 
     # --- Error Handling for this Cog ---
@@ -180,6 +402,13 @@ class SettingsCog(commands.Cog, name="Settings"):
     @disable_cog.error
     @allow_command.error
     @disallow_command.error
+    @set_command_name.error
+    @reset_command_name.error
+    @set_group_name.error
+    @reset_group_name.error
+    @add_command_alias.error
+    @remove_command_alias.error
+    @sync_commands.error
     async def on_command_error(self, ctx: commands.Context, error):
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("You need Administrator permissions to use this command.")

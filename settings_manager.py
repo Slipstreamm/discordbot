@@ -116,10 +116,47 @@ async def initialize_database():
                     FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
                 );
             """)
+
+            # Command Customization table - Stores guild-specific command names
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS command_customization (
+                    guild_id BIGINT NOT NULL,
+                    original_command_name TEXT NOT NULL,
+                    custom_command_name TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, original_command_name),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+
+            # Command Group Customization table - Stores guild-specific command group names
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS command_group_customization (
+                    guild_id BIGINT NOT NULL,
+                    original_group_name TEXT NOT NULL,
+                    custom_group_name TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, original_group_name),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+
+            # Command Aliases table - Stores additional aliases for commands
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS command_aliases (
+                    guild_id BIGINT NOT NULL,
+                    original_command_name TEXT NOT NULL,
+                    alias_name TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, original_command_name, alias_name),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+
             # Consider adding indexes later for performance on large tables
             # await conn.execute("CREATE INDEX IF NOT EXISTS idx_guild_settings_guild ON guild_settings (guild_id);")
             # await conn.execute("CREATE INDEX IF NOT EXISTS idx_enabled_cogs_guild ON enabled_cogs (guild_id);")
             # await conn.execute("CREATE INDEX IF NOT EXISTS idx_command_permissions_guild ON command_permissions (guild_id);")
+            # await conn.execute("CREATE INDEX IF NOT EXISTS idx_command_customization_guild ON command_customization (guild_id);")
+            # await conn.execute("CREATE INDEX IF NOT EXISTS idx_command_group_customization_guild ON command_group_customization (guild_id);")
+            # await conn.execute("CREATE INDEX IF NOT EXISTS idx_command_aliases_guild ON command_aliases (guild_id);")
 
     log.info("Database schema initialization complete.")
 
@@ -561,4 +598,351 @@ async def get_bot_guild_ids() -> set[int] | None:
         return guild_ids
     except Exception as e:
         log.exception("Database error fetching bot guild IDs.")
+        return None
+
+
+# --- Command Customization Functions ---
+
+async def get_custom_command_name(guild_id: int, original_command_name: str) -> str | None:
+    """Gets the custom command name for a guild, checking cache first.
+       Returns None if no custom name is set."""
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, returning None for custom command name '{original_command_name}'.")
+        return None
+
+    cache_key = _get_redis_key(guild_id, "cmd_custom", original_command_name)
+    try:
+        cached_value = await redis_pool.get(cache_key)
+        if cached_value is not None:
+            log.debug(f"Cache hit for custom command name '{original_command_name}' (Guild: {guild_id})")
+            return None if cached_value == "__NONE__" else cached_value
+    except Exception as e:
+        log.exception(f"Redis error getting custom command name for '{original_command_name}' (Guild: {guild_id}): {e}")
+
+    log.debug(f"Cache miss for custom command name '{original_command_name}' (Guild: {guild_id})")
+    async with pg_pool.acquire() as conn:
+        custom_name = await conn.fetchval(
+            "SELECT custom_command_name FROM command_customization WHERE guild_id = $1 AND original_command_name = $2",
+            guild_id, original_command_name
+        )
+
+    # Cache the result (even if None)
+    try:
+        value_to_cache = custom_name if custom_name is not None else "__NONE__"
+        await redis_pool.set(cache_key, value_to_cache, ex=3600)  # Cache for 1 hour
+    except Exception as e:
+        log.exception(f"Redis error setting cache for custom command name '{original_command_name}' (Guild: {guild_id}): {e}")
+
+    return custom_name
+
+
+async def set_custom_command_name(guild_id: int, original_command_name: str, custom_command_name: str | None) -> bool:
+    """Sets a custom command name for a guild and updates the cache.
+       Setting custom_command_name to None removes the customization."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot set custom command name for '{original_command_name}'.")
+        return False
+
+    cache_key = _get_redis_key(guild_id, "cmd_custom", original_command_name)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+
+            if custom_command_name is not None:
+                # Upsert the custom name
+                await conn.execute(
+                    """
+                    INSERT INTO command_customization (guild_id, original_command_name, custom_command_name)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (guild_id, original_command_name) DO UPDATE SET custom_command_name = $3;
+                    """,
+                    guild_id, original_command_name, custom_command_name
+                )
+                # Update cache
+                await redis_pool.set(cache_key, custom_command_name, ex=3600)
+                log.info(f"Set custom command name for '{original_command_name}' to '{custom_command_name}' for guild {guild_id}")
+            else:
+                # Delete the customization if value is None
+                await conn.execute(
+                    "DELETE FROM command_customization WHERE guild_id = $1 AND original_command_name = $2",
+                    guild_id, original_command_name
+                )
+                # Update cache to indicate no customization
+                await redis_pool.set(cache_key, "__NONE__", ex=3600)
+                log.info(f"Removed custom command name for '{original_command_name}' for guild {guild_id}")
+
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error setting custom command name for '{original_command_name}' in guild {guild_id}: {e}")
+        # Attempt to invalidate cache on error
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+            log.exception(f"Failed to invalidate Redis cache for custom command name '{original_command_name}' (Guild: {guild_id}): {redis_err}")
+        return False
+
+
+async def get_custom_group_name(guild_id: int, original_group_name: str) -> str | None:
+    """Gets the custom command group name for a guild, checking cache first.
+       Returns None if no custom name is set."""
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, returning None for custom group name '{original_group_name}'.")
+        return None
+
+    cache_key = _get_redis_key(guild_id, "group_custom", original_group_name)
+    try:
+        cached_value = await redis_pool.get(cache_key)
+        if cached_value is not None:
+            log.debug(f"Cache hit for custom group name '{original_group_name}' (Guild: {guild_id})")
+            return None if cached_value == "__NONE__" else cached_value
+    except Exception as e:
+        log.exception(f"Redis error getting custom group name for '{original_group_name}' (Guild: {guild_id}): {e}")
+
+    log.debug(f"Cache miss for custom group name '{original_group_name}' (Guild: {guild_id})")
+    async with pg_pool.acquire() as conn:
+        custom_name = await conn.fetchval(
+            "SELECT custom_group_name FROM command_group_customization WHERE guild_id = $1 AND original_group_name = $2",
+            guild_id, original_group_name
+        )
+
+    # Cache the result (even if None)
+    try:
+        value_to_cache = custom_name if custom_name is not None else "__NONE__"
+        await redis_pool.set(cache_key, value_to_cache, ex=3600)  # Cache for 1 hour
+    except Exception as e:
+        log.exception(f"Redis error setting cache for custom group name '{original_group_name}' (Guild: {guild_id}): {e}")
+
+    return custom_name
+
+
+async def set_custom_group_name(guild_id: int, original_group_name: str, custom_group_name: str | None) -> bool:
+    """Sets a custom command group name for a guild and updates the cache.
+       Setting custom_group_name to None removes the customization."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot set custom group name for '{original_group_name}'.")
+        return False
+
+    cache_key = _get_redis_key(guild_id, "group_custom", original_group_name)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+
+            if custom_group_name is not None:
+                # Upsert the custom name
+                await conn.execute(
+                    """
+                    INSERT INTO command_group_customization (guild_id, original_group_name, custom_group_name)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (guild_id, original_group_name) DO UPDATE SET custom_group_name = $3;
+                    """,
+                    guild_id, original_group_name, custom_group_name
+                )
+                # Update cache
+                await redis_pool.set(cache_key, custom_group_name, ex=3600)
+                log.info(f"Set custom group name for '{original_group_name}' to '{custom_group_name}' for guild {guild_id}")
+            else:
+                # Delete the customization if value is None
+                await conn.execute(
+                    "DELETE FROM command_group_customization WHERE guild_id = $1 AND original_group_name = $2",
+                    guild_id, original_group_name
+                )
+                # Update cache to indicate no customization
+                await redis_pool.set(cache_key, "__NONE__", ex=3600)
+                log.info(f"Removed custom group name for '{original_group_name}' for guild {guild_id}")
+
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error setting custom group name for '{original_group_name}' in guild {guild_id}: {e}")
+        # Attempt to invalidate cache on error
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+            log.exception(f"Failed to invalidate Redis cache for custom group name '{original_group_name}' (Guild: {guild_id}): {redis_err}")
+        return False
+
+
+async def add_command_alias(guild_id: int, original_command_name: str, alias_name: str) -> bool:
+    """Adds an alias for a command in a guild and invalidates cache."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot add alias for command '{original_command_name}'.")
+        return False
+
+    cache_key = _get_redis_key(guild_id, "cmd_aliases", original_command_name)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            # Add the alias
+            await conn.execute(
+                """
+                INSERT INTO command_aliases (guild_id, original_command_name, alias_name)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (guild_id, original_command_name, alias_name) DO NOTHING;
+                """,
+                guild_id, original_command_name, alias_name
+            )
+
+        # Invalidate cache after DB operation succeeds
+        await redis_pool.delete(cache_key)
+        log.info(f"Added alias '{alias_name}' for command '{original_command_name}' in guild {guild_id}")
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error adding alias for command '{original_command_name}' in guild {guild_id}: {e}")
+        # Attempt to invalidate cache even on error
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+            log.exception(f"Failed to invalidate Redis cache for command aliases '{original_command_name}' (Guild: {guild_id}): {redis_err}")
+        return False
+
+
+async def remove_command_alias(guild_id: int, original_command_name: str, alias_name: str) -> bool:
+    """Removes an alias for a command in a guild and invalidates cache."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot remove alias for command '{original_command_name}'.")
+        return False
+
+    cache_key = _get_redis_key(guild_id, "cmd_aliases", original_command_name)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Remove the alias
+            await conn.execute(
+                """
+                DELETE FROM command_aliases
+                WHERE guild_id = $1 AND original_command_name = $2 AND alias_name = $3;
+                """,
+                guild_id, original_command_name, alias_name
+            )
+
+        # Invalidate cache after DB operation succeeds
+        await redis_pool.delete(cache_key)
+        log.info(f"Removed alias '{alias_name}' for command '{original_command_name}' in guild {guild_id}")
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error removing alias for command '{original_command_name}' in guild {guild_id}: {e}")
+        # Attempt to invalidate cache even on error
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+            log.exception(f"Failed to invalidate Redis cache for command aliases '{original_command_name}' (Guild: {guild_id}): {redis_err}")
+        return False
+
+
+async def get_command_aliases(guild_id: int, original_command_name: str) -> list[str] | None:
+    """Gets the list of aliases for a command in a guild, checking cache first.
+       Returns empty list if no aliases are set, None on error."""
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, returning None for command aliases '{original_command_name}'.")
+        return None
+
+    cache_key = _get_redis_key(guild_id, "cmd_aliases", original_command_name)
+    try:
+        # Check cache first
+        cached_aliases = await redis_pool.lrange(cache_key, 0, -1)
+        if cached_aliases is not None:
+            if len(cached_aliases) == 1 and cached_aliases[0] == "__EMPTY_LIST__":
+                log.debug(f"Cache hit (empty list) for command aliases '{original_command_name}' (Guild: {guild_id}).")
+                return []
+            log.debug(f"Cache hit for command aliases '{original_command_name}' (Guild: {guild_id})")
+            return cached_aliases
+    except Exception as e:
+        log.exception(f"Redis error getting command aliases for '{original_command_name}' (Guild: {guild_id}): {e}")
+        # Fall through to DB query on Redis error
+
+    log.debug(f"Cache miss for command aliases '{original_command_name}' (Guild: {guild_id})")
+    try:
+        async with pg_pool.acquire() as conn:
+            records = await conn.fetch(
+                "SELECT alias_name FROM command_aliases WHERE guild_id = $1 AND original_command_name = $2",
+                guild_id, original_command_name
+            )
+        aliases = [record['alias_name'] for record in records]
+
+        # Cache the result
+        try:
+            async with redis_pool.pipeline(transaction=True) as pipe:
+                pipe.delete(cache_key)  # Ensure clean state
+                if aliases:
+                    pipe.rpush(cache_key, *aliases)
+                else:
+                    pipe.rpush(cache_key, "__EMPTY_LIST__")  # Marker for empty list
+                pipe.expire(cache_key, 3600)  # Cache for 1 hour
+                await pipe.execute()
+        except Exception as e:
+            log.exception(f"Redis error setting cache for command aliases '{original_command_name}' (Guild: {guild_id}): {e}")
+
+        return aliases
+    except Exception as e:
+        log.exception(f"Database error getting command aliases for '{original_command_name}' (Guild: {guild_id}): {e}")
+        return None  # Indicate error
+
+
+async def get_all_command_customizations(guild_id: int) -> dict[str, str] | None:
+    """Gets all command customizations for a guild.
+       Returns a dictionary mapping original command names to custom names, or None on error."""
+    if not pg_pool:
+        log.error("Pools not initialized, cannot get command customizations.")
+        return None
+    try:
+        async with pg_pool.acquire() as conn:
+            records = await conn.fetch(
+                "SELECT original_command_name, custom_command_name FROM command_customization WHERE guild_id = $1",
+                guild_id
+            )
+        customizations = {record['original_command_name']: record['custom_command_name'] for record in records}
+        log.debug(f"Fetched {len(customizations)} command customizations for guild {guild_id}.")
+        return customizations
+    except Exception as e:
+        log.exception(f"Database error fetching command customizations for guild {guild_id}: {e}")
+        return None
+
+
+async def get_all_group_customizations(guild_id: int) -> dict[str, str] | None:
+    """Gets all command group customizations for a guild.
+       Returns a dictionary mapping original group names to custom names, or None on error."""
+    if not pg_pool:
+        log.error("Pools not initialized, cannot get group customizations.")
+        return None
+    try:
+        async with pg_pool.acquire() as conn:
+            records = await conn.fetch(
+                "SELECT original_group_name, custom_group_name FROM command_group_customization WHERE guild_id = $1",
+                guild_id
+            )
+        customizations = {record['original_group_name']: record['custom_group_name'] for record in records}
+        log.debug(f"Fetched {len(customizations)} group customizations for guild {guild_id}.")
+        return customizations
+    except Exception as e:
+        log.exception(f"Database error fetching group customizations for guild {guild_id}: {e}")
+        return None
+
+
+async def get_all_command_aliases(guild_id: int) -> dict[str, list[str]] | None:
+    """Gets all command aliases for a guild.
+       Returns a dictionary mapping original command names to lists of aliases, or None on error."""
+    if not pg_pool:
+        log.error("Pools not initialized, cannot get command aliases.")
+        return None
+    try:
+        async with pg_pool.acquire() as conn:
+            records = await conn.fetch(
+                "SELECT original_command_name, alias_name FROM command_aliases WHERE guild_id = $1",
+                guild_id
+            )
+
+        # Group by original_command_name
+        aliases_dict = {}
+        for record in records:
+            cmd_name = record['original_command_name']
+            alias = record['alias_name']
+            if cmd_name not in aliases_dict:
+                aliases_dict[cmd_name] = []
+            aliases_dict[cmd_name].append(alias)
+
+        log.debug(f"Fetched aliases for {len(aliases_dict)} commands for guild {guild_id}.")
+        return aliases_dict
+    except Exception as e:
+        log.exception(f"Database error fetching command aliases for guild {guild_id}: {e}")
         return None

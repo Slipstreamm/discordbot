@@ -13,6 +13,7 @@ from commands import load_all_cogs, reload_all_cogs
 from error_handler import handle_error, patch_discord_methods, store_interaction_content
 from utils import reload_script
 import settings_manager # Import the settings manager
+import command_customization # Import command customization utilities
 
 # Import the unified API service runner and the sync API module
 import sys
@@ -124,13 +125,20 @@ async def on_ready():
         commands_before = [cmd.name for cmd in bot.tree.get_commands()]
         print(f"Commands before sync: {commands_before}")
 
-        # Perform sync
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
+        # Sync global commands first
+        synced_global = await bot.tree.sync()
+        print(f"Synced {len(synced_global)} global command(s)")
+
+        # Now sync guild-specific commands with customizations
+        print("Syncing guild-specific command customizations...")
+        guild_syncs = await command_customization.register_all_guild_commands(bot)
+
+        total_guild_syncs = sum(len(cmds) for cmds in guild_syncs.values())
+        print(f"Synced commands for {len(guild_syncs)} guilds with a total of {total_guild_syncs} customized commands")
 
         # List commands after sync
         commands_after = [cmd.name for cmd in bot.tree.get_commands()]
-        print(f"Commands after sync: {commands_after}")
+        print(f"Global commands after sync: {commands_after}")
 
     except Exception as e:
         print(f"Failed to sync commands: {e}")
@@ -148,13 +156,21 @@ async def on_shard_disconnect(shard_id):
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
-    """Adds guild to database when bot joins."""
+    """Adds guild to database when bot joins and syncs commands."""
     log.info(f"Joined guild: {guild.name} ({guild.id})")
     if settings_manager and settings_manager.pg_pool:
         try:
             async with settings_manager.pg_pool.acquire() as conn:
                  await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT DO NOTHING;", guild.id)
             log.info(f"Added guild {guild.id} to database.")
+
+            # Sync commands for the new guild
+            try:
+                log.info(f"Syncing commands for new guild: {guild.name} ({guild.id})")
+                synced = await command_customization.register_guild_commands(bot, guild)
+                log.info(f"Synced {len(synced)} commands for guild {guild.id}")
+            except Exception as e:
+                log.exception(f"Failed to sync commands for new guild {guild.id}: {e}")
         except Exception as e:
             log.exception(f"Failed to add guild {guild.id} to database on join.")
     else:
