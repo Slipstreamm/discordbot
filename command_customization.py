@@ -7,7 +7,7 @@ from discord import app_commands
 import logging
 from typing import Dict, List, Optional, Tuple, Any, Callable, Awaitable
 import asyncio
-from discordbot import settings_manager
+import settings_manager
 
 log = logging.getLogger(__name__)
 

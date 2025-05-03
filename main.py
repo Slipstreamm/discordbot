@@ -18,7 +18,7 @@ import command_customization # Import command customization utilities
 # Import the unified API service runner and the sync API module
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from discordbot.run_unified_api import start_api_in_thread
+from run_unified_api import start_api_in_thread
 import discord_bot_sync_api # Import the module to set the cog instance
 
 # Check if API dependencies are available
