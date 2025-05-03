@@ -1042,14 +1042,12 @@ async def startup_event():
     http_session = aiohttp.ClientSession()
     log.info("aiohttp session started.")
     # Initialize settings_manager pools if available
-    if settings_manager:
-        try:
-            await settings_manager.initialize_pools()
-            log.info("Settings manager pools initialized.")
-        except Exception as e:
-            log.exception("Failed to initialize settings_manager pools during API startup.")
-    else:
-        log.error("settings_manager not imported, database/cache pools NOT initialized for API.")
+    # REMOVED: Pool initialization is handled by the main bot process (discordbot/main.py)
+    # The API will rely on the pools being initialized before it receives requests.
+    if not settings_manager:
+         log.error("settings_manager not imported. Dashboard endpoints requiring DB/cache will fail.")
+    elif not settings_manager.pg_pool or not settings_manager.redis_pool:
+         log.warning("settings_manager pools appear uninitialized. Ensure the main bot initializes them.")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -1063,9 +1061,10 @@ async def shutdown_event():
         await http_session.close()
         log.info("aiohttp session closed.")
     # Close settings_manager pools if available and initialized
-    if settings_manager and settings_manager.pg_pool: # Check if pool was initialized
-        await settings_manager.close_pools()
-        log.info("Settings manager pools closed.")
+    # REMOVED: Pool closing is handled by the main bot process (discordbot/main.py)
+    # if settings_manager and settings_manager.pg_pool: # Check if pool was initialized
+    #     await settings_manager.close_pools()
+    #     log.info("Settings manager pools closed.")
 
 
 # ============= Code Verifier Endpoints =============
