@@ -446,6 +446,29 @@ async def set_user_job(user_id: int, job_name: Optional[str]):
         except Exception as e:
             log.warning(f"Redis DELETE failed for key {cache_key}: {e}", exc_info=True)
 
+async def remove_user_job(user_id: int):
+    """Removes a user's job by setting job_name to NULL. Invalidates cache."""
+    if not pool: raise ConnectionError("Database pool not initialized.")
+    cache_key = CACHE_JOB_KEY.format(user_id=user_id)
+
+    async with pool.acquire() as conn:
+        # Ensure job entry exists
+        await get_user_job(user_id)
+        # Set job_name to NULL, reset level/xp
+        await conn.execute(
+            "UPDATE user_jobs SET job_name = NULL, job_level = 1, job_xp = 0 WHERE user_id = $1",
+            user_id
+        )
+        log.info(f"Removed job for user_id {user_id}. Level/XP reset.")
+
+    # Invalidate Cache
+    if redis_client:
+        try:
+            await redis_client.delete(cache_key)
+            log.debug(f"Invalidated cache for job user_id: {user_id} after job removal")
+        except Exception as e:
+            log.warning(f"Redis DELETE failed for key {cache_key}: {e}", exc_info=True)
+
 async def add_job_xp(user_id: int, xp_amount: int) -> Tuple[int, int, bool]:
     """Adds XP to the user's job, handles level ups. Invalidates cache. Returns (new_level, new_xp, did_level_up)."""
     if not pool: raise ConnectionError("Database pool not initialized.")
@@ -515,6 +538,45 @@ async def set_job_cooldown(user_id: int):
             log.debug(f"Invalidated cache for job user_id: {user_id} after setting cooldown.")
         except Exception as e:
             log.warning(f"Redis DELETE failed for key {cache_key} after setting cooldown: {e}", exc_info=True)
+
+async def get_available_jobs() -> List[Dict[str, Any]]:
+    """Returns a list of available jobs with their details."""
+    # This is a static list for now, but could be moved to the database in the future
+    jobs = [
+        {
+            "key": "miner",
+            "name": "Miner",
+            "description": "Mine for ores and gems.",
+            "base_pay": 20,
+            "cooldown_minutes": 30,
+            "items": ["raw_iron", "coal", "shiny_gem"]
+        },
+        {
+            "key": "fisher",
+            "name": "Fisher",
+            "description": "Catch fish from the sea.",
+            "base_pay": 15,
+            "cooldown_minutes": 20,
+            "items": ["common_fish", "rare_fish", "treasure_chest"]
+        },
+        {
+            "key": "blacksmith",
+            "name": "Blacksmith",
+            "description": "Craft metal items.",
+            "base_pay": 25,
+            "cooldown_minutes": 45,
+            "items": ["iron_ingot", "basic_tool"]
+        },
+        {
+            "key": "farmer",
+            "name": "Farmer",
+            "description": "Grow and harvest crops.",
+            "base_pay": 10,
+            "cooldown_minutes": 15,
+            "items": []
+        }
+    ]
+    return jobs
 
 # --- Item/Inventory Functions ---
 
