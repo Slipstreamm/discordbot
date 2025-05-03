@@ -134,11 +134,11 @@ class EarningCommands(commands.Cog):
         current_balance = await database.get_balance(user_id)
         await ctx.send(f"{random.choice(work_messages)} Your new balance is **${current_balance:,}**.")
 
-    @commands.hybrid_command(name="search", description="Search around for some spare change.")
-    async def search(self, ctx: commands.Context):
-        """Allows users to search for a small chance of finding money."""
+    @commands.hybrid_command(name="scavenge", description="Scavenge around for some spare change.") # Renamed to avoid conflict
+    async def scavenge(self, ctx: commands.Context): # Renamed function
+        """Allows users to scavenge for a small chance of finding money."""
         user_id = ctx.author.id
-        command_name = "search"
+        command_name = "scavenge" # Update command name for cooldown tracking
         cooldown_duration = datetime.timedelta(minutes=30) # 30-minute cooldown
         success_chance = 0.25 # 25% chance to find something
         min_reward = 1
@@ -161,19 +161,19 @@ class EarningCommands(commands.Cog):
         # Set cooldown regardless of success
         await database.set_cooldown(user_id, command_name)
 
-        # Flavor text for searching
-        search_locations = [
+        # Flavor text for scavenging
+        scavenge_locations = [ # Renamed variable for clarity
             "under the sofa cushions", "in an old coat pocket", "behind the dumpster",
             "in a dusty corner", "on the sidewalk", "in a forgotten drawer"
         ]
-        location = random.choice(search_locations)
+        location = random.choice(scavenge_locations)
 
         if random.random() < success_chance:
             reward_amount = random.randint(min_reward, max_reward)
             await database.update_balance(user_id, reward_amount)
             current_balance = await database.get_balance(user_id)
-            await ctx.send(f"🔍 You searched {location} and found **${reward_amount:,}**! Your new balance is **${current_balance:,}**.")
+            await ctx.send(f"🔍 You scavenged {location} and found **${reward_amount:,}**! Your new balance is **${current_balance:,}**.")
         else:
-            await ctx.send(f"🔍 You searched {location} but found nothing but lint.")
+            await ctx.send(f"🔍 You scavenged {location} but found nothing but lint.")
 
 # No setup function needed here, it will be in __init__.py
