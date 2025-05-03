@@ -114,7 +114,8 @@ class JobsCommands(commands.Cog):
         job_info = await database.get_user_job(user_id)
 
         if not job_info or not job_info.get("name"):
-            await ctx.send("You don't currently have a job. Use `/jobs` to see available options and `/choosejob <job_name>` to pick one.", ephemeral=True)
+            embed = discord.Embed(description="❌ You don't currently have a job. Use `/jobs` to see available options and `/choosejob <job_name>` to pick one.", color=discord.Color.orange())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         job_key = job_info["name"]
@@ -123,7 +124,8 @@ class JobsCommands(commands.Cog):
         job_details = JOB_DEFINITIONS.get(job_key)
 
         if not job_details:
-             await ctx.send(f"Error: Your job '{job_key}' is not recognized. Please contact an admin.", ephemeral=True)
+             embed = discord.Embed(description=f"❌ Error: Your job '{job_key}' is not recognized. Please contact an admin.", color=discord.Color.red())
+             await ctx.send(embed=embed, ephemeral=True)
              log.error(f"User {user_id} has unrecognized job '{job_key}' in database.")
              return
 
@@ -164,18 +166,26 @@ class JobsCommands(commands.Cog):
         job_key = job_name.lower()
 
         if job_key not in JOB_DEFINITIONS:
-            await ctx.send(f"Invalid job name '{job_name}'. Use `/jobs` to see available options.", ephemeral=True)
+            embed = discord.Embed(description=f"❌ Invalid job name '{job_name}'. Use `/jobs` to see available options.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         current_job_info = await database.get_user_job(user_id)
         if current_job_info and current_job_info.get("name") == job_key:
-            await ctx.send(f"You are already a {JOB_DEFINITIONS[job_key]['name']}.", ephemeral=True)
+            embed = discord.Embed(description=f"✅ You are already a {JOB_DEFINITIONS[job_key]['name']}.", color=discord.Color.blue())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         # Implement switching cost/cooldown here if desired
         # For now, allow free switching, resetting progress
         await database.set_user_job(user_id, job_key)
-        await ctx.send(f"Congratulations! You are now a **{JOB_DEFINITIONS[job_key]['name']}**. Your previous job progress (if any) has been reset.")
+        embed = discord.Embed(
+            title="Job Changed!",
+            description=f"💼 Congratulations! You are now a **{JOB_DEFINITIONS[job_key]['name']}**.",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text="Your previous job progress (if any) has been reset.")
+        await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="leavejob", description="Leave your current job.")
     async def leave_job(self, ctx: commands.Context):
@@ -184,14 +194,21 @@ class JobsCommands(commands.Cog):
         current_job_info = await database.get_user_job(user_id)
 
         if not current_job_info or not current_job_info.get("name"):
-            await ctx.send("You don't have a job to leave.", ephemeral=True)
+            embed = discord.Embed(description="❌ You don't have a job to leave.", color=discord.Color.orange())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         job_key = current_job_info["name"]
         job_name = JOB_DEFINITIONS.get(job_key, {}).get("name", "Unknown Job")
 
         await database.set_user_job(user_id, None) # Set job to NULL
-        await ctx.send(f"You have left your job as a **{job_name}**. Your level and XP for this job have been reset. You can choose a new job with `/choosejob`.")
+        embed = discord.Embed(
+            title="Job Left",
+            description=f"🗑️ You have left your job as a **{job_name}**.",
+            color=discord.Color.orange()
+        )
+        embed.set_footer(text="Your level and XP for this job have been reset. You can choose a new job with /choosejob.")
+        await ctx.send(embed=embed)
 
     # --- Job Action Commands ---
 
@@ -205,9 +222,11 @@ class JobsCommands(commands.Cog):
             correct_job_info = await database.get_user_job(user_id)
             if correct_job_info and correct_job_info.get("name"):
                  correct_job_details = JOB_DEFINITIONS.get(correct_job_info["name"])
-                 await ctx.send(f"You need to be a {JOB_DEFINITIONS[job_key]['name']} to use this command. Your current job is {correct_job_details['name']}. Use `{correct_job_details['command']}` instead, or change jobs with `/choosejob`.", ephemeral=True)
+                 embed = discord.Embed(description=f"❌ You need to be a {JOB_DEFINITIONS[job_key]['name']} to use this command. Your current job is {correct_job_details['name']}. Use `{correct_job_details['command']}` instead, or change jobs with `/choosejob`.", color=discord.Color.red())
+                 await ctx.send(embed=embed, ephemeral=True)
             else:
-                 await ctx.send(f"You need to be a {JOB_DEFINITIONS[job_key]['name']} to use this command. You don't have a job. Use `/choosejob {job_key}` first.", ephemeral=True)
+                 embed = discord.Embed(description=f"❌ You need to be a {JOB_DEFINITIONS[job_key]['name']} to use this command. You don't have a job. Use `/choosejob {job_key}` first.", color=discord.Color.red())
+                 await ctx.send(embed=embed, ephemeral=True)
             return None # Indicate failure
 
         job_details = JOB_DEFINITIONS[job_key]
@@ -221,7 +240,8 @@ class JobsCommands(commands.Cog):
             time_since = now_utc - last_action
             if time_since < cooldown:
                 time_left = cooldown - time_since
-                await ctx.send(f"You need to wait **{format_timedelta(time_left)}** before you can {job_key} again.", ephemeral=True)
+                embed = discord.Embed(description=f"🕒 You need to wait **{format_timedelta(time_left)}** before you can {job_key} again.", color=discord.Color.orange())
+                await ctx.send(embed=embed, ephemeral=True)
                 return None # Indicate failure
 
         # 3. Set Cooldown Immediately
@@ -294,14 +314,16 @@ class JobsCommands(commands.Cog):
         """Performs the Miner job action."""
         result_message = await self._handle_job_action(ctx, "miner")
         if result_message:
-            await ctx.send(result_message)
+            embed = discord.Embed(title="Mining Results", description=result_message, color=discord.Color.dark_grey())
+            await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="fish", description="Catch fish and maybe find treasure (Fisher job).")
     async def fish(self, ctx: commands.Context):
         """Performs the Fisher job action."""
         result_message = await self._handle_job_action(ctx, "fisher")
         if result_message:
-            await ctx.send(result_message)
+            embed = discord.Embed(title="Fishing Results", description=result_message, color=discord.Color.blue())
+            await ctx.send(embed=embed)
 
     # --- Crafter Specific ---
     async def craft_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
@@ -333,7 +355,8 @@ class JobsCommands(commands.Cog):
 
         # 1. Check if user has the correct job
         if not job_info or job_info.get("name") != job_key:
-            await ctx.send("You need to be a Crafter to use this command. Use `/choosejob crafter` first.", ephemeral=True)
+            embed = discord.Embed(description="❌ You need to be a Crafter to use this command. Use `/choosejob crafter` first.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         job_details = JOB_DEFINITIONS[job_key]
@@ -343,13 +366,15 @@ class JobsCommands(commands.Cog):
         # 2. Check if recipe exists
         recipes = job_details.get("recipes", {})
         if recipe_key not in recipes:
-            await ctx.send(f"Unknown recipe: '{item_to_craft}'. Check available recipes.", ephemeral=True) # TODO: Add /recipes command?
+            embed = discord.Embed(description=f"❌ Unknown recipe: '{item_to_craft}'. Check available recipes.", color=discord.Color.red()) # TODO: Add /recipes command?
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         # 3. Check Level Requirement
         required_level = job_details.get("level_bonus", {}).get("unlock_recipe_level", {}).get(recipe_key, 1)
         if level < required_level:
-             await ctx.send(f"You need to be Level {required_level} to craft this item. You are currently Level {level}.", ephemeral=True)
+             embed = discord.Embed(description=f"❌ You need to be Level {required_level} to craft this item. You are currently Level {level}.", color=discord.Color.red())
+             await ctx.send(embed=embed, ephemeral=True)
              return
 
         # 4. Check Cooldown
@@ -360,7 +385,8 @@ class JobsCommands(commands.Cog):
             time_since = now_utc - last_action
             if time_since < cooldown:
                 time_left = cooldown - time_since
-                await ctx.send(f"You need to wait **{format_timedelta(time_left)}** before you can craft again.", ephemeral=True)
+                embed = discord.Embed(description=f"🕒 You need to wait **{format_timedelta(time_left)}** before you can craft again.", color=discord.Color.orange())
+                await ctx.send(embed=embed, ephemeral=True)
                 return
 
         # 5. Check Materials
@@ -377,7 +403,12 @@ class JobsCommands(commands.Cog):
                 missing_materials.append(f"{mat_qty - inventory_map.get(mat_key, 0)}x {mat_name}")
 
         if not can_craft:
-            await ctx.send(f"You don't have the required materials. You still need: {', '.join(missing_materials)}.", ephemeral=True)
+            embed = discord.Embed(
+                title="Missing Materials",
+                description=f"❌ You don't have the required materials. You still need: {', '.join(missing_materials)}.",
+                color=discord.Color.red()
+            )
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         # 6. Set Cooldown Immediately
@@ -389,7 +420,8 @@ class JobsCommands(commands.Cog):
             if not await database.remove_item_from_inventory(user_id, mat_key, mat_qty):
                 success = False
                 log.error(f"Failed to remove material {mat_key} x{mat_qty} for user {user_id} during crafting, despite check.")
-                await ctx.send("An error occurred while consuming materials. Please try again.", ephemeral=True)
+                embed = discord.Embed(description="❌ An error occurred while consuming materials. Please try again.", color=discord.Color.red())
+                await ctx.send(embed=embed, ephemeral=True)
                 # Should ideally revert cooldown here, but that's complex.
                 return
 
@@ -402,13 +434,18 @@ class JobsCommands(commands.Cog):
 
             # 9. Construct Response
             crafted_item_details = await database.get_item_details(recipe_key)
+            crafted_item_details = await database.get_item_details(recipe_key)
             crafted_item_name = crafted_item_details['name'] if crafted_item_details else recipe_key
-            message = f"🛠️ You successfully crafted 1x **{crafted_item_name}** and gained **{xp_earned} XP**."
+            embed = discord.Embed(
+                title="Crafting Successful!",
+                description=f"🛠️ You successfully crafted 1x **{crafted_item_name}** and gained **{xp_earned} XP**.",
+                color=discord.Color.purple() # Use a different color for crafting
+            )
 
             if did_level_up:
-                message += f"\n**Congratulations! You reached Level {new_level} in {job_details['name']}!** 🎉"
+                embed.add_field(name="Level Up!", value=f"**Congratulations! You reached Level {new_level} in {job_details['name']}!** 🎉", inline=False)
 
-            await ctx.send(message)
+            await ctx.send(embed=embed)
 
 
     # --- Inventory Commands ---
@@ -420,10 +457,11 @@ class JobsCommands(commands.Cog):
         inventory_items = await database.get_inventory(user_id)
 
         if not inventory_items:
-            await ctx.send("Your inventory is empty.", ephemeral=True)
+            embed = discord.Embed(description="🗑️ Your inventory is empty.", color=discord.Color.orange())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
-        embed = discord.Embed(title=f"{ctx.author.display_name}'s Inventory", color=discord.Color.orange())
+        embed = discord.Embed(title=f"{ctx.author.display_name}'s Inventory 🎒", color=discord.Color.orange())
         description = ""
         for item in inventory_items:
             sell_info = f" (Sell: ${item['sell_price']:,})" if item['sell_price'] > 0 else ""
@@ -454,16 +492,19 @@ class JobsCommands(commands.Cog):
         user_id = ctx.author.id
 
         if quantity <= 0:
-            await ctx.send("Please enter a positive quantity to sell.", ephemeral=True)
+            embed = discord.Embed(description="❌ Please enter a positive quantity to sell.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         item_details = await database.get_item_details(item_key)
         if not item_details:
-            await ctx.send(f"Invalid item key '{item_key}'. Check your `/inventory`.", ephemeral=True)
+            embed = discord.Embed(description=f"❌ Invalid item key '{item_key}'. Check your `/inventory`.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         if item_details['sell_price'] <= 0:
-            await ctx.send(f"You cannot sell **{item_details['name']}**.", ephemeral=True)
+            embed = discord.Embed(description=f"❌ You cannot sell **{item_details['name']}**.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         # Try to remove items first
@@ -477,7 +518,8 @@ class JobsCommands(commands.Cog):
                 if item['key'] == item_key:
                     current_quantity = item['quantity']
                     break
-            await ctx.send(f"You don't have {quantity}x **{item_details['name']}** to sell. You only have {current_quantity}.", ephemeral=True)
+            embed = discord.Embed(description=f"❌ You don't have {quantity}x **{item_details['name']}** to sell. You only have {current_quantity}.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         # Grant money if removal was successful
@@ -485,4 +527,10 @@ class JobsCommands(commands.Cog):
         await database.update_balance(user_id, total_earnings)
 
         current_balance = await database.get_balance(user_id)
-        await ctx.send(f"💰 You sold {quantity}x **{item_details['name']}** for **${total_earnings:,}**. Your new balance is **${current_balance:,}**.")
+        embed = discord.Embed(
+            title="Item Sold!",
+            description=f"💰 You sold {quantity}x **{item_details['name']}** for **${total_earnings:,}**.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="New Balance", value=f"${current_balance:,}", inline=False)
+        await ctx.send(embed=embed)

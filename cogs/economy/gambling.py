@@ -25,11 +25,13 @@ class GamblingCommands(commands.Cog):
 
         choice = choice.lower()
         if choice not in ["heads", "tails", "h", "t"]:
-            await ctx.send("Invalid choice. Please choose 'heads' or 'tails'.", ephemeral=True)
+            embed = discord.Embed(description="❌ Invalid choice. Please choose 'heads' or 'tails'.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         if amount <= 0:
-            await ctx.send("Please enter a positive amount to bet.", ephemeral=True)
+            embed = discord.Embed(description="❌ Please enter a positive amount to bet.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         # Check cooldown
@@ -42,13 +44,15 @@ class GamblingCommands(commands.Cog):
             time_since_last_used = now_utc - last_used
             if time_since_last_used < cooldown_duration:
                 time_left = cooldown_duration - time_since_last_used
-                await ctx.send(f"You're flipping too fast! Try again in **{int(time_left.total_seconds())}s**.", ephemeral=True)
+                embed = discord.Embed(description=f"🕒 You're flipping too fast! Try again in **{int(time_left.total_seconds())}s**.", color=discord.Color.orange())
+                await ctx.send(embed=embed, ephemeral=True)
                 return
 
         # Check balance
         user_balance = await database.get_balance(user_id)
         if user_balance < amount:
-            await ctx.send(f"You don't have enough money to bet that much! Your balance is **${user_balance:,}**.", ephemeral=True)
+            embed = discord.Embed(description=f"❌ You don't have enough money to bet that much! Your balance is **${user_balance:,}**.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         # Set cooldown before proceeding
@@ -61,10 +65,22 @@ class GamblingCommands(commands.Cog):
         if win:
             await database.update_balance(user_id, amount) # Win the amount bet
             current_balance = await database.get_balance(user_id)
-            await ctx.send(f"🪙 The coin landed on **{result}**! You won **${amount:,}**! Your new balance is **${current_balance:,}**.")
+            embed = discord.Embed(
+                title="Coin Flip: Win!",
+                description=f"🪙 The coin landed on **{result}**! You won **${amount:,}**!",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="New Balance", value=f"${current_balance:,}", inline=False)
+            await ctx.send(embed=embed)
         else:
             await database.update_balance(user_id, -amount) # Lose the amount bet
             current_balance = await database.get_balance(user_id)
-            await ctx.send(f"🪙 The coin landed on **{result}**. You lost **${amount:,}**. Your new balance is **${current_balance:,}**.")
+            embed = discord.Embed(
+                title="Coin Flip: Loss!",
+                description=f"🪙 The coin landed on **{result}**. You lost **${amount:,}**.",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="New Balance", value=f"${current_balance:,}", inline=False)
+            await ctx.send(embed=embed)
 
 # No setup function needed here

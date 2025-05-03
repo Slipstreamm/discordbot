@@ -30,7 +30,8 @@ class RiskyCommands(commands.Cog):
         steal_percentage_max = 0.20 # and 20% of target's balance
 
         if robber_id == target_id:
-            await ctx.send("You can't rob yourself!", ephemeral=True)
+            embed = discord.Embed(description="❌ You can't rob yourself!", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         # Check cooldown
@@ -45,13 +46,15 @@ class RiskyCommands(commands.Cog):
                 time_left = cooldown_duration - time_since_last_used
                 hours, remainder = divmod(int(time_left.total_seconds()), 3600)
                 minutes, seconds = divmod(remainder, 60)
-                await ctx.send(f"You need to lay low after your last attempt. Try again in **{hours}h {minutes}m {seconds}s**.", ephemeral=True)
+                embed = discord.Embed(description=f"🕒 You need to lay low after your last attempt. Try again in **{hours}h {minutes}m {seconds}s**.", color=discord.Color.orange())
+                await ctx.send(embed=embed, ephemeral=True)
                 return
 
         # Check target balance
         target_balance = await database.get_balance(target_id)
         if target_balance < min_target_balance:
-            await ctx.send(f"{target.display_name} doesn't have enough money to be worth robbing (minimum ${min_target_balance:,}).", ephemeral=True)
+            embed = discord.Embed(description=f"❌ {target.display_name} doesn't have enough money to be worth robbing (minimum ${min_target_balance:,}).", color=discord.Color.orange())
+            await ctx.send(embed=embed, ephemeral=True)
             # Don't apply cooldown if target wasn't viable
             return
 
@@ -73,9 +76,20 @@ class RiskyCommands(commands.Cog):
             await database.update_balance(robber_id, stolen_amount)
             await database.update_balance(target_id, -stolen_amount)
             current_robber_balance = await database.get_balance(robber_id)
-            await ctx.send(f"🚨 Success! You skillfully robbed **${stolen_amount:,}** from {target.mention}! Your new balance is **${current_robber_balance:,}**.")
+            embed_success = discord.Embed(
+                title="Robbery Successful!",
+                description=f"🚨 Success! You skillfully robbed **${stolen_amount:,}** from {target.mention}!",
+                color=discord.Color.green()
+            )
+            embed_success.add_field(name="Your New Balance", value=f"${current_robber_balance:,}", inline=False)
+            await ctx.send(embed=embed_success)
             try:
-                await target.send(f"🚨 Oh no! {ctx.author.mention} robbed you for **${stolen_amount:,}**!")
+                embed_target = discord.Embed(
+                    title="You've Been Robbed!",
+                    description=f"🚨 Oh no! {ctx.author.mention} robbed you for **${stolen_amount:,}**!",
+                    color=discord.Color.red()
+                )
+                await target.send(embed=embed_target)
             except discord.Forbidden:
                 pass # Ignore if DMs are closed
         else:
@@ -93,9 +107,20 @@ class RiskyCommands(commands.Cog):
                 # Optional: Give the fine to the target? Or just remove it? Let's remove it.
                 # await database.update_balance(target_id, fine_amount)
                 current_robber_balance = await database.get_balance(robber_id)
-                await ctx.send(f"👮‍♂️ You were caught trying to rob {target.mention}! You paid a fine of **${fine_amount:,}**. Your new balance is **${current_robber_balance:,}**.")
+                embed_fail = discord.Embed(
+                    title="Robbery Failed!",
+                    description=f"👮‍♂️ You were caught trying to rob {target.mention}! You paid a fine of **${fine_amount:,}**.",
+                    color=discord.Color.red()
+                )
+                embed_fail.add_field(name="Your New Balance", value=f"${current_robber_balance:,}", inline=False)
+                await ctx.send(embed=embed_fail)
             else:
                 # Robber is broke, can't pay fine
-                 await ctx.send(f"👮‍♂️ You were caught trying to rob {target.mention}, but you're too broke to pay the fine!")
+                 embed_fail_broke = discord.Embed(
+                     title="Robbery Failed!",
+                     description=f"👮‍♂️ You were caught trying to rob {target.mention}, but you're too broke to pay the fine!",
+                     color=discord.Color.red()
+                 )
+                 await ctx.send(embed=embed_fail_broke)
 
 # No setup function needed here

@@ -21,20 +21,27 @@ class UtilityCommands(commands.Cog):
         """Displays the economy balance for a user."""
         target_user = user or ctx.author
         balance_amount = await database.get_balance(target_user.id)
-        await ctx.send(f"{target_user.display_name} has a balance of **${balance_amount:,}**.", ephemeral=True)
+        embed = discord.Embed(
+            title=f"{target_user.display_name}'s Balance",
+            description=f"💰 **${balance_amount:,}**",
+            color=discord.Color.blue()
+        )
+        await ctx.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="moneylb", aliases=["mlb", "mtop"], description="Show the richest users by money.") # Renamed to avoid conflict
     @commands.cooldown(1, 30, commands.BucketType.user) # Prevent spam
     async def moneylb(self, ctx: commands.Context, count: int = 10): # Renamed function
         """Displays the top users by balance."""
         if not 1 <= count <= 25:
-            await ctx.send("Please provide a count between 1 and 25.", ephemeral=True)
+            embed = discord.Embed(description="❌ Please provide a count between 1 and 25.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         results = await database.get_leaderboard(count)
 
         if not results:
-            await ctx.send("The leaderboard is empty!", ephemeral=True)
+            embed = discord.Embed(description="📊 The leaderboard is empty!", color=discord.Color.orange())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         embed = discord.Embed(title="💰 Economy Leaderboard", color=discord.Color.gold())
@@ -67,17 +74,20 @@ class UtilityCommands(commands.Cog):
         recipient_id = recipient.id
 
         if sender_id == recipient_id:
-            await ctx.send("You cannot pay yourself!", ephemeral=True)
+            embed = discord.Embed(description="❌ You cannot pay yourself!", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         if amount <= 0:
-            await ctx.send("Please enter a positive amount to pay.", ephemeral=True)
+            embed = discord.Embed(description="❌ Please enter a positive amount to pay.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         sender_balance = await database.get_balance(sender_id)
 
         if sender_balance < amount:
-            await ctx.send(f"You don't have enough money! Your balance is **${sender_balance:,}**.", ephemeral=True)
+            embed = discord.Embed(description=f"❌ You don't have enough money! Your balance is **${sender_balance:,}**.", color=discord.Color.red())
+            await ctx.send(embed=embed, ephemeral=True)
             return
 
         # Perform the transfer
@@ -85,10 +95,21 @@ class UtilityCommands(commands.Cog):
         await database.update_balance(recipient_id, amount) # Increase recipient's balance
 
         current_sender_balance = await database.get_balance(sender_id)
-        await ctx.send(f"💸 You successfully paid **${amount:,}** to {recipient.mention}. Your new balance is **${current_sender_balance:,}**.")
+        embed_sender = discord.Embed(
+            title="Payment Successful!",
+            description=f"💸 You successfully paid **${amount:,}** to {recipient.mention}.",
+            color=discord.Color.green()
+        )
+        embed_sender.add_field(name="Your New Balance", value=f"${current_sender_balance:,}", inline=False)
+        await ctx.send(embed=embed_sender)
         try:
             # Optionally DM the recipient
-            await recipient.send(f"💸 You received a payment of **${amount:,}** from {ctx.author.mention}!")
+            embed_recipient = discord.Embed(
+                title="You Received a Payment!",
+                description=f"💸 You received **${amount:,}** from {ctx.author.mention}!",
+                color=discord.Color.green()
+            )
+            await recipient.send(embed=embed_recipient)
         except discord.Forbidden:
             log.warning(f"Could not DM recipient {recipient_id} about payment.") # User might have DMs closed
 

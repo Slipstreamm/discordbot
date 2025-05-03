@@ -37,14 +37,21 @@ class EarningCommands(commands.Cog):
                 time_left = cooldown_duration - time_since_last_used
                 hours, remainder = divmod(int(time_left.total_seconds()), 3600)
                 minutes, seconds = divmod(remainder, 60)
-                await ctx.send(f"You've already claimed your daily reward. Try again in **{hours}h {minutes}m {seconds}s**.", ephemeral=True)
+                embed = discord.Embed(description=f"🕒 You've already claimed your daily reward. Try again in **{hours}h {minutes}m {seconds}s**.", color=discord.Color.orange())
+                await ctx.send(embed=embed, ephemeral=True)
                 return
 
         # Not on cooldown or cooldown expired
         await database.update_balance(user_id, reward_amount)
         await database.set_cooldown(user_id, command_name)
         current_balance = await database.get_balance(user_id)
-        await ctx.send(f"🎉 You claimed your daily reward of **${reward_amount:,}**! Your new balance is **${current_balance:,}**.")
+        embed = discord.Embed(
+            title="Daily Reward Claimed!",
+            description=f"🎉 You claimed your daily reward of **${reward_amount:,}**!",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="New Balance", value=f"${current_balance:,}", inline=False)
+        await ctx.send(embed=embed)
 
 
     @commands.hybrid_command(name="beg", description="Beg for some spare change.")
@@ -68,7 +75,8 @@ class EarningCommands(commands.Cog):
             if time_since_last_used < cooldown_duration:
                 time_left = cooldown_duration - time_since_last_used
                 minutes, seconds = divmod(int(time_left.total_seconds()), 60)
-                await ctx.send(f"You can't beg again so soon. Try again in **{minutes}m {seconds}s**.", ephemeral=True)
+                embed = discord.Embed(description=f"🕒 You can't beg again so soon. Try again in **{minutes}m {seconds}s**.", color=discord.Color.orange())
+                await ctx.send(embed=embed, ephemeral=True)
                 return
 
         # Set cooldown regardless of success/failure
@@ -79,9 +87,20 @@ class EarningCommands(commands.Cog):
             reward_amount = random.randint(min_reward, max_reward)
             await database.update_balance(user_id, reward_amount)
             current_balance = await database.get_balance(user_id)
-            await ctx.send(f"🙏 Someone took pity on you! You received **${reward_amount:,}**. Your new balance is **${current_balance:,}**.")
+            embed = discord.Embed(
+                title="Begging Successful!",
+                description=f"🙏 Someone took pity on you! You received **${reward_amount:,}**.",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="New Balance", value=f"${current_balance:,}", inline=False)
+            await ctx.send(embed=embed)
         else:
-            await ctx.send("🤷 Nobody gave you anything. Better luck next time!")
+            embed = discord.Embed(
+                title="Begging Failed",
+                description="🤷 Nobody gave you anything. Better luck next time!",
+                color=discord.Color.red()
+            )
+            await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="work", description="Do some work for a guaranteed reward.")
     async def work(self, ctx: commands.Context):
@@ -101,7 +120,8 @@ class EarningCommands(commands.Cog):
             # job_details = JOB_DEFINITIONS.get(job_key)
             # command_to_use = job_details['command'] if job_details else f"your job command (`/{job_key}`)" # Fallback
             command_to_use = f"`/{job_key}`" # Simple fallback
-            await ctx.send(f"You have a job! Use {command_to_use} instead of the generic `/work` command.", ephemeral=True)
+            embed = discord.Embed(description=f"💼 You have a job! Use {command_to_use} instead of the generic `/work` command.", color=discord.Color.blue())
+            await ctx.send(embed=embed, ephemeral=True)
             return
         # --- End Job Check ---
 
@@ -119,7 +139,8 @@ class EarningCommands(commands.Cog):
                 time_left = cooldown_duration - time_since_last_used
                 hours, remainder = divmod(int(time_left.total_seconds()), 3600)
                 minutes, seconds = divmod(remainder, 60)
-                await ctx.send(f"You need to rest after working. Try again in **{hours}h {minutes}m {seconds}s**.", ephemeral=True)
+                embed = discord.Embed(description=f"🕒 You need to rest after working. Try again in **{hours}h {minutes}m {seconds}s**.", color=discord.Color.orange())
+                await ctx.send(embed=embed, ephemeral=True)
                 return
 
         # Set cooldown and give reward
@@ -132,7 +153,13 @@ class EarningCommands(commands.Cog):
             f"Your efforts paid off! You received **${reward_amount:,}**.",
         ]
         current_balance = await database.get_balance(user_id)
-        await ctx.send(f"{random.choice(work_messages)} Your new balance is **${current_balance:,}**.")
+        embed = discord.Embed(
+            title="Work Complete!",
+            description=random.choice(work_messages),
+            color=discord.Color.green()
+        )
+        embed.add_field(name="New Balance", value=f"${current_balance:,}", inline=False)
+        await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="scavenge", description="Scavenge around for some spare change.") # Renamed to avoid conflict
     async def scavenge(self, ctx: commands.Context): # Renamed function
@@ -155,7 +182,8 @@ class EarningCommands(commands.Cog):
             if time_since_last_used < cooldown_duration:
                 time_left = cooldown_duration - time_since_last_used
                 minutes, seconds = divmod(int(time_left.total_seconds()), 60)
-                await ctx.send(f"You've searched recently. Try again in **{minutes}m {seconds}s**.", ephemeral=True)
+                embed = discord.Embed(description=f"🕒 You've searched recently. Try again in **{minutes}m {seconds}s**.", color=discord.Color.orange())
+                await ctx.send(embed=embed, ephemeral=True)
                 return
 
         # Set cooldown regardless of success
@@ -172,8 +200,19 @@ class EarningCommands(commands.Cog):
             reward_amount = random.randint(min_reward, max_reward)
             await database.update_balance(user_id, reward_amount)
             current_balance = await database.get_balance(user_id)
-            await ctx.send(f"🔍 You scavenged {location} and found **${reward_amount:,}**! Your new balance is **${current_balance:,}**.")
+            embed = discord.Embed(
+                title="Scavenging Successful!",
+                description=f"🔍 You scavenged {location} and found **${reward_amount:,}**!",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="New Balance", value=f"${current_balance:,}", inline=False)
+            await ctx.send(embed=embed)
         else:
-            await ctx.send(f"🔍 You scavenged {location} but found nothing but lint.")
+            embed = discord.Embed(
+                title="Scavenging Failed",
+                description=f"🔍 You scavenged {location} but found nothing but lint.",
+                color=discord.Color.red()
+            )
+            await ctx.send(embed=embed)
 
 # No setup function needed here, it will be in __init__.py
