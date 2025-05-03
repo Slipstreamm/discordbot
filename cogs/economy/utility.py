@@ -23,9 +23,9 @@ class UtilityCommands(commands.Cog):
         balance_amount = await database.get_balance(target_user.id)
         await ctx.send(f"{target_user.display_name} has a balance of **${balance_amount:,}**.", ephemeral=True)
 
-    @commands.hybrid_command(name="leaderboard", aliases=["lb", "top"], description="Show the richest users.")
+    @commands.hybrid_command(name="moneylb", aliases=["mlb", "mtop"], description="Show the richest users by money.") # Renamed to avoid conflict
     @commands.cooldown(1, 30, commands.BucketType.user) # Prevent spam
-    async def leaderboard(self, ctx: commands.Context, count: int = 10):
+    async def moneylb(self, ctx: commands.Context, count: int = 10): # Renamed function
         """Displays the top users by balance."""
         if not 1 <= count <= 25:
             await ctx.send("Please provide a count between 1 and 25.", ephemeral=True)
