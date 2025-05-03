@@ -1,9 +1,22 @@
+// This file is kept for backward compatibility
+// It will load the new modular JS files
+
+// Load the utility functions
+const utilsScript = document.createElement('script');
+utilsScript.src = 'js/utils.js';
+document.head.appendChild(utilsScript);
+
+// Load the main script
+const mainScript = document.createElement('script');
+mainScript.src = 'js/main.js';
+document.head.appendChild(mainScript);
+
 document.addEventListener('DOMContentLoaded', () => {
     // Auth elements
     const loginButton = document.getElementById('login-button');
     const logoutButton = document.getElementById('logout-button');
     const authSection = document.getElementById('auth-section');
-    const dashboardSection = document.getElementById('dashboard-section');
+    const dashboardSection = document.getElementById('dashboard-container');
     const usernameSpan = document.getElementById('username');
 
     // Navigation elements
