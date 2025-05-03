@@ -74,14 +74,30 @@ settings = get_api_settings()
 # --- Constants derived from settings ---
 DISCORD_API_BASE_URL = "https://discord.com/api/v10"
 DISCORD_API_ENDPOINT = DISCORD_API_BASE_URL  # Alias for backward compatibility
-DISCORD_AUTH_URL = (
+
+# Define dashboard-specific redirect URI
+DASHBOARD_REDIRECT_URI = f"{settings.DISCORD_REDIRECT_URI.split('/api')[0]}/dashboard/api/auth/callback"
+
+# We'll generate the full auth URL with PKCE parameters in the dashboard_login function
+# This is just a base URL without the PKCE parameters
+DISCORD_AUTH_BASE_URL = (
     f"https://discord.com/api/oauth2/authorize?client_id={settings.DISCORD_CLIENT_ID}"
     f"&redirect_uri={settings.DISCORD_REDIRECT_URI}&response_type=code&scope=identify guilds"
 )
+
+# Dashboard-specific auth base URL
+DASHBOARD_AUTH_BASE_URL = (
+    f"https://discord.com/api/oauth2/authorize?client_id={settings.DISCORD_CLIENT_ID}"
+    f"&redirect_uri={DASHBOARD_REDIRECT_URI}&response_type=code&scope=identify guilds"
+)
+
 DISCORD_TOKEN_URL = f"{DISCORD_API_BASE_URL}/oauth2/token"
 DISCORD_USER_URL = f"{DISCORD_API_BASE_URL}/users/@me"
 DISCORD_USER_GUILDS_URL = f"{DISCORD_API_BASE_URL}/users/@me/guilds"
 DISCORD_REDIRECT_URI = settings.DISCORD_REDIRECT_URI  # Make it accessible directly
+
+# For backward compatibility, keep DISCORD_AUTH_URL but it will be replaced in the dashboard_login function
+DISCORD_AUTH_URL = DISCORD_AUTH_BASE_URL
 
 
 # --- Gurt Stats Storage (IPC) ---
@@ -521,13 +537,41 @@ async def verify_dashboard_guild_admin(guild_id: int, current_user: dict = Depen
 # --- Dashboard Authentication Routes ---
 @dashboard_api_app.get("/auth/login", tags=["Dashboard Authentication"])
 async def dashboard_login():
-    """Redirects the user to Discord for OAuth2 authorization (Dashboard Flow)."""
-    # Uses constants derived from settings loaded at the top
-    log.info(f"Dashboard: Redirecting user to Discord auth URL: {DISCORD_AUTH_URL}")
-    return RedirectResponse(url=DISCORD_AUTH_URL, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    """Redirects the user to Discord for OAuth2 authorization (Dashboard Flow) with PKCE."""
+    import secrets
+    import hashlib
+    import base64
+
+    # Generate a random state for CSRF protection
+    state = secrets.token_urlsafe(32)
+
+    # Generate a code verifier for PKCE
+    code_verifier = secrets.token_urlsafe(64)
+
+    # Generate a code challenge from the code verifier
+    code_challenge_bytes = hashlib.sha256(code_verifier.encode()).digest()
+    code_challenge = base64.urlsafe_b64encode(code_challenge_bytes).decode().rstrip("=")
+
+    # Store the code verifier for later use
+    code_verifier_store.store_code_verifier(state, code_verifier)
+
+    # Build the authorization URL with PKCE parameters using the dashboard-specific redirect URI
+    auth_url = (
+        f"{DASHBOARD_AUTH_BASE_URL}"
+        f"&state={state}"
+        f"&code_challenge={code_challenge}"
+        f"&code_challenge_method=S256"
+        f"&prompt=consent"
+    )
+
+    log.info(f"Dashboard: Redirecting user to Discord auth URL with PKCE: {auth_url}")
+    log.info(f"Dashboard: Using redirect URI: {DASHBOARD_REDIRECT_URI}")
+    log.info(f"Dashboard: Stored code verifier for state {state}: {code_verifier[:10]}...")
+
+    return RedirectResponse(url=auth_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 @dashboard_api_app.get("/auth/callback", tags=["Dashboard Authentication"])
-async def dashboard_auth_callback(request: Request, code: str | None = None, error: str | None = None):
+async def dashboard_auth_callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
     """Handles the callback from Discord after authorization (Dashboard Flow)."""
     global http_session # Use the global aiohttp session
     if error:
@@ -538,24 +582,45 @@ async def dashboard_auth_callback(request: Request, code: str | None = None, err
         log.error("Dashboard: Discord OAuth callback missing code.")
         return RedirectResponse(url="/dashboard?error=missing_code")
 
+    if not state:
+        log.error("Dashboard: Discord OAuth callback missing state parameter.")
+        return RedirectResponse(url="/dashboard?error=missing_state")
+
     if not http_session:
          log.error("Dashboard: aiohttp session not initialized.")
          raise HTTPException(status_code=500, detail="Internal server error: HTTP session not ready.")
 
     try:
-        # 1. Exchange code for access token
+        # Get the code verifier from the store
+        code_verifier = code_verifier_store.get_code_verifier(state)
+        if not code_verifier:
+            log.error(f"Dashboard: No code_verifier found for state {state}")
+            return RedirectResponse(url="/dashboard?error=missing_code_verifier")
+
+        log.info(f"Dashboard: Found code_verifier for state {state}: {code_verifier[:10]}...")
+
+        # Remove the code verifier from the store after retrieving it
+        code_verifier_store.remove_code_verifier(state)
+
+        # 1. Exchange code for access token with PKCE
         token_data = {
             'client_id': settings.DISCORD_CLIENT_ID,
-            'client_secret': settings.DISCORD_CLIENT_SECRET,
             'grant_type': 'authorization_code',
             'code': code,
-            'redirect_uri': settings.DISCORD_REDIRECT_URI # Must match exactly
+            'redirect_uri': DASHBOARD_REDIRECT_URI, # Must match exactly what was used in the auth request
+            'code_verifier': code_verifier # Add the code verifier for PKCE
         }
         headers = {'Content-Type': 'application/x-www-form-urlencoded'}
 
-        log.debug(f"Dashboard: Exchanging code for token at {DISCORD_TOKEN_URL}")
+        log.debug(f"Dashboard: Exchanging code for token at {DISCORD_TOKEN_URL} with PKCE")
+        log.debug(f"Dashboard: Token exchange data: {token_data}")
+
         async with http_session.post(DISCORD_TOKEN_URL, data=token_data, headers=headers) as resp:
-            resp.raise_for_status()
+            if resp.status != 200:
+                error_text = await resp.text()
+                log.error(f"Dashboard: Failed to exchange code: {error_text}")
+                return RedirectResponse(url=f"/dashboard?error=token_exchange_failed&details={error_text}")
+
             token_response = await resp.json()
             access_token = token_response.get('access_token')
             log.debug("Dashboard: Token exchange successful.")
