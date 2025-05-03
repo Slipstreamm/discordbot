@@ -870,6 +870,205 @@ async def dashboard_get_user_guilds(current_user: dict = Depends(get_dashboard_u
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred while fetching guilds.")
 
 # --- Dashboard Guild Settings Endpoints ---
+@dashboard_api_app.get("/guilds/{guild_id}/channels", tags=["Dashboard Guild Settings"])
+async def dashboard_get_guild_channels(
+    guild_id: int,
+    current_user: dict = Depends(get_dashboard_user),
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+):
+    """Fetches the channels for a specific guild for the dashboard."""
+    global http_session # Use the global aiohttp session
+    if not http_session:
+        raise HTTPException(status_code=500, detail="Internal server error: HTTP session not ready.")
+
+    log.info(f"Dashboard: Fetching channels for guild {guild_id} requested by user {current_user['user_id']}")
+
+    try:
+        # Use Discord Bot Token to fetch channels
+        bot_headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
+        async with http_session.get(f"https://discord.com/api/v10/guilds/{guild_id}/channels", headers=bot_headers) as resp:
+            resp.raise_for_status()
+            channels = await resp.json()
+
+            # Filter and format channels
+            formatted_channels = []
+            for channel in channels:
+                formatted_channels.append({
+                    "id": channel["id"],
+                    "name": channel["name"],
+                    "type": channel["type"],
+                    "parent_id": channel.get("parent_id")
+                })
+
+            return formatted_channels
+    except aiohttp.ClientResponseError as e:
+        log.exception(f"Dashboard: HTTP error fetching guild channels: {e.status} {e.message}")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Error communicating with Discord API.")
+    except Exception as e:
+        log.exception(f"Dashboard: Generic error fetching guild channels: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred while fetching channels.")
+
+@dashboard_api_app.get("/guilds/{guild_id}/roles", tags=["Dashboard Guild Settings"])
+async def dashboard_get_guild_roles(
+    guild_id: int,
+    current_user: dict = Depends(get_dashboard_user),
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+):
+    """Fetches the roles for a specific guild for the dashboard."""
+    global http_session # Use the global aiohttp session
+    if not http_session:
+        raise HTTPException(status_code=500, detail="Internal server error: HTTP session not ready.")
+
+    log.info(f"Dashboard: Fetching roles for guild {guild_id} requested by user {current_user['user_id']}")
+
+    try:
+        # Use Discord Bot Token to fetch roles
+        bot_headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
+        async with http_session.get(f"https://discord.com/api/v10/guilds/{guild_id}/roles", headers=bot_headers) as resp:
+            resp.raise_for_status()
+            roles = await resp.json()
+
+            # Filter and format roles
+            formatted_roles = []
+            for role in roles:
+                # Skip @everyone role
+                if role["name"] == "@everyone":
+                    continue
+
+                formatted_roles.append({
+                    "id": role["id"],
+                    "name": role["name"],
+                    "color": role["color"],
+                    "position": role["position"],
+                    "permissions": role["permissions"]
+                })
+
+            # Sort roles by position (highest first)
+            formatted_roles.sort(key=lambda r: r["position"], reverse=True)
+
+            return formatted_roles
+    except aiohttp.ClientResponseError as e:
+        log.exception(f"Dashboard: HTTP error fetching guild roles: {e.status} {e.message}")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Error communicating with Discord API.")
+    except Exception as e:
+        log.exception(f"Dashboard: Generic error fetching guild roles: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred while fetching roles.")
+
+@dashboard_api_app.get("/guilds/{guild_id}/commands", tags=["Dashboard Guild Settings"])
+async def dashboard_get_guild_commands(
+    guild_id: int,
+    current_user: dict = Depends(get_dashboard_user),
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+):
+    """Fetches the commands for a specific guild for the dashboard."""
+    global http_session # Use the global aiohttp session
+    if not http_session:
+        raise HTTPException(status_code=500, detail="Internal server error: HTTP session not ready.")
+
+    log.info(f"Dashboard: Fetching commands for guild {guild_id} requested by user {current_user['user_id']}")
+
+    try:
+        # Use Discord Bot Token to fetch application commands
+        bot_headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
+        application_id = settings.DISCORD_CLIENT_ID  # This should be the same as your bot's application ID
+
+        async with http_session.get(f"https://discord.com/api/v10/applications/{application_id}/guilds/{guild_id}/commands", headers=bot_headers) as resp:
+            resp.raise_for_status()
+            commands = await resp.json()
+
+            # Format commands
+            formatted_commands = []
+            for cmd in commands:
+                formatted_commands.append({
+                    "id": cmd["id"],
+                    "name": cmd["name"],
+                    "description": cmd.get("description", ""),
+                    "type": cmd.get("type", 1),  # Default to CHAT_INPUT type
+                    "options": cmd.get("options", [])
+                })
+
+            return formatted_commands
+    except aiohttp.ClientResponseError as e:
+        log.exception(f"Dashboard: HTTP error fetching guild commands: {e.status} {e.message}")
+        if e.status == 404:
+            # If no commands are registered yet, return an empty list
+            return []
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Error communicating with Discord API.")
+    except Exception as e:
+        log.exception(f"Dashboard: Generic error fetching guild commands: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred while fetching commands.")
+
+@dashboard_api_app.get("/settings", tags=["Dashboard Settings"])
+async def dashboard_get_settings(current_user: dict = Depends(get_dashboard_user)):
+    """Fetches the global AI settings for the dashboard."""
+    log.info(f"Dashboard: Fetching global settings requested by user {current_user['user_id']}")
+
+    try:
+        # Get settings from the database
+        settings_data = db.get_user_settings(current_user['user_id'])
+
+        if not settings_data:
+            # Return default settings if none exist
+            return {
+                "model": "openai/gpt-3.5-turbo",
+                "temperature": 0.7,
+                "max_tokens": 1000,
+                "system_message": "",
+                "character": "",
+                "character_info": "",
+                "custom_instructions": ""
+            }
+
+        return settings_data
+    except Exception as e:
+        log.exception(f"Dashboard: Error fetching global settings: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred while fetching settings.")
+
+@dashboard_api_app.post("/settings", tags=["Dashboard Settings"])
+@dashboard_api_app.put("/settings", tags=["Dashboard Settings"])
+async def dashboard_update_settings(request: Request, current_user: dict = Depends(get_dashboard_user)):
+    """Updates the global AI settings for the dashboard."""
+    log.info(f"Dashboard: Updating global settings requested by user {current_user['user_id']}")
+
+    try:
+        # Parse the request body
+        body_text = await request.body()
+        body = json.loads(body_text.decode('utf-8'))
+
+        log.debug(f"Dashboard: Received settings update: {body}")
+
+        # Extract settings from the request body
+        settings_data = None
+
+        # Try different formats to be flexible
+        if "settings" in body:
+            settings_data = body["settings"]
+        elif isinstance(body, dict) and "model" in body:
+            # Direct settings object
+            settings_data = body
+
+        if not settings_data:
+            raise HTTPException(status_code=400, detail="Invalid settings format. Expected 'settings' field or direct settings object.")
+
+        # Create a UserSettings object
+        try:
+            settings = UserSettings.model_validate(settings_data)
+        except Exception as e:
+            log.exception(f"Dashboard: Error validating settings: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid settings data: {str(e)}")
+
+        # Save the settings
+        result = db.save_user_settings(current_user['user_id'], settings)
+        log.info(f"Dashboard: Successfully updated settings for user {current_user['user_id']}")
+
+        return result
+    except json.JSONDecodeError:
+        log.exception(f"Dashboard: Error decoding JSON in settings update")
+        raise HTTPException(status_code=400, detail="Invalid JSON in request body")
+    except Exception as e:
+        log.exception(f"Dashboard: Error updating settings: {e}")
+        raise HTTPException(status_code=500, detail=f"An internal error occurred while updating settings: {str(e)}")
+
 @dashboard_api_app.get("/guilds/{guild_id}/settings", response_model=GuildSettingsResponse, tags=["Dashboard Guild Settings"])
 async def dashboard_get_guild_settings(
     guild_id: int,
@@ -989,6 +1188,7 @@ async def dashboard_update_guild_settings(
 
 # --- Dashboard Command Permission Endpoints ---
 @dashboard_api_app.get("/guilds/{guild_id}/permissions", response_model=CommandPermissionsResponse, tags=["Dashboard Guild Settings"])
+@dashboard_api_app.get("/guilds/{guild_id}/command-permissions", tags=["Dashboard Guild Settings"])
 async def dashboard_get_all_guild_command_permissions(
     guild_id: int,
     current_user: dict = Depends(get_dashboard_user),
@@ -1023,6 +1223,7 @@ async def dashboard_get_all_guild_command_permissions(
         raise HTTPException(status_code=500, detail="Failed to fetch command permissions.")
 
 @dashboard_api_app.post("/guilds/{guild_id}/permissions", status_code=status.HTTP_201_CREATED, tags=["Dashboard Guild Settings"])
+@dashboard_api_app.post("/guilds/{guild_id}/command-permissions", status_code=status.HTTP_201_CREATED, tags=["Dashboard Guild Settings"])
 async def dashboard_add_guild_command_permission(
     guild_id: int,
     permission: CommandPermission,
@@ -1048,6 +1249,7 @@ async def dashboard_add_guild_command_permission(
         raise HTTPException(status_code=500, detail="Failed to add command permission. Check server logs.")
 
 @dashboard_api_app.delete("/guilds/{guild_id}/permissions", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
+@dashboard_api_app.delete("/guilds/{guild_id}/command-permissions", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
 async def dashboard_remove_guild_command_permission(
     guild_id: int,
     permission: CommandPermission,

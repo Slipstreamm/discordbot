@@ -50,6 +50,41 @@ function initSidebar() {
     if (href && currentPath.includes(href)) {
       item.classList.add('active');
     }
+
+    // Add click event to nav items
+    item.addEventListener('click', (event) => {
+      // Prevent default only if it's a section link
+      if (href && href.startsWith('#')) {
+        event.preventDefault();
+
+        // Remove active class from all nav items
+        document.querySelectorAll('.nav-item').forEach(navItem => {
+          navItem.classList.remove('active');
+        });
+
+        // Add active class to clicked item
+        item.classList.add('active');
+
+        // Hide all sections
+        document.querySelectorAll('.dashboard-section').forEach(section => {
+          section.style.display = 'none';
+        });
+
+        // Show the target section
+        const sectionId = item.getAttribute('data-section');
+        if (sectionId) {
+          const section = document.getElementById(sectionId);
+          if (section) {
+            section.style.display = 'block';
+          }
+        }
+
+        // Close sidebar on mobile
+        if (window.innerWidth <= 768 && sidebar) {
+          sidebar.classList.remove('show');
+        }
+      }
+    });
   });
 }
 
@@ -741,9 +776,23 @@ function loadGlobalSettings() {
   const aiSettingsSection = document.getElementById('ai-settings-section');
   if (!aiSettingsSection) return;
 
+  // Show loading state
+  const loadingContainer = document.createElement('div');
+  loadingContainer.className = 'loading-container';
+  loadingContainer.innerHTML = '<div class="loading-spinner"></div><p>Loading AI settings...</p>';
+  loadingContainer.style.textAlign = 'center';
+  loadingContainer.style.padding = '2rem';
+
+  aiSettingsSection.prepend(loadingContainer);
+
   // Fetch global settings from API
   API.get('/dashboard/api/settings')
     .then(settings => {
+      // Remove loading container
+      loadingContainer.remove();
+
+      console.log('Loaded AI settings:', settings);
+
       // Populate AI model select
       const modelSelect = document.getElementById('ai-model-select');
       if (modelSelect && settings.model) {
@@ -753,9 +802,10 @@ function loadGlobalSettings() {
       // Populate temperature slider
       const temperatureSlider = document.getElementById('ai-temperature');
       const temperatureValue = document.getElementById('temperature-value');
-      if (temperatureSlider && temperatureValue && settings.temperature) {
-        temperatureSlider.value = settings.temperature;
-        temperatureValue.textContent = settings.temperature;
+      if (temperatureSlider && temperatureValue) {
+        const temp = settings.temperature !== undefined ? settings.temperature : 0.7;
+        temperatureSlider.value = temp;
+        temperatureValue.textContent = temp;
 
         // Add input event for live update
         temperatureSlider.addEventListener('input', () => {
@@ -765,36 +815,247 @@ function loadGlobalSettings() {
 
       // Populate max tokens
       const maxTokensInput = document.getElementById('ai-max-tokens');
-      if (maxTokensInput && settings.max_tokens) {
-        maxTokensInput.value = settings.max_tokens;
+      if (maxTokensInput) {
+        const maxTokens = settings.max_tokens !== undefined ? settings.max_tokens : 1000;
+        maxTokensInput.value = maxTokens;
       }
 
       // Populate character settings
       const characterInput = document.getElementById('ai-character');
       const characterInfoInput = document.getElementById('ai-character-info');
 
-      if (characterInput && settings.character) {
-        characterInput.value = settings.character;
+      if (characterInput) {
+        characterInput.value = settings.character || '';
       }
 
-      if (characterInfoInput && settings.character_info) {
-        characterInfoInput.value = settings.character_info;
+      if (characterInfoInput) {
+        characterInfoInput.value = settings.character_info || '';
       }
 
       // Populate system prompt
       const systemPromptInput = document.getElementById('ai-system-prompt');
-      if (systemPromptInput && settings.system_message) {
-        systemPromptInput.value = settings.system_message;
+      if (systemPromptInput) {
+        systemPromptInput.value = settings.system_message || '';
       }
 
       // Populate custom instructions
       const customInstructionsInput = document.getElementById('ai-custom-instructions');
-      if (customInstructionsInput && settings.custom_instructions) {
-        customInstructionsInput.value = settings.custom_instructions;
+      if (customInstructionsInput) {
+        customInstructionsInput.value = settings.custom_instructions || '';
       }
+
+      // Set up save buttons
+      setupAISettingsSaveButtons(settings);
     })
     .catch(error => {
       console.error('Error loading global settings:', error);
+      loadingContainer.innerHTML = '<p class="text-danger">Error loading AI settings. Please try again.</p>';
       Toast.error('Failed to load AI settings. Please try again.');
+    });
+}
+
+/**
+ * Set up AI settings save buttons
+ * @param {Object} initialSettings - The initial settings
+ */
+function setupAISettingsSaveButtons(initialSettings) {
+  // AI Settings save button
+  const saveAISettingsButton = document.getElementById('save-ai-settings-button');
+  if (saveAISettingsButton) {
+    saveAISettingsButton.addEventListener('click', () => {
+      const modelSelect = document.getElementById('ai-model-select');
+      const temperatureSlider = document.getElementById('ai-temperature');
+      const maxTokensInput = document.getElementById('ai-max-tokens');
+      const reasoningEnabled = document.getElementById('ai-reasoning-enabled');
+      const reasoningEffort = document.getElementById('ai-reasoning-effort');
+      const webSearchEnabled = document.getElementById('ai-web-search-enabled');
+
+      // Create settings object
+      const settings = {
+        ...initialSettings, // Keep other settings
+        model: modelSelect ? modelSelect.value : initialSettings.model,
+        temperature: temperatureSlider ? parseFloat(temperatureSlider.value) : initialSettings.temperature,
+        max_tokens: maxTokensInput ? parseInt(maxTokensInput.value) : initialSettings.max_tokens
+      };
+
+      // Add optional settings if they exist
+      if (reasoningEnabled) {
+        settings.reasoning_enabled = reasoningEnabled.checked;
+      }
+
+      if (reasoningEffort) {
+        settings.reasoning_effort = reasoningEffort.value;
+      }
+
+      if (webSearchEnabled) {
+        settings.web_search_enabled = webSearchEnabled.checked;
+      }
+
+      // Save settings
+      saveSettings(settings, saveAISettingsButton, 'AI settings saved successfully');
+    });
+  }
+
+  // Character settings save button
+  const saveCharacterSettingsButton = document.getElementById('save-character-settings-button');
+  if (saveCharacterSettingsButton) {
+    saveCharacterSettingsButton.addEventListener('click', () => {
+      const characterInput = document.getElementById('ai-character');
+      const characterInfoInput = document.getElementById('ai-character-info');
+      const characterBreakdown = document.getElementById('ai-character-breakdown');
+
+      // Create settings object
+      const settings = {
+        ...initialSettings, // Keep other settings
+        character: characterInput ? characterInput.value : initialSettings.character,
+        character_info: characterInfoInput ? characterInfoInput.value : initialSettings.character_info
+      };
+
+      // Add optional settings if they exist
+      if (characterBreakdown) {
+        settings.character_breakdown = characterBreakdown.checked;
+      }
+
+      // Save settings
+      saveSettings(settings, saveCharacterSettingsButton, 'Character settings saved successfully');
+    });
+  }
+
+  // System prompt save button
+  const saveSystemPromptButton = document.getElementById('save-system-prompt-button');
+  if (saveSystemPromptButton) {
+    saveSystemPromptButton.addEventListener('click', () => {
+      const systemPromptInput = document.getElementById('ai-system-prompt');
+
+      // Create settings object
+      const settings = {
+        ...initialSettings, // Keep other settings
+        system_message: systemPromptInput ? systemPromptInput.value : initialSettings.system_message
+      };
+
+      // Save settings
+      saveSettings(settings, saveSystemPromptButton, 'System prompt saved successfully');
+    });
+  }
+
+  // Custom instructions save button
+  const saveCustomInstructionsButton = document.getElementById('save-custom-instructions-button');
+  if (saveCustomInstructionsButton) {
+    saveCustomInstructionsButton.addEventListener('click', () => {
+      const customInstructionsInput = document.getElementById('ai-custom-instructions');
+
+      // Create settings object
+      const settings = {
+        ...initialSettings, // Keep other settings
+        custom_instructions: customInstructionsInput ? customInstructionsInput.value : initialSettings.custom_instructions
+      };
+
+      // Save settings
+      saveSettings(settings, saveCustomInstructionsButton, 'Custom instructions saved successfully');
+    });
+  }
+
+  // Clear buttons
+  const clearCharacterSettingsButton = document.getElementById('clear-character-settings-button');
+  if (clearCharacterSettingsButton) {
+    clearCharacterSettingsButton.addEventListener('click', () => {
+      const characterInput = document.getElementById('ai-character');
+      const characterInfoInput = document.getElementById('ai-character-info');
+
+      if (characterInput) characterInput.value = '';
+      if (characterInfoInput) characterInfoInput.value = '';
+
+      // Create settings object
+      const settings = {
+        ...initialSettings, // Keep other settings
+        character: '',
+        character_info: ''
+      };
+
+      // Save settings
+      saveSettings(settings, clearCharacterSettingsButton, 'Character settings cleared');
+    });
+  }
+
+  const clearCustomInstructionsButton = document.getElementById('clear-custom-instructions-button');
+  if (clearCustomInstructionsButton) {
+    clearCustomInstructionsButton.addEventListener('click', () => {
+      const customInstructionsInput = document.getElementById('ai-custom-instructions');
+
+      if (customInstructionsInput) customInstructionsInput.value = '';
+
+      // Create settings object
+      const settings = {
+        ...initialSettings, // Keep other settings
+        custom_instructions: ''
+      };
+
+      // Save settings
+      saveSettings(settings, clearCustomInstructionsButton, 'Custom instructions cleared');
+    });
+  }
+
+  // Reset buttons
+  const resetAISettingsButton = document.getElementById('reset-ai-settings-button');
+  if (resetAISettingsButton) {
+    resetAISettingsButton.addEventListener('click', () => {
+      const modelSelect = document.getElementById('ai-model-select');
+      const temperatureSlider = document.getElementById('ai-temperature');
+      const temperatureValue = document.getElementById('temperature-value');
+      const maxTokensInput = document.getElementById('ai-max-tokens');
+
+      if (modelSelect) modelSelect.value = 'openai/gpt-3.5-turbo';
+      if (temperatureSlider) temperatureSlider.value = 0.7;
+      if (temperatureValue) temperatureValue.textContent = 0.7;
+      if (maxTokensInput) maxTokensInput.value = 1000;
+
+      // Create settings object
+      const settings = {
+        ...initialSettings, // Keep other settings
+        model: 'openai/gpt-3.5-turbo',
+        temperature: 0.7,
+        max_tokens: 1000
+      };
+
+      // Save settings
+      saveSettings(settings, resetAISettingsButton, 'AI settings reset to defaults');
+    });
+  }
+
+  const resetSystemPromptButton = document.getElementById('reset-system-prompt-button');
+  if (resetSystemPromptButton) {
+    resetSystemPromptButton.addEventListener('click', () => {
+      const systemPromptInput = document.getElementById('ai-system-prompt');
+
+      if (systemPromptInput) systemPromptInput.value = '';
+
+      // Create settings object
+      const settings = {
+        ...initialSettings, // Keep other settings
+        system_message: ''
+      };
+
+      // Save settings
+      saveSettings(settings, resetSystemPromptButton, 'System prompt reset to default');
+    });
+  }
+}
+
+/**
+ * Save settings to the API
+ * @param {Object} settings - The settings to save
+ * @param {HTMLElement} button - The button that triggered the save
+ * @param {string} successMessage - The message to show on success
+ */
+function saveSettings(settings, button, successMessage) {
+  // Save settings to API
+  API.post('/dashboard/api/settings', { settings }, button)
+    .then(response => {
+      console.log('Settings saved:', response);
+      Toast.success(successMessage);
+    })
+    .catch(error => {
+      console.error('Error saving settings:', error);
+      Toast.error('Failed to save settings. Please try again.');
     });
 }
