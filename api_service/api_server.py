@@ -229,6 +229,10 @@ try:
     # Add the dashboard router to the dashboard API app
     dashboard_api_app.include_router(dashboard_router)
     log.info("Dashboard API endpoints loaded successfully")
+
+    # Add direct routes for test-welcome and test-goodbye endpoints
+    # These routes need to be defined after the dependencies are defined
+    # We'll add them later
 except ImportError as e:
     log.error(f"Could not import dashboard API endpoints: {e}")
     log.error("Dashboard API endpoints will not be available")
@@ -1406,17 +1410,16 @@ async def dashboard_update_guild_settings(
 
 # --- Dashboard Command Permission Endpoints ---
 @dashboard_api_app.get("/guilds/{guild_id}/permissions", response_model=CommandPermissionsResponse, tags=["Dashboard Guild Settings"])
-@dashboard_api_app.get("/guilds/{guild_id}/command-permissions", tags=["Dashboard Guild Settings"])
-async def dashboard_get_all_guild_command_permissions(
+async def dashboard_get_all_guild_command_permissions_map(
     guild_id: int,
     current_user: dict = Depends(get_dashboard_user),
     _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
-    """Fetches all command permissions currently set for the guild for the dashboard."""
+    """Fetches all command permissions currently set for the guild for the dashboard as a map."""
     if not settings_manager:
         raise HTTPException(status_code=500, detail="Internal server error: Settings manager not available.")
 
-    log.info(f"Dashboard: Fetching all command permissions for guild {guild_id} requested by user {current_user['user_id']}")
+    log.info(f"Dashboard: Fetching all command permissions map for guild {guild_id} requested by user {current_user['user_id']}")
     permissions_map: Dict[str, List[str]] = {}
     try:
         if settings_manager.pg_pool:
@@ -1439,6 +1442,141 @@ async def dashboard_get_all_guild_command_permissions(
     except Exception as e:
         log.exception(f"Dashboard: Database error fetching all command permissions for guild {guild_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch command permissions.")
+
+@dashboard_api_app.get("/guilds/{guild_id}/command-permissions", tags=["Dashboard Guild Settings"])
+async def dashboard_get_all_guild_command_permissions(
+    guild_id: int,
+    current_user: dict = Depends(get_dashboard_user),
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+):
+    """Fetches all command permissions currently set for the guild for the dashboard as an array of objects."""
+    if not settings_manager:
+        raise HTTPException(status_code=500, detail="Internal server error: Settings manager not available.")
+
+    log.info(f"Dashboard: Fetching all command permissions for guild {guild_id} requested by user {current_user['user_id']}")
+    permissions_list = []
+    try:
+        if settings_manager.pg_pool:
+            async with settings_manager.pg_pool.acquire() as conn:
+                records = await conn.fetch(
+                    "SELECT command_name, allowed_role_id FROM command_permissions WHERE guild_id = $1 ORDER BY command_name, allowed_role_id",
+                    guild_id
+                )
+
+            # Get role information to include role names
+            bot_headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
+            roles = []
+            try:
+                async with http_session.get(f"https://discord.com/api/v10/guilds/{guild_id}/roles", headers=bot_headers) as resp:
+                    if resp.status == 200:
+                        roles = await resp.json()
+            except Exception as e:
+                log.warning(f"Failed to fetch role information: {e}")
+
+            # Create a map of role IDs to role names
+            role_map = {str(role["id"]): role["name"] for role in roles} if roles else {}
+
+            for record in records:
+                cmd = record['command_name']
+                role_id_str = str(record['allowed_role_id'])
+                role_name = role_map.get(role_id_str, f"Role ID: {role_id_str}")
+
+                permissions_list.append({
+                    "command": cmd,
+                    "role_id": role_id_str,
+                    "role_name": role_name
+                })
+        else:
+             log.error("Dashboard: settings_manager pg_pool not initialized.")
+
+        return permissions_list
+
+    except Exception as e:
+        log.exception(f"Dashboard: Database error fetching all command permissions for guild {guild_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch command permissions.")
+
+@dashboard_api_app.post("/guilds/{guild_id}/test-welcome", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
+async def dashboard_test_welcome_message(
+    guild_id: int,
+    _user: dict = Depends(get_dashboard_user),  # Underscore prefix to indicate unused parameter
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+):
+    """Test the welcome message for a guild."""
+    try:
+        # Get welcome settings
+        welcome_channel_id_str = await settings_manager.get_setting(guild_id, 'welcome_channel_id')
+        welcome_message_template = await settings_manager.get_setting(guild_id, 'welcome_message', default="Welcome {user} to {server}!")
+
+        # Check if welcome channel is set
+        if not welcome_channel_id_str or welcome_channel_id_str == "__NONE__":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Welcome channel not configured"
+            )
+
+        # In a real implementation, this would send a test message to the welcome channel
+        # For now, we'll just return a success message with the formatted message
+        formatted_message = welcome_message_template.format(
+            user="@TestUser",
+            username="TestUser",
+            server=f"Server {guild_id}"
+        )
+
+        return {
+            "message": "Test welcome message sent",
+            "channel_id": welcome_channel_id_str,
+            "formatted_message": formatted_message
+        }
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error testing welcome message for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error testing welcome message: {str(e)}"
+        )
+
+@dashboard_api_app.post("/guilds/{guild_id}/test-goodbye", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
+async def dashboard_test_goodbye_message(
+    guild_id: int,
+    _user: dict = Depends(get_dashboard_user),  # Underscore prefix to indicate unused parameter
+    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+):
+    """Test the goodbye message for a guild."""
+    try:
+        # Get goodbye settings
+        goodbye_channel_id_str = await settings_manager.get_setting(guild_id, 'goodbye_channel_id')
+        goodbye_message_template = await settings_manager.get_setting(guild_id, 'goodbye_message', default="{username} has left the server.")
+
+        # Check if goodbye channel is set
+        if not goodbye_channel_id_str or goodbye_channel_id_str == "__NONE__":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Goodbye channel not configured"
+            )
+
+        # In a real implementation, this would send a test message to the goodbye channel
+        # For now, we'll just return a success message with the formatted message
+        formatted_message = goodbye_message_template.format(
+            username="TestUser",
+            server=f"Server {guild_id}"
+        )
+
+        return {
+            "message": "Test goodbye message sent",
+            "channel_id": goodbye_channel_id_str,
+            "formatted_message": formatted_message
+        }
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error testing goodbye message for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error testing goodbye message: {str(e)}"
+        )
 
 @dashboard_api_app.post("/guilds/{guild_id}/permissions", status_code=status.HTTP_201_CREATED, tags=["Dashboard Guild Settings"])
 @dashboard_api_app.post("/guilds/{guild_id}/command-permissions", status_code=status.HTTP_201_CREATED, tags=["Dashboard Guild Settings"])

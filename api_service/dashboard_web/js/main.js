@@ -470,7 +470,8 @@ function loadGuildSettings(guildId) {
       loadGuildRoles(guildId);
       loadGuildCommands(guildId);
 
-      // Set up welcome/leave message test buttons
+      // Set up event listeners for buttons
+      setupSaveSettingsButtons(guildId);
       setupWelcomeLeaveTestButtons(guildId);
     })
     .catch(error => {
@@ -897,6 +898,357 @@ function removeCommandPermission(guildId, command, roleId) {
  * Set up welcome/leave message test buttons
  * @param {string} guildId - The guild ID
  */
+/**
+ * Set up event listeners for save settings buttons
+ * @param {string} guildId - The guild ID
+ */
+function setupSaveSettingsButtons(guildId) {
+  // Save prefix button
+  const savePrefixButton = document.getElementById('save-prefix-button');
+  if (savePrefixButton) {
+    savePrefixButton.addEventListener('click', () => {
+      // Get prefix value
+      const prefix = document.getElementById('prefix-input').value;
+      if (!prefix) {
+        Toast.error('Please enter a prefix');
+        return;
+      }
+
+      // Show loading state
+      savePrefixButton.disabled = true;
+      savePrefixButton.classList.add('btn-loading');
+
+      // Send request to API
+      API.patch(`/dashboard/api/guilds/${guildId}/settings`, {
+        prefix: prefix
+      })
+        .then(() => {
+          // Show success message
+          Toast.success('Prefix saved successfully');
+
+          // Show feedback
+          const prefixFeedback = document.getElementById('prefix-feedback');
+          if (prefixFeedback) {
+            prefixFeedback.textContent = 'Prefix saved successfully';
+            prefixFeedback.className = 'success';
+
+            // Clear feedback after a few seconds
+            setTimeout(() => {
+              prefixFeedback.textContent = '';
+              prefixFeedback.className = '';
+            }, 3000);
+          }
+        })
+        .catch(error => {
+          console.error('Error saving prefix:', error);
+          Toast.error('Failed to save prefix. Please try again.');
+
+          // Show error feedback
+          const prefixFeedback = document.getElementById('prefix-feedback');
+          if (prefixFeedback) {
+            prefixFeedback.textContent = 'Error saving prefix. Please try again.';
+            prefixFeedback.className = 'error';
+          }
+        })
+        .finally(() => {
+          // Remove loading state
+          savePrefixButton.disabled = false;
+          savePrefixButton.classList.remove('btn-loading');
+        });
+    });
+  }
+
+  // Save welcome settings button
+  const saveWelcomeButton = document.getElementById('save-welcome-button');
+  if (saveWelcomeButton) {
+    saveWelcomeButton.addEventListener('click', () => {
+      // Get welcome settings
+      const welcomeChannelId = document.getElementById('welcome-channel').value;
+      const welcomeMessage = document.getElementById('welcome-message').value;
+
+      // Show loading state
+      saveWelcomeButton.disabled = true;
+      saveWelcomeButton.classList.add('btn-loading');
+
+      // Send request to API
+      API.patch(`/dashboard/api/guilds/${guildId}/settings`, {
+        welcome_channel_id: welcomeChannelId,
+        welcome_message: welcomeMessage
+      })
+        .then(() => {
+          // Show success message
+          Toast.success('Welcome settings saved successfully');
+
+          // Show feedback
+          const welcomeFeedback = document.getElementById('welcome-feedback');
+          if (welcomeFeedback) {
+            welcomeFeedback.textContent = 'Welcome settings saved successfully';
+            welcomeFeedback.className = 'success';
+
+            // Clear feedback after a few seconds
+            setTimeout(() => {
+              welcomeFeedback.textContent = '';
+              welcomeFeedback.className = '';
+            }, 3000);
+          }
+        })
+        .catch(error => {
+          console.error('Error saving welcome settings:', error);
+          Toast.error('Failed to save welcome settings. Please try again.');
+
+          // Show error feedback
+          const welcomeFeedback = document.getElementById('welcome-feedback');
+          if (welcomeFeedback) {
+            welcomeFeedback.textContent = 'Error saving welcome settings. Please try again.';
+            welcomeFeedback.className = 'error';
+          }
+        })
+        .finally(() => {
+          // Remove loading state
+          saveWelcomeButton.disabled = false;
+          saveWelcomeButton.classList.remove('btn-loading');
+        });
+    });
+  }
+
+  // Disable welcome button
+  const disableWelcomeButton = document.getElementById('disable-welcome-button');
+  if (disableWelcomeButton) {
+    disableWelcomeButton.addEventListener('click', () => {
+      // Confirm disable
+      if (!confirm('Are you sure you want to disable welcome messages?')) {
+        return;
+      }
+
+      // Show loading state
+      disableWelcomeButton.disabled = true;
+      disableWelcomeButton.classList.add('btn-loading');
+
+      // Send request to API
+      API.patch(`/dashboard/api/guilds/${guildId}/settings`, {
+        welcome_channel_id: null,
+        welcome_message: null
+      })
+        .then(() => {
+          // Show success message
+          Toast.success('Welcome messages disabled');
+
+          // Clear welcome settings inputs
+          const welcomeChannel = document.getElementById('welcome-channel');
+          const welcomeMessage = document.getElementById('welcome-message');
+          const welcomeChannelSelect = document.getElementById('welcome-channel-select');
+
+          if (welcomeChannel) welcomeChannel.value = '';
+          if (welcomeMessage) welcomeMessage.value = '';
+          if (welcomeChannelSelect) welcomeChannelSelect.value = '';
+
+          // Show feedback
+          const welcomeFeedback = document.getElementById('welcome-feedback');
+          if (welcomeFeedback) {
+            welcomeFeedback.textContent = 'Welcome messages disabled';
+            welcomeFeedback.className = 'success';
+
+            // Clear feedback after a few seconds
+            setTimeout(() => {
+              welcomeFeedback.textContent = '';
+              welcomeFeedback.className = '';
+            }, 3000);
+          }
+        })
+        .catch(error => {
+          console.error('Error disabling welcome messages:', error);
+          Toast.error('Failed to disable welcome messages. Please try again.');
+
+          // Show error feedback
+          const welcomeFeedback = document.getElementById('welcome-feedback');
+          if (welcomeFeedback) {
+            welcomeFeedback.textContent = 'Error disabling welcome messages. Please try again.';
+            welcomeFeedback.className = 'error';
+          }
+        })
+        .finally(() => {
+          // Remove loading state
+          disableWelcomeButton.disabled = false;
+          disableWelcomeButton.classList.remove('btn-loading');
+        });
+    });
+  }
+
+  // Save goodbye settings button
+  const saveGoodbyeButton = document.getElementById('save-goodbye-button');
+  if (saveGoodbyeButton) {
+    saveGoodbyeButton.addEventListener('click', () => {
+      // Get goodbye settings
+      const goodbyeChannelId = document.getElementById('goodbye-channel').value;
+      const goodbyeMessage = document.getElementById('goodbye-message').value;
+
+      // Show loading state
+      saveGoodbyeButton.disabled = true;
+      saveGoodbyeButton.classList.add('btn-loading');
+
+      // Send request to API
+      API.patch(`/dashboard/api/guilds/${guildId}/settings`, {
+        goodbye_channel_id: goodbyeChannelId,
+        goodbye_message: goodbyeMessage
+      })
+        .then(() => {
+          // Show success message
+          Toast.success('Goodbye settings saved successfully');
+
+          // Show feedback
+          const goodbyeFeedback = document.getElementById('goodbye-feedback');
+          if (goodbyeFeedback) {
+            goodbyeFeedback.textContent = 'Goodbye settings saved successfully';
+            goodbyeFeedback.className = 'success';
+
+            // Clear feedback after a few seconds
+            setTimeout(() => {
+              goodbyeFeedback.textContent = '';
+              goodbyeFeedback.className = '';
+            }, 3000);
+          }
+        })
+        .catch(error => {
+          console.error('Error saving goodbye settings:', error);
+          Toast.error('Failed to save goodbye settings. Please try again.');
+
+          // Show error feedback
+          const goodbyeFeedback = document.getElementById('goodbye-feedback');
+          if (goodbyeFeedback) {
+            goodbyeFeedback.textContent = 'Error saving goodbye settings. Please try again.';
+            goodbyeFeedback.className = 'error';
+          }
+        })
+        .finally(() => {
+          // Remove loading state
+          saveGoodbyeButton.disabled = false;
+          saveGoodbyeButton.classList.remove('btn-loading');
+        });
+    });
+  }
+
+  // Disable goodbye button
+  const disableGoodbyeButton = document.getElementById('disable-goodbye-button');
+  if (disableGoodbyeButton) {
+    disableGoodbyeButton.addEventListener('click', () => {
+      // Confirm disable
+      if (!confirm('Are you sure you want to disable goodbye messages?')) {
+        return;
+      }
+
+      // Show loading state
+      disableGoodbyeButton.disabled = true;
+      disableGoodbyeButton.classList.add('btn-loading');
+
+      // Send request to API
+      API.patch(`/dashboard/api/guilds/${guildId}/settings`, {
+        goodbye_channel_id: null,
+        goodbye_message: null
+      })
+        .then(() => {
+          // Show success message
+          Toast.success('Goodbye messages disabled');
+
+          // Clear goodbye settings inputs
+          const goodbyeChannel = document.getElementById('goodbye-channel');
+          const goodbyeMessage = document.getElementById('goodbye-message');
+          const goodbyeChannelSelect = document.getElementById('goodbye-channel-select');
+
+          if (goodbyeChannel) goodbyeChannel.value = '';
+          if (goodbyeMessage) goodbyeMessage.value = '';
+          if (goodbyeChannelSelect) goodbyeChannelSelect.value = '';
+
+          // Show feedback
+          const goodbyeFeedback = document.getElementById('goodbye-feedback');
+          if (goodbyeFeedback) {
+            goodbyeFeedback.textContent = 'Goodbye messages disabled';
+            goodbyeFeedback.className = 'success';
+
+            // Clear feedback after a few seconds
+            setTimeout(() => {
+              goodbyeFeedback.textContent = '';
+              goodbyeFeedback.className = '';
+            }, 3000);
+          }
+        })
+        .catch(error => {
+          console.error('Error disabling goodbye messages:', error);
+          Toast.error('Failed to disable goodbye messages. Please try again.');
+
+          // Show error feedback
+          const goodbyeFeedback = document.getElementById('goodbye-feedback');
+          if (goodbyeFeedback) {
+            goodbyeFeedback.textContent = 'Error disabling goodbye messages. Please try again.';
+            goodbyeFeedback.className = 'error';
+          }
+        })
+        .finally(() => {
+          // Remove loading state
+          disableGoodbyeButton.disabled = false;
+          disableGoodbyeButton.classList.remove('btn-loading');
+        });
+    });
+  }
+
+  // Save cogs button
+  const saveCogsButton = document.getElementById('save-cogs-button');
+  if (saveCogsButton) {
+    saveCogsButton.addEventListener('click', () => {
+      // Get cog settings
+      const cogsPayload = {};
+      const cogCheckboxes = document.querySelectorAll('#cogs-list input[type="checkbox"]');
+
+      cogCheckboxes.forEach(checkbox => {
+        // Extract cog name from checkbox ID (format: cog-{name})
+        const cogName = checkbox.id.replace('cog-', '');
+        cogsPayload[cogName] = checkbox.checked;
+      });
+
+      // Show loading state
+      saveCogsButton.disabled = true;
+      saveCogsButton.classList.add('btn-loading');
+
+      // Send request to API
+      API.patch(`/dashboard/api/guilds/${guildId}/settings`, {
+        cogs: cogsPayload
+      })
+        .then(() => {
+          // Show success message
+          Toast.success('Module settings saved successfully');
+
+          // Show feedback
+          const cogsFeedback = document.getElementById('cogs-feedback');
+          if (cogsFeedback) {
+            cogsFeedback.textContent = 'Module settings saved successfully';
+            cogsFeedback.className = 'success';
+
+            // Clear feedback after a few seconds
+            setTimeout(() => {
+              cogsFeedback.textContent = '';
+              cogsFeedback.className = '';
+            }, 3000);
+          }
+        })
+        .catch(error => {
+          console.error('Error saving module settings:', error);
+          Toast.error('Failed to save module settings. Please try again.');
+
+          // Show error feedback
+          const cogsFeedback = document.getElementById('cogs-feedback');
+          if (cogsFeedback) {
+            cogsFeedback.textContent = 'Error saving module settings. Please try again.';
+            cogsFeedback.className = 'error';
+          }
+        })
+        .finally(() => {
+          // Remove loading state
+          saveCogsButton.disabled = false;
+          saveCogsButton.classList.remove('btn-loading');
+        });
+    });
+  }
+}
+
 function setupWelcomeLeaveTestButtons(guildId) {
   // Welcome message test button
   const testWelcomeButton = document.getElementById('test-welcome-button');
