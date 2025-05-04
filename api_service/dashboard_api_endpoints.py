@@ -824,6 +824,82 @@ async def update_global_settings(
 # --- Cog and Command Management Endpoints ---
 # Note: These endpoints have been moved to cog_management_endpoints.py
 
+# --- Cog Management Redirect Endpoints ---
+# These endpoints redirect to the cog management endpoints in cog_management_endpoints.py
+
+@router.get("/guilds/{guild_id}/cogs", response_model=List[Any])
+async def get_guild_cogs_redirect(
+    guild_id: int,
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Redirect to the cog management endpoint."""
+    try:
+        # Import the cog management endpoint
+        try:
+            from .cog_management_endpoints import get_guild_cogs
+        except ImportError:
+            from cog_management_endpoints import get_guild_cogs
+
+        # Call the cog management endpoint
+        return await get_guild_cogs(guild_id, _user, _admin)
+    except Exception as e:
+        log.error(f"Error redirecting to cog management endpoint: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting cogs: {str(e)}"
+        )
+
+@router.patch("/guilds/{guild_id}/cogs/{cog_name}", status_code=status.HTTP_200_OK)
+async def update_cog_status_redirect(
+    guild_id: int,
+    cog_name: str,
+    enabled: bool = Body(..., embed=True),
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Redirect to the cog management endpoint for updating cog status."""
+    try:
+        # Import the cog management endpoint
+        try:
+            from .cog_management_endpoints import update_cog_status
+        except ImportError:
+            from cog_management_endpoints import update_cog_status
+
+        # Call the cog management endpoint
+        return await update_cog_status(guild_id, cog_name, enabled, _user, _admin)
+    except Exception as e:
+        log.error(f"Error redirecting to cog management endpoint for updating cog status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating cog status: {str(e)}"
+        )
+
+@router.patch("/guilds/{guild_id}/commands/{command_name}", status_code=status.HTTP_200_OK)
+async def update_command_status_redirect(
+    guild_id: int,
+    command_name: str,
+    enabled: bool = Body(..., embed=True),
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Redirect to the cog management endpoint for updating command status."""
+    try:
+        # Import the cog management endpoint
+        try:
+            from .cog_management_endpoints import update_command_status
+        except ImportError:
+            from cog_management_endpoints import update_command_status
+
+        # Call the cog management endpoint
+        return await update_command_status(guild_id, command_name, enabled, _user, _admin)
+    except Exception as e:
+        log.error(f"Error redirecting to cog management endpoint for updating command status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating command status: {str(e)}"
+        )
+
 # --- Conversations Endpoints ---
 
 @router.get("/conversations", response_model=List[Conversation])
