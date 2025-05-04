@@ -175,15 +175,49 @@ const API = {
       const response = await fetch(url, options);
       console.log(`API Response: ${response.status} ${response.statusText}`);
 
+      // Check rate limit headers and log them for monitoring
+      const rateLimit = {
+        limit: response.headers.get('X-RateLimit-Limit'),
+        remaining: response.headers.get('X-RateLimit-Remaining'),
+        reset: response.headers.get('X-RateLimit-Reset'),
+        resetAfter: response.headers.get('X-RateLimit-Reset-After'),
+        bucket: response.headers.get('X-RateLimit-Bucket')
+      };
+
+      // If we're getting close to the rate limit, log a warning
+      if (rateLimit.remaining && parseInt(rateLimit.remaining) < 5) {
+        console.warn(`API Rate limit warning: ${rateLimit.remaining}/${rateLimit.limit} requests remaining in bucket ${rateLimit.bucket}. Resets in ${rateLimit.resetAfter}s`);
+      }
+
       // Handle rate limiting with automatic retry
       if (response.status === 429 && retryCount < MAX_RETRIES) {
-        // Get retry-after header or default to increasing backoff
-        const retryAfter = parseInt(response.headers.get('Retry-After') || Math.pow(2, retryCount));
-        console.log(`Rate limited. Retrying in ${retryAfter} seconds...`);
+        // Get the most accurate retry time from headers
+        let retryAfter = parseFloat(
+          response.headers.get('X-RateLimit-Reset-After') ||
+          response.headers.get('Retry-After') ||
+          Math.pow(2, retryCount)
+        );
 
-        // Show toast only on first retry
+        // Check if this is a global rate limit
+        const isGlobal = response.headers.get('X-RateLimit-Global') !== null;
+
+        // Get the rate limit scope if available
+        const scope = response.headers.get('X-RateLimit-Scope') || 'unknown';
+
+        // For global rate limits, we might want to wait longer
+        if (isGlobal) {
+          retryAfter = Math.max(retryAfter, 5);  // At least 5 seconds for global limits
+        }
+
+        console.log(`Rate limited (${isGlobal ? 'Global' : 'Route'}, Scope: ${scope}). Retrying in ${retryAfter} seconds...`);
+
+        // Show toast with more detailed information
         if (retryCount === 0) {
-          Toast.warning(`Rate limited by Discord API. Retrying in ${retryAfter} seconds...`, 'Please Wait');
+          const message = isGlobal
+            ? `Discord API global rate limit hit. Retrying in ${retryAfter} seconds...`
+            : `Rate limited by Discord API. Retrying in ${retryAfter} seconds...`;
+
+          Toast.warning(message, 'Please Wait');
         }
 
         // Wait for the specified time
@@ -233,13 +267,31 @@ const API = {
           }, 2000);
         }
         else if (response.status === 429) {
-          // Rate limiting - show a more user-friendly message
-          Toast.warning('Discord API rate limit reached. Please wait a moment before trying again.', 'Rate Limited');
+          // Get rate limit information from headers
+          const retryAfter = parseFloat(
+            response.headers.get('X-RateLimit-Reset-After') ||
+            response.headers.get('Retry-After') ||
+            '60'
+          );
 
-          // If Retry-After header is present, we could use it to show a countdown
-          const retryAfter = response.headers.get('Retry-After');
-          if (retryAfter) {
-            console.log(`Rate limited. Retry after ${retryAfter} seconds`);
+          const isGlobal = response.headers.get('X-RateLimit-Global') !== null;
+          const scope = response.headers.get('X-RateLimit-Scope') || 'unknown';
+          const bucket = response.headers.get('X-RateLimit-Bucket') || 'unknown';
+
+          // Log detailed rate limit information
+          console.log(`Rate limit hit: Global=${isGlobal}, Scope=${scope}, Bucket=${bucket}, Retry=${retryAfter}s`);
+
+          // Show appropriate message based on rate limit type
+          if (isGlobal) {
+            Toast.warning(
+              `Discord API global rate limit reached. Please wait ${Math.ceil(retryAfter)} seconds before trying again.`,
+              'Global Rate Limit'
+            );
+          } else {
+            Toast.warning(
+              `Discord API rate limit reached. Please wait ${Math.ceil(retryAfter)} seconds before trying again.`,
+              'Rate Limited'
+            );
           }
         }
 

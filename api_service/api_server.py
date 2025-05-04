@@ -585,7 +585,28 @@ async def verify_dashboard_guild_admin(guild_id: int, current_user: dict = Depen
             async with http_session.get(DISCORD_USER_GUILDS_URL, headers=user_headers) as resp:
                 if resp.status == 429:  # Rate limited
                     retry_count += 1
-                    retry_after = int(resp.headers.get('Retry-After', 1))
+
+                    # Get the most accurate retry time from headers
+                    retry_after = float(resp.headers.get('X-RateLimit-Reset-After',
+                                      resp.headers.get('Retry-After', 1)))
+
+                    # Check if this is a global rate limit
+                    is_global = resp.headers.get('X-RateLimit-Global') is not None
+
+                    # Get the rate limit scope if available
+                    scope = resp.headers.get('X-RateLimit-Scope', 'unknown')
+
+                    log.warning(
+                        f"Dashboard: Discord API rate limit hit. "
+                        f"Global: {is_global}, Scope: {scope}, "
+                        f"Reset after: {retry_after}s, "
+                        f"Retry: {retry_count}/{max_retries}"
+                    )
+
+                    # For global rate limits, we might want to wait longer
+                    if is_global:
+                        retry_after = max(retry_after, 5)  # At least 5 seconds for global limits
+
                     continue
 
                 if resp.status == 401:
@@ -923,8 +944,46 @@ async def dashboard_get_guild_channels(
             async with http_session.get(f"https://discord.com/api/v10/guilds/{guild_id}/channels", headers=bot_headers) as resp:
                 if resp.status == 429:  # Rate limited
                     retry_count += 1
-                    retry_after = int(resp.headers.get('Retry-After', 1))
+
+                    # Get the most accurate retry time from headers
+                    retry_after = float(resp.headers.get('X-RateLimit-Reset-After',
+                                      resp.headers.get('Retry-After', 1)))
+
+                    # Check if this is a global rate limit
+                    is_global = resp.headers.get('X-RateLimit-Global') is not None
+
+                    # Get the rate limit scope if available
+                    scope = resp.headers.get('X-RateLimit-Scope', 'unknown')
+
+                    log.warning(
+                        f"Dashboard: Discord API rate limit hit. "
+                        f"Global: {is_global}, Scope: {scope}, "
+                        f"Reset after: {retry_after}s, "
+                        f"Retry: {retry_count}/{max_retries}"
+                    )
+
+                    # For global rate limits, we might want to wait longer
+                    if is_global:
+                        retry_after = max(retry_after, 5)  # At least 5 seconds for global limits
+
                     continue
+
+                # Check rate limit headers and log them for monitoring
+                rate_limit = {
+                    'limit': resp.headers.get('X-RateLimit-Limit'),
+                    'remaining': resp.headers.get('X-RateLimit-Remaining'),
+                    'reset': resp.headers.get('X-RateLimit-Reset'),
+                    'reset_after': resp.headers.get('X-RateLimit-Reset-After'),
+                    'bucket': resp.headers.get('X-RateLimit-Bucket')
+                }
+
+                # If we're getting close to the rate limit, log a warning
+                if rate_limit['remaining'] and int(rate_limit['remaining']) < 5:
+                    log.warning(
+                        f"Dashboard: Rate limit warning: {rate_limit['remaining']}/{rate_limit['limit']} "
+                        f"requests remaining in bucket {rate_limit['bucket']}. "
+                        f"Resets in {rate_limit['reset_after']}s"
+                    )
 
                 resp.raise_for_status()
                 channels = await resp.json()
@@ -982,7 +1041,28 @@ async def dashboard_get_guild_roles(
             async with http_session.get(f"https://discord.com/api/v10/guilds/{guild_id}/roles", headers=bot_headers) as resp:
                 if resp.status == 429:  # Rate limited
                     retry_count += 1
-                    retry_after = int(resp.headers.get('Retry-After', 1))
+
+                    # Get the most accurate retry time from headers
+                    retry_after = float(resp.headers.get('X-RateLimit-Reset-After',
+                                      resp.headers.get('Retry-After', 1)))
+
+                    # Check if this is a global rate limit
+                    is_global = resp.headers.get('X-RateLimit-Global') is not None
+
+                    # Get the rate limit scope if available
+                    scope = resp.headers.get('X-RateLimit-Scope', 'unknown')
+
+                    log.warning(
+                        f"Dashboard: Discord API rate limit hit. "
+                        f"Global: {is_global}, Scope: {scope}, "
+                        f"Reset after: {retry_after}s, "
+                        f"Retry: {retry_count}/{max_retries}"
+                    )
+
+                    # For global rate limits, we might want to wait longer
+                    if is_global:
+                        retry_after = max(retry_after, 5)  # At least 5 seconds for global limits
+
                     continue
 
                 resp.raise_for_status()
@@ -1050,7 +1130,28 @@ async def dashboard_get_guild_commands(
             async with http_session.get(f"https://discord.com/api/v10/applications/{application_id}/guilds/{guild_id}/commands", headers=bot_headers) as resp:
                 if resp.status == 429:  # Rate limited
                     retry_count += 1
-                    retry_after = int(resp.headers.get('Retry-After', 1))
+
+                    # Get the most accurate retry time from headers
+                    retry_after = float(resp.headers.get('X-RateLimit-Reset-After',
+                                      resp.headers.get('Retry-After', 1)))
+
+                    # Check if this is a global rate limit
+                    is_global = resp.headers.get('X-RateLimit-Global') is not None
+
+                    # Get the rate limit scope if available
+                    scope = resp.headers.get('X-RateLimit-Scope', 'unknown')
+
+                    log.warning(
+                        f"Dashboard: Discord API rate limit hit. "
+                        f"Global: {is_global}, Scope: {scope}, "
+                        f"Reset after: {retry_after}s, "
+                        f"Retry: {retry_count}/{max_retries}"
+                    )
+
+                    # For global rate limits, we might want to wait longer
+                    if is_global:
+                        retry_after = max(retry_after, 5)  # At least 5 seconds for global limits
+
                     continue
 
                 # Handle 404 specially - it's not an error, just means no commands are registered
