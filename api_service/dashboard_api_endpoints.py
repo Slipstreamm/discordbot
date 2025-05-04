@@ -5,7 +5,7 @@ These endpoints provide additional functionality for the dashboard UI.
 
 import logging
 from typing import List, Dict, Optional, Any
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from pydantic import BaseModel, Field
 
 # Import the dependencies from api_server.py
@@ -422,6 +422,93 @@ async def remove_command_alias(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error removing command alias: {str(e)}"
+        )
+
+@router.patch("/guilds/{guild_id}/settings", status_code=status.HTTP_200_OK)
+async def update_guild_settings(
+    guild_id: int,
+    settings_update: Dict[str, Any] = Body(...),
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Update settings for a guild."""
+    try:
+        # Check if settings_manager is available
+        if not settings_manager or not settings_manager.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Settings manager not available"
+            )
+
+        log.info(f"Updating settings for guild {guild_id} requested by user {_user.get('user_id')}")
+        log.debug(f"Update data received: {settings_update}")
+
+        success_flags = []
+        core_cogs_list = {'SettingsCog', 'HelpCog'}  # Core cogs that cannot be disabled
+
+        # Update prefix if provided
+        if 'prefix' in settings_update:
+            success = await settings_manager.set_guild_prefix(guild_id, settings_update['prefix'])
+            success_flags.append(success)
+            if not success:
+                log.error(f"Failed to update prefix for guild {guild_id}")
+
+        # Update welcome channel if provided
+        if 'welcome_channel_id' in settings_update:
+            value = settings_update['welcome_channel_id'] if settings_update['welcome_channel_id'] else None
+            success = await settings_manager.set_setting(guild_id, 'welcome_channel_id', value)
+            success_flags.append(success)
+            if not success:
+                log.error(f"Failed to update welcome_channel_id for guild {guild_id}")
+
+        # Update welcome message if provided
+        if 'welcome_message' in settings_update:
+            success = await settings_manager.set_setting(guild_id, 'welcome_message', settings_update['welcome_message'])
+            success_flags.append(success)
+            if not success:
+                log.error(f"Failed to update welcome_message for guild {guild_id}")
+
+        # Update goodbye channel if provided
+        if 'goodbye_channel_id' in settings_update:
+            value = settings_update['goodbye_channel_id'] if settings_update['goodbye_channel_id'] else None
+            success = await settings_manager.set_setting(guild_id, 'goodbye_channel_id', value)
+            success_flags.append(success)
+            if not success:
+                log.error(f"Failed to update goodbye_channel_id for guild {guild_id}")
+
+        # Update goodbye message if provided
+        if 'goodbye_message' in settings_update:
+            success = await settings_manager.set_setting(guild_id, 'goodbye_message', settings_update['goodbye_message'])
+            success_flags.append(success)
+            if not success:
+                log.error(f"Failed to update goodbye_message for guild {guild_id}")
+
+        # Update cogs if provided
+        if 'cogs' in settings_update and isinstance(settings_update['cogs'], dict):
+            for cog_name, enabled_status in settings_update['cogs'].items():
+                if cog_name not in core_cogs_list:
+                    success = await settings_manager.set_cog_enabled(guild_id, cog_name, enabled_status)
+                    success_flags.append(success)
+                    if not success:
+                        log.error(f"Failed to update status for cog '{cog_name}' for guild {guild_id}")
+                else:
+                    log.warning(f"Attempted to change status of core cog '{cog_name}' for guild {guild_id} - ignored.")
+
+        if all(s is True for s in success_flags):  # Check if all operations returned True
+            return {"message": "Settings updated successfully."}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="One or more settings failed to update. Check server logs."
+            )
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error updating settings for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating settings: {str(e)}"
         )
 
 @router.post("/guilds/{guild_id}/sync-commands", status_code=status.HTTP_200_OK)
