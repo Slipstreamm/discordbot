@@ -65,6 +65,9 @@ async def initialize_pools():
         # Initialize database schema
         await initialize_database()  # Ensure tables exist
 
+        # Run database migrations
+        await run_migrations()  # Apply any necessary migrations
+
         return True  # Indicate successful initialization
     except Exception as e:
         log.exception(f"Failed to initialize connection pools: {e}")
@@ -100,6 +103,39 @@ async def close_pools():
 
 
 # --- Database Schema Initialization ---
+async def run_migrations():
+    """Run database migrations to update schema."""
+    if not pg_pool:
+        log.error("PostgreSQL pool not initialized. Cannot run migrations.")
+        return
+
+    log.info("Running database migrations...")
+    try:
+        async with pg_pool.acquire() as conn:
+            # Check if custom_command_description column exists in command_customization table
+            column_exists = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'command_customization'
+                    AND column_name = 'custom_command_description'
+                );
+            """)
+
+            if not column_exists:
+                log.info("Adding custom_command_description column to command_customization table...")
+                await conn.execute("""
+                    ALTER TABLE command_customization
+                    ADD COLUMN custom_command_description TEXT;
+                """)
+                log.info("Added custom_command_description column successfully.")
+            else:
+                log.debug("custom_command_description column already exists in command_customization table.")
+
+    except Exception as e:
+        log.exception(f"Error running database migrations: {e}")
+
+
 async def initialize_database():
     """Creates necessary tables in the PostgreSQL database if they don't exist."""
     if not pg_pool:
