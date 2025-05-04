@@ -36,3 +36,4 @@ accelerate
 tqdm
 safetensors
 xformers
+huggingface_hub
