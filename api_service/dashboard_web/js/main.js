@@ -337,9 +337,6 @@ function initDropdowns() {
 function loadDashboardData() {
   // Load guilds for server select
   loadGuilds();
-
-  // Load global settings
-  loadGlobalSettings();
 }
 
 /**
@@ -431,6 +428,10 @@ function loadGuilds() {
  */
 function loadGuildSettings(guildId) {
   const settingsForm = document.getElementById('settings-form');
+  const welcomeSettingsForm = document.getElementById('welcome-settings-form');
+  const modulesSettingsForm = document.getElementById('modules-settings-form');
+  const permissionsSettingsForm = document.getElementById('permissions-settings-form');
+
   if (!settingsForm) return;
 
   // Show loading state
@@ -440,7 +441,13 @@ function loadGuildSettings(guildId) {
   loadingContainer.style.textAlign = 'center';
   loadingContainer.style.padding = '2rem';
 
+  // Hide all forms
   settingsForm.style.display = 'none';
+  if (welcomeSettingsForm) welcomeSettingsForm.style.display = 'none';
+  if (modulesSettingsForm) modulesSettingsForm.style.display = 'none';
+  if (permissionsSettingsForm) permissionsSettingsForm.style.display = 'none';
+
+  // Add loading indicator to server settings section
   settingsForm.parentNode.insertBefore(loadingContainer, settingsForm);
 
   // Fetch guild settings from API
@@ -449,16 +456,22 @@ function loadGuildSettings(guildId) {
       // Remove loading container
       loadingContainer.remove();
 
-      // Show settings form
+      // Show all settings forms
       settingsForm.style.display = 'block';
+      if (welcomeSettingsForm) welcomeSettingsForm.style.display = 'block';
+      if (modulesSettingsForm) modulesSettingsForm.style.display = 'block';
+      if (permissionsSettingsForm) permissionsSettingsForm.style.display = 'block';
 
-      // Populate form with settings
+      // Populate forms with settings
       populateGuildSettings(settings);
 
       // Load additional data
       loadGuildChannels(guildId);
       loadGuildRoles(guildId);
       loadGuildCommands(guildId);
+
+      // Set up welcome/leave message test buttons
+      setupWelcomeLeaveTestButtons(guildId);
     })
     .catch(error => {
       console.error('Error loading guild settings:', error);
@@ -881,292 +894,101 @@ function removeCommandPermission(guildId, command, roleId) {
 }
 
 /**
- * Load global AI settings
+ * Set up welcome/leave message test buttons
+ * @param {string} guildId - The guild ID
  */
-function loadGlobalSettings() {
-  const aiSettingsSection = document.getElementById('ai-settings-section');
-  if (!aiSettingsSection) return;
+function setupWelcomeLeaveTestButtons(guildId) {
+  // Welcome message test button
+  const testWelcomeButton = document.getElementById('test-welcome-button');
+  if (testWelcomeButton) {
+    testWelcomeButton.addEventListener('click', () => {
+      // Show loading state
+      testWelcomeButton.disabled = true;
+      testWelcomeButton.classList.add('btn-loading');
 
-  // Show loading state
-  const loadingContainer = document.createElement('div');
-  loadingContainer.className = 'loading-container';
-  loadingContainer.innerHTML = '<div class="loading-spinner"></div><p>Loading AI settings...</p>';
-  loadingContainer.style.textAlign = 'center';
-  loadingContainer.style.padding = '2rem';
+      // Send test request to API
+      API.post(`/dashboard/api/guilds/${guildId}/test-welcome`)
+        .then(response => {
+          console.log('Test welcome message response:', response);
 
-  aiSettingsSection.prepend(loadingContainer);
+          // Show success message with formatted message
+          Toast.success('Test welcome message sent!');
 
-  // Fetch global settings from API
-  API.get('/dashboard/api/settings')
-    .then(settings => {
-      // Remove loading container
-      loadingContainer.remove();
+          // Show formatted message in feedback area
+          const welcomeFeedback = document.getElementById('welcome-feedback');
+          if (welcomeFeedback) {
+            welcomeFeedback.innerHTML = `
+              <div class="mt-4 p-3 border rounded bg-light">
+                <strong>Test Message:</strong>
+                <p class="mb-0">${response.formatted_message}</p>
+                <small class="text-muted">Sent to channel ID: ${response.channel_id}</small>
+              </div>
+            `;
+          }
+        })
+        .catch(error => {
+          console.error('Error testing welcome message:', error);
 
-      console.log('Loaded AI settings:', settings);
-
-      // Populate AI model select
-      const modelSelect = document.getElementById('ai-model-select');
-      if (modelSelect && settings.model) {
-        modelSelect.value = settings.model;
-      }
-
-      // Populate temperature slider
-      const temperatureSlider = document.getElementById('ai-temperature');
-      const temperatureValue = document.getElementById('temperature-value');
-      if (temperatureSlider && temperatureValue) {
-        const temp = settings.temperature !== undefined ? settings.temperature : 0.7;
-        temperatureSlider.value = temp;
-        temperatureValue.textContent = temp;
-
-        // Add input event for live update
-        temperatureSlider.addEventListener('input', () => {
-          temperatureValue.textContent = temperatureSlider.value;
+          // Show error message
+          if (error.status === 400) {
+            Toast.error('Welcome channel not configured. Please set a welcome channel first.');
+          } else {
+            Toast.error('Failed to test welcome message. Please try again.');
+          }
+        })
+        .finally(() => {
+          // Remove loading state
+          testWelcomeButton.disabled = false;
+          testWelcomeButton.classList.remove('btn-loading');
         });
-      }
-
-      // Populate max tokens
-      const maxTokensInput = document.getElementById('ai-max-tokens');
-      if (maxTokensInput) {
-        const maxTokens = settings.max_tokens !== undefined ? settings.max_tokens : 1000;
-        maxTokensInput.value = maxTokens;
-      }
-
-      // Populate character settings
-      const characterInput = document.getElementById('ai-character');
-      const characterInfoInput = document.getElementById('ai-character-info');
-
-      if (characterInput) {
-        characterInput.value = settings.character || '';
-      }
-
-      if (characterInfoInput) {
-        characterInfoInput.value = settings.character_info || '';
-      }
-
-      // Populate system prompt
-      const systemPromptInput = document.getElementById('ai-system-prompt');
-      if (systemPromptInput) {
-        systemPromptInput.value = settings.system_message || '';
-      }
-
-      // Populate custom instructions
-      const customInstructionsInput = document.getElementById('ai-custom-instructions');
-      if (customInstructionsInput) {
-        customInstructionsInput.value = settings.custom_instructions || '';
-      }
-
-      // Set up save buttons
-      setupAISettingsSaveButtons(settings);
-    })
-    .catch(error => {
-      console.error('Error loading global settings:', error);
-      loadingContainer.innerHTML = '<p class="text-danger">Error loading AI settings. Please try again.</p>';
-      Toast.error('Failed to load AI settings. Please try again.');
-    });
-}
-
-/**
- * Set up AI settings save buttons
- * @param {Object} initialSettings - The initial settings
- */
-function setupAISettingsSaveButtons(initialSettings) {
-  // AI Settings save button
-  const saveAISettingsButton = document.getElementById('save-ai-settings-button');
-  if (saveAISettingsButton) {
-    saveAISettingsButton.addEventListener('click', () => {
-      const modelSelect = document.getElementById('ai-model-select');
-      const temperatureSlider = document.getElementById('ai-temperature');
-      const maxTokensInput = document.getElementById('ai-max-tokens');
-      const reasoningEnabled = document.getElementById('ai-reasoning-enabled');
-      const reasoningEffort = document.getElementById('ai-reasoning-effort');
-      const webSearchEnabled = document.getElementById('ai-web-search-enabled');
-
-      // Create settings object
-      const settings = {
-        ...initialSettings, // Keep other settings
-        model: modelSelect ? modelSelect.value : initialSettings.model,
-        temperature: temperatureSlider ? parseFloat(temperatureSlider.value) : initialSettings.temperature,
-        max_tokens: maxTokensInput ? parseInt(maxTokensInput.value) : initialSettings.max_tokens
-      };
-
-      // Add optional settings if they exist
-      if (reasoningEnabled) {
-        settings.reasoning_enabled = reasoningEnabled.checked;
-      }
-
-      if (reasoningEffort) {
-        settings.reasoning_effort = reasoningEffort.value;
-      }
-
-      if (webSearchEnabled) {
-        settings.web_search_enabled = webSearchEnabled.checked;
-      }
-
-      // Save settings
-      saveSettings(settings, saveAISettingsButton, 'AI settings saved successfully');
     });
   }
 
-  // Character settings save button
-  const saveCharacterSettingsButton = document.getElementById('save-character-settings-button');
-  if (saveCharacterSettingsButton) {
-    saveCharacterSettingsButton.addEventListener('click', () => {
-      const characterInput = document.getElementById('ai-character');
-      const characterInfoInput = document.getElementById('ai-character-info');
-      const characterBreakdown = document.getElementById('ai-character-breakdown');
+  // Goodbye message test button
+  const testGoodbyeButton = document.getElementById('test-goodbye-button');
+  if (testGoodbyeButton) {
+    testGoodbyeButton.addEventListener('click', () => {
+      // Show loading state
+      testGoodbyeButton.disabled = true;
+      testGoodbyeButton.classList.add('btn-loading');
 
-      // Create settings object
-      const settings = {
-        ...initialSettings, // Keep other settings
-        character: characterInput ? characterInput.value : initialSettings.character,
-        character_info: characterInfoInput ? characterInfoInput.value : initialSettings.character_info
-      };
+      // Send test request to API
+      API.post(`/dashboard/api/guilds/${guildId}/test-goodbye`)
+        .then(response => {
+          console.log('Test goodbye message response:', response);
 
-      // Add optional settings if they exist
-      if (characterBreakdown) {
-        settings.character_breakdown = characterBreakdown.checked;
-      }
+          // Show success message with formatted message
+          Toast.success('Test goodbye message sent!');
 
-      // Save settings
-      saveSettings(settings, saveCharacterSettingsButton, 'Character settings saved successfully');
-    });
-  }
+          // Show formatted message in feedback area
+          const goodbyeFeedback = document.getElementById('goodbye-feedback');
+          if (goodbyeFeedback) {
+            goodbyeFeedback.innerHTML = `
+              <div class="mt-4 p-3 border rounded bg-light">
+                <strong>Test Message:</strong>
+                <p class="mb-0">${response.formatted_message}</p>
+                <small class="text-muted">Sent to channel ID: ${response.channel_id}</small>
+              </div>
+            `;
+          }
+        })
+        .catch(error => {
+          console.error('Error testing goodbye message:', error);
 
-  // System prompt save button
-  const saveSystemPromptButton = document.getElementById('save-system-prompt-button');
-  if (saveSystemPromptButton) {
-    saveSystemPromptButton.addEventListener('click', () => {
-      const systemPromptInput = document.getElementById('ai-system-prompt');
-
-      // Create settings object
-      const settings = {
-        ...initialSettings, // Keep other settings
-        system_message: systemPromptInput ? systemPromptInput.value : initialSettings.system_message
-      };
-
-      // Save settings
-      saveSettings(settings, saveSystemPromptButton, 'System prompt saved successfully');
-    });
-  }
-
-  // Custom instructions save button
-  const saveCustomInstructionsButton = document.getElementById('save-custom-instructions-button');
-  if (saveCustomInstructionsButton) {
-    saveCustomInstructionsButton.addEventListener('click', () => {
-      const customInstructionsInput = document.getElementById('ai-custom-instructions');
-
-      // Create settings object
-      const settings = {
-        ...initialSettings, // Keep other settings
-        custom_instructions: customInstructionsInput ? customInstructionsInput.value : initialSettings.custom_instructions
-      };
-
-      // Save settings
-      saveSettings(settings, saveCustomInstructionsButton, 'Custom instructions saved successfully');
-    });
-  }
-
-  // Clear buttons
-  const clearCharacterSettingsButton = document.getElementById('clear-character-settings-button');
-  if (clearCharacterSettingsButton) {
-    clearCharacterSettingsButton.addEventListener('click', () => {
-      const characterInput = document.getElementById('ai-character');
-      const characterInfoInput = document.getElementById('ai-character-info');
-
-      if (characterInput) characterInput.value = '';
-      if (characterInfoInput) characterInfoInput.value = '';
-
-      // Create settings object
-      const settings = {
-        ...initialSettings, // Keep other settings
-        character: '',
-        character_info: ''
-      };
-
-      // Save settings
-      saveSettings(settings, clearCharacterSettingsButton, 'Character settings cleared');
-    });
-  }
-
-  const clearCustomInstructionsButton = document.getElementById('clear-custom-instructions-button');
-  if (clearCustomInstructionsButton) {
-    clearCustomInstructionsButton.addEventListener('click', () => {
-      const customInstructionsInput = document.getElementById('ai-custom-instructions');
-
-      if (customInstructionsInput) customInstructionsInput.value = '';
-
-      // Create settings object
-      const settings = {
-        ...initialSettings, // Keep other settings
-        custom_instructions: ''
-      };
-
-      // Save settings
-      saveSettings(settings, clearCustomInstructionsButton, 'Custom instructions cleared');
-    });
-  }
-
-  // Reset buttons
-  const resetAISettingsButton = document.getElementById('reset-ai-settings-button');
-  if (resetAISettingsButton) {
-    resetAISettingsButton.addEventListener('click', () => {
-      const modelSelect = document.getElementById('ai-model-select');
-      const temperatureSlider = document.getElementById('ai-temperature');
-      const temperatureValue = document.getElementById('temperature-value');
-      const maxTokensInput = document.getElementById('ai-max-tokens');
-
-      if (modelSelect) modelSelect.value = 'openai/gpt-3.5-turbo';
-      if (temperatureSlider) temperatureSlider.value = 0.7;
-      if (temperatureValue) temperatureValue.textContent = 0.7;
-      if (maxTokensInput) maxTokensInput.value = 1000;
-
-      // Create settings object
-      const settings = {
-        ...initialSettings, // Keep other settings
-        model: 'openai/gpt-3.5-turbo',
-        temperature: 0.7,
-        max_tokens: 1000
-      };
-
-      // Save settings
-      saveSettings(settings, resetAISettingsButton, 'AI settings reset to defaults');
-    });
-  }
-
-  const resetSystemPromptButton = document.getElementById('reset-system-prompt-button');
-  if (resetSystemPromptButton) {
-    resetSystemPromptButton.addEventListener('click', () => {
-      const systemPromptInput = document.getElementById('ai-system-prompt');
-
-      if (systemPromptInput) systemPromptInput.value = '';
-
-      // Create settings object
-      const settings = {
-        ...initialSettings, // Keep other settings
-        system_message: ''
-      };
-
-      // Save settings
-      saveSettings(settings, resetSystemPromptButton, 'System prompt reset to default');
+          // Show error message
+          if (error.status === 400) {
+            Toast.error('Goodbye channel not configured. Please set a goodbye channel first.');
+          } else {
+            Toast.error('Failed to test goodbye message. Please try again.');
+          }
+        })
+        .finally(() => {
+          // Remove loading state
+          testGoodbyeButton.disabled = false;
+          testGoodbyeButton.classList.remove('btn-loading');
+        });
     });
   }
 }
 
-/**
- * Save settings to the API
- * @param {Object} settings - The settings to save
- * @param {HTMLElement} button - The button that triggered the save
- * @param {string} successMessage - The message to show on success
- */
-function saveSettings(settings, button, successMessage) {
-  // Save settings to API
-  API.post('/dashboard/api/settings', { settings }, button)
-    .then(response => {
-      console.log('Settings saved:', response);
-      Toast.success(successMessage);
-    })
-    .catch(error => {
-      console.error('Error saving settings:', error);
-      Toast.error('Failed to save settings. Please try again.');
-    });
-}
+

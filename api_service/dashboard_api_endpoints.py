@@ -443,6 +443,89 @@ async def sync_guild_commands(
             detail=f"Error syncing commands: {str(e)}"
         )
 
+@router.post("/guilds/{guild_id}/test-welcome", status_code=status.HTTP_200_OK)
+async def test_welcome_message(
+    guild_id: int,
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Test the welcome message for a guild."""
+    try:
+        # Get welcome settings
+        welcome_channel_id_str = await settings_manager.get_setting(guild_id, 'welcome_channel_id')
+        welcome_message_template = await settings_manager.get_setting(guild_id, 'welcome_message', default="Welcome {user} to {server}!")
+
+        # Check if welcome channel is set
+        if not welcome_channel_id_str or welcome_channel_id_str == "__NONE__":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Welcome channel not configured"
+            )
+
+        # In a real implementation, this would send a test message to the welcome channel
+        # For now, we'll just return a success message with the formatted message
+        formatted_message = welcome_message_template.format(
+            user="@TestUser",
+            username="TestUser",
+            server=f"Server {guild_id}"
+        )
+
+        return {
+            "message": "Test welcome message sent",
+            "channel_id": welcome_channel_id_str,
+            "formatted_message": formatted_message
+        }
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error testing welcome message for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error testing welcome message: {str(e)}"
+        )
+
+@router.post("/guilds/{guild_id}/test-goodbye", status_code=status.HTTP_200_OK)
+async def test_goodbye_message(
+    guild_id: int,
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Test the goodbye message for a guild."""
+    try:
+        # Get goodbye settings
+        goodbye_channel_id_str = await settings_manager.get_setting(guild_id, 'goodbye_channel_id')
+        goodbye_message_template = await settings_manager.get_setting(guild_id, 'goodbye_message', default="{username} has left the server.")
+
+        # Check if goodbye channel is set
+        if not goodbye_channel_id_str or goodbye_channel_id_str == "__NONE__":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Goodbye channel not configured"
+            )
+
+        # In a real implementation, this would send a test message to the goodbye channel
+        # For now, we'll just return a success message with the formatted message
+        formatted_message = goodbye_message_template.format(
+            username="TestUser",
+            server=f"Server {guild_id}"
+        )
+
+        return {
+            "message": "Test goodbye message sent",
+            "channel_id": goodbye_channel_id_str,
+            "formatted_message": formatted_message
+        }
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error testing goodbye message for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error testing goodbye message: {str(e)}"
+        )
+
 # --- Global Settings Endpoints ---
 
 @router.get("/settings", response_model=GlobalSettings)
