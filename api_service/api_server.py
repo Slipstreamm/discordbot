@@ -551,36 +551,78 @@ async def test_cogs_endpoint():
 async def get_guild_cogs_no_deps(guild_id: int):
     """Get all cogs for a guild without any dependencies."""
     try:
-        # Check if bot instance is available via discord_bot_sync_api
+        # First try to get cogs from the bot instance
+        bot = None
         try:
             from discordbot import discord_bot_sync_api
             bot = discord_bot_sync_api.bot_instance
-            if not bot:
-                return {"error": "Bot instance not available"}
-        except ImportError:
-            return {"error": "Bot sync API not available"}
+        except (ImportError, AttributeError) as e:
+            log.warning(f"Could not import bot instance: {e}")
 
-        # Get all cogs from the bot
+        # Check if settings_manager is available
+        if not settings_manager or not settings_manager.pg_pool:
+            return {"error": "Settings manager not available", "cogs": []}
+
+        # Get cogs from the database directly if bot is not available
         cogs_list = []
-        for cog_name, cog in bot.cogs.items():
-            # Get enabled status from settings_manager
-            is_enabled = True
-            if settings_manager and settings_manager.pg_pool:
+
+        if bot:
+            # Get cogs from the bot instance
+            log.info(f"Getting cogs from bot instance for guild {guild_id}")
+            for cog_name, cog in bot.cogs.items():
+                # Get enabled status from settings_manager
+                is_enabled = True
                 try:
                     is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=True)
                 except Exception as e:
                     log.error(f"Error getting cog enabled status: {e}")
 
-            cogs_list.append({
-                "name": cog_name,
-                "description": cog.__doc__ or "No description available",
-                "enabled": is_enabled
-            })
+                cogs_list.append({
+                    "name": cog_name,
+                    "description": cog.__doc__ or "No description available",
+                    "enabled": is_enabled
+                })
+        else:
+            # Fallback: Get cogs from the database directly
+            log.info(f"Getting cogs from database for guild {guild_id}")
+            try:
+                # Get all cog enabled statuses from the database
+                cog_statuses = await settings_manager.get_all_enabled_cogs(guild_id)
+
+                # Add each cog to the list
+                for cog_name, is_enabled in cog_statuses.items():
+                    cogs_list.append({
+                        "name": cog_name,
+                        "description": "Description not available (bot instance not accessible)",
+                        "enabled": is_enabled
+                    })
+
+                # If no cogs were found, add some default cogs
+                if not cogs_list:
+                    default_cogs = [
+                        "SettingsCog", "HelpCog", "ModerationCog", "WelcomeCog",
+                        "GurtCog", "EconomyCog", "UtilityCog"
+                    ]
+                    for cog_name in default_cogs:
+                        # Try to get the enabled status from the database
+                        try:
+                            is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=True)
+                        except Exception:
+                            is_enabled = True
+
+                        cogs_list.append({
+                            "name": cog_name,
+                            "description": "Default cog (bot instance not accessible)",
+                            "enabled": is_enabled
+                        })
+            except Exception as e:
+                log.error(f"Error getting cogs from database: {e}")
+                return {"error": f"Error getting cogs from database: {str(e)}", "cogs": []}
 
         return {"cogs": cogs_list}
     except Exception as e:
         log.error(f"Error getting cogs for guild {guild_id}: {e}")
-        return {"error": str(e)}
+        return {"error": str(e), "cogs": []}
 
 
 @discordapi_app.get("/")
@@ -940,56 +982,146 @@ async def get_guild_cogs_direct(
 ):
     """Get all cogs and their commands for a guild."""
     try:
-        # Check if bot instance is available via discord_bot_sync_api
+        # First try to get cogs from the bot instance
+        bot = None
         try:
             from discordbot import discord_bot_sync_api
             bot = discord_bot_sync_api.bot_instance
-            if not bot:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Bot instance not available"
-                )
-        except ImportError:
+        except (ImportError, AttributeError) as e:
+            log.warning(f"Could not import bot instance: {e}")
+
+        # Check if settings_manager is available
+        if not settings_manager or not settings_manager.pg_pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Bot sync API not available"
+                detail="Settings manager not available"
             )
 
-        # Get all cogs from the bot
+        # Get cogs from the database directly if bot is not available
         cogs_list = []
-        for cog_name, cog in bot.cogs.items():
-            # Get enabled status from settings_manager
-            is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=True)
 
-            # Get commands for this cog
-            commands_list = []
-            for command in cog.get_commands():
-                # Get command enabled status
-                cmd_enabled = await settings_manager.is_command_enabled(guild_id, command.qualified_name, default_enabled=True)
-                commands_list.append({
-                    "name": command.qualified_name,
-                    "description": command.help or "No description available",
-                    "enabled": cmd_enabled
-                })
+        if bot:
+            # Get cogs from the bot instance
+            log.info(f"Getting cogs from bot instance for guild {guild_id}")
+            for cog_name, cog in bot.cogs.items():
+                # Get enabled status from settings_manager
+                is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=True)
 
-            # Add slash commands if any
-            app_commands = [cmd for cmd in bot.tree.get_commands() if hasattr(cmd, 'cog') and cmd.cog and cmd.cog.qualified_name == cog_name]
-            for cmd in app_commands:
-                # Get command enabled status
-                cmd_enabled = await settings_manager.is_command_enabled(guild_id, cmd.name, default_enabled=True)
-                if not any(c["name"] == cmd.name for c in commands_list):  # Avoid duplicates
+                # Get commands for this cog
+                commands_list = []
+                for command in cog.get_commands():
+                    # Get command enabled status
+                    cmd_enabled = await settings_manager.is_command_enabled(guild_id, command.qualified_name, default_enabled=True)
                     commands_list.append({
-                        "name": cmd.name,
-                        "description": cmd.description or "No description available",
+                        "name": command.qualified_name,
+                        "description": command.help or "No description available",
                         "enabled": cmd_enabled
                     })
 
-            cogs_list.append(CogInfo(
-                name=cog_name,
-                description=cog.__doc__ or "No description available",
-                enabled=is_enabled,
-                commands=commands_list
-            ))
+                # Add slash commands if any
+                app_commands = [cmd for cmd in bot.tree.get_commands() if hasattr(cmd, 'cog') and cmd.cog and cmd.cog.qualified_name == cog_name]
+                for cmd in app_commands:
+                    # Get command enabled status
+                    cmd_enabled = await settings_manager.is_command_enabled(guild_id, cmd.name, default_enabled=True)
+                    if not any(c["name"] == cmd.name for c in commands_list):  # Avoid duplicates
+                        commands_list.append({
+                            "name": cmd.name,
+                            "description": cmd.description or "No description available",
+                            "enabled": cmd_enabled
+                        })
+
+                cogs_list.append(CogInfo(
+                    name=cog_name,
+                    description=cog.__doc__ or "No description available",
+                    enabled=is_enabled,
+                    commands=commands_list
+                ))
+        else:
+            # Fallback: Get cogs from the database directly
+            log.info(f"Getting cogs from database for guild {guild_id}")
+            try:
+                # Get all cog enabled statuses from the database
+                cog_statuses = await settings_manager.get_all_enabled_cogs(guild_id)
+
+                # Get all command enabled statuses from the database
+                command_statuses = await settings_manager.get_all_enabled_commands(guild_id)
+
+                # Add each cog to the list
+                for cog_name, is_enabled in cog_statuses.items():
+                    # Create a list of commands for this cog
+                    commands_list = []
+
+                    # Find commands that might belong to this cog
+                    # We'll use a naming convention where commands starting with the cog name
+                    # (minus "Cog" suffix) are assumed to belong to that cog
+                    cog_prefix = cog_name.lower().replace("cog", "")
+                    for cmd_name, cmd_enabled in command_statuses.items():
+                        if cmd_name.lower().startswith(cog_prefix):
+                            commands_list.append({
+                                "name": cmd_name,
+                                "description": "Description not available (bot instance not accessible)",
+                                "enabled": cmd_enabled
+                            })
+
+                    cogs_list.append(CogInfo(
+                        name=cog_name,
+                        description="Description not available (bot instance not accessible)",
+                        enabled=is_enabled,
+                        commands=commands_list
+                    ))
+
+                # If no cogs were found, add some default cogs
+                if not cogs_list:
+                    default_cogs = [
+                        "SettingsCog", "HelpCog", "ModerationCog", "WelcomeCog",
+                        "GurtCog", "EconomyCog", "UtilityCog"
+                    ]
+                    for cog_name in default_cogs:
+                        # Try to get the enabled status from the database
+                        try:
+                            is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=True)
+                        except Exception:
+                            is_enabled = True
+
+                        # Add some default commands for this cog
+                        commands_list = []
+                        cog_prefix = cog_name.lower().replace("cog", "")
+                        default_commands = {
+                            "settings": ["set", "get", "reset"],
+                            "help": ["help", "commands"],
+                            "moderation": ["ban", "kick", "mute", "unmute", "warn"],
+                            "welcome": ["welcome", "goodbye", "setwelcome", "setgoodbye"],
+                            "gurt": ["gurt", "gurtset"],
+                            "economy": ["balance", "daily", "work", "gamble"],
+                            "utility": ["ping", "info", "serverinfo", "userinfo"]
+                        }
+
+                        if cog_prefix in default_commands:
+                            for cmd_suffix in default_commands[cog_prefix]:
+                                cmd_name = f"{cog_prefix}{cmd_suffix}"
+                                try:
+                                    cmd_enabled = await settings_manager.is_command_enabled(guild_id, cmd_name, default_enabled=True)
+                                except Exception:
+                                    cmd_enabled = True
+
+                                commands_list.append({
+                                    "name": cmd_name,
+                                    "description": "Default command (bot instance not accessible)",
+                                    "enabled": cmd_enabled
+                                })
+
+                        cogs_list.append(CogInfo(
+                            name=cog_name,
+                            description="Default cog (bot instance not accessible)",
+                            enabled=is_enabled,
+                            commands=commands_list
+                        ))
+            except Exception as e:
+                log.error(f"Error getting cogs from database: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error getting cogs from database: {str(e)}"
+                )
 
         return cogs_list
     except HTTPException:
@@ -1019,32 +1151,34 @@ async def update_cog_status_direct(
                 detail="Settings manager not available"
             )
 
-        # Check if the cog exists
+        # Try to get the bot instance, but don't require it
+        bot = None
         try:
             from discordbot import discord_bot_sync_api
             bot = discord_bot_sync_api.bot_instance
-            if not bot:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Bot instance not available"
-                )
+        except (ImportError, AttributeError) as e:
+            log.warning(f"Could not import bot instance: {e}")
 
+        # If we have a bot instance, do some additional checks
+        if bot:
+            # Check if the cog exists
             if cog_name not in bot.cogs:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Cog '{cog_name}' not found"
-                )
-
-            # Check if it's a core cog
-            core_cogs = getattr(bot, 'core_cogs', {'SettingsCog', 'HelpCog'})
-            if cog_name in core_cogs:
+                log.warning(f"Cog '{cog_name}' not found in bot instance, but proceeding anyway")
+            else:
+                # Check if it's a core cog
+                core_cogs = getattr(bot, 'core_cogs', {'SettingsCog', 'HelpCog'})
+                if cog_name in core_cogs and not enabled:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Core cog '{cog_name}' cannot be disabled"
+                    )
+        else:
+            # If we don't have a bot instance, check if this is a known core cog
+            if cog_name in ['SettingsCog', 'HelpCog'] and not enabled:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Core cog '{cog_name}' cannot be disabled"
                 )
-        except ImportError:
-            # If we can't import the bot, we'll just assume the cog exists
-            log.warning("Bot sync API not available, skipping cog existence check")
 
         # Update the cog enabled status
         success = await settings_manager.set_cog_enabled(guild_id, cog_name, enabled)
@@ -1082,29 +1216,23 @@ async def update_command_status_direct(
                 detail="Settings manager not available"
             )
 
-        # Check if the command exists
+        # Try to get the bot instance, but don't require it
+        bot = None
         try:
             from discordbot import discord_bot_sync_api
             bot = discord_bot_sync_api.bot_instance
-            if not bot:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Bot instance not available"
-                )
+        except (ImportError, AttributeError) as e:
+            log.warning(f"Could not import bot instance: {e}")
 
+        # If we have a bot instance, check if the command exists
+        if bot:
             # Check if it's a prefix command
             command = bot.get_command(command_name)
             if not command:
                 # Check if it's an app command
                 app_commands = [cmd for cmd in bot.tree.get_commands() if cmd.name == command_name]
                 if not app_commands:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Command '{command_name}' not found"
-                    )
-        except ImportError:
-            # If we can't import the bot, we'll just assume the command exists
-            log.warning("Bot sync API not available, skipping command existence check")
+                    log.warning(f"Command '{command_name}' not found in bot instance, but proceeding anyway")
 
         # Update the command enabled status
         success = await settings_manager.set_command_enabled(guild_id, command_name, enabled)
