@@ -1,6 +1,7 @@
 import os
 import json
 import sys
+import asyncio
 from typing import Dict, List, Optional, Any
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,6 +45,7 @@ class ApiSettings(BaseSettings):
     DISCORD_CLIENT_ID: str
     DISCORD_CLIENT_SECRET: str
     DISCORD_REDIRECT_URI: str
+    DISCORD_BOT_TOKEN: str  # Add bot token for API calls
 
     # Secret key for dashboard session management
     DASHBOARD_SECRET_KEY: str = "a_default_secret_key_for_development_only" # Provide a default for dev
@@ -569,32 +571,53 @@ async def verify_dashboard_guild_admin(guild_id: int, current_user: dict = Depen
     user_headers = {'Authorization': f'Bearer {current_user["access_token"]}'}
     try:
         log.debug(f"Dashboard: Verifying admin status for user {current_user['user_id']} in guild {guild_id}")
-        async with http_session.get(DISCORD_USER_GUILDS_URL, headers=user_headers) as resp:
-            if resp.status == 401:
-                # Clear session if token is invalid
-                # request.session.clear() # Cannot access request here directly
-                raise HTTPException(status_code=401, detail="Discord token invalid or expired. Please re-login.")
-            resp.raise_for_status()
-            user_guilds = await resp.json()
 
-        ADMINISTRATOR_PERMISSION = 0x8
-        is_admin = False
-        for guild in user_guilds:
-            if int(guild['id']) == guild_id:
-                permissions = int(guild['permissions'])
-                if (permissions & ADMINISTRATOR_PERMISSION) == ADMINISTRATOR_PERMISSION:
-                    is_admin = True
-                    break # Found the guild and user is admin
+        # Add rate limit handling
+        max_retries = 3
+        retry_count = 0
+        retry_after = 0
 
-        if not is_admin:
-            log.warning(f"Dashboard: User {current_user['user_id']} is not admin or not in guild {guild_id}.")
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is not an administrator of this guild.")
+        while retry_count < max_retries:
+            if retry_after > 0:
+                log.warning(f"Dashboard: Rate limited by Discord API, waiting {retry_after} seconds before retry")
+                await asyncio.sleep(retry_after)
 
-        log.debug(f"Dashboard: User {current_user['user_id']} verified as admin for guild {guild_id}.")
-        return True # Indicate verification success
+            async with http_session.get(DISCORD_USER_GUILDS_URL, headers=user_headers) as resp:
+                if resp.status == 429:  # Rate limited
+                    retry_count += 1
+                    retry_after = int(resp.headers.get('Retry-After', 1))
+                    continue
 
+                if resp.status == 401:
+                    # Clear session if token is invalid
+                    # request.session.clear() # Cannot access request here directly
+                    raise HTTPException(status_code=401, detail="Discord token invalid or expired. Please re-login.")
+
+                resp.raise_for_status()
+                user_guilds = await resp.json()
+
+                ADMINISTRATOR_PERMISSION = 0x8
+                is_admin = False
+                for guild in user_guilds:
+                    if int(guild['id']) == guild_id:
+                        permissions = int(guild['permissions'])
+                        if (permissions & ADMINISTRATOR_PERMISSION) == ADMINISTRATOR_PERMISSION:
+                            is_admin = True
+                            break # Found the guild and user is admin
+
+                if not is_admin:
+                    log.warning(f"Dashboard: User {current_user['user_id']} is not admin or not in guild {guild_id}.")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is not an administrator of this guild.")
+
+                log.debug(f"Dashboard: User {current_user['user_id']} verified as admin for guild {guild_id}.")
+                return True # Indicate verification success
+
+        # If we get here, we've exceeded our retry limit
+        raise HTTPException(status_code=429, detail="Rate limited by Discord API. Please try again later.")
     except aiohttp.ClientResponseError as e:
         log.exception(f"Dashboard: HTTP error verifying guild admin status: {e.status} {e.message}")
+        if e.status == 429:
+            raise HTTPException(status_code=429, detail="Rate limited by Discord API. Please try again later.")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Error communicating with Discord API.")
     except Exception as e:
         log.exception(f"Dashboard: Generic error verifying guild admin status: {e}")
@@ -886,23 +909,44 @@ async def dashboard_get_guild_channels(
     try:
         # Use Discord Bot Token to fetch channels
         bot_headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
-        async with http_session.get(f"https://discord.com/api/v10/guilds/{guild_id}/channels", headers=bot_headers) as resp:
-            resp.raise_for_status()
-            channels = await resp.json()
 
-            # Filter and format channels
-            formatted_channels = []
-            for channel in channels:
-                formatted_channels.append({
-                    "id": channel["id"],
-                    "name": channel["name"],
-                    "type": channel["type"],
-                    "parent_id": channel.get("parent_id")
-                })
+        # Add rate limit handling
+        max_retries = 3
+        retry_count = 0
+        retry_after = 0
 
-            return formatted_channels
+        while retry_count < max_retries:
+            if retry_after > 0:
+                log.warning(f"Dashboard: Rate limited by Discord API, waiting {retry_after} seconds before retry")
+                await asyncio.sleep(retry_after)
+
+            async with http_session.get(f"https://discord.com/api/v10/guilds/{guild_id}/channels", headers=bot_headers) as resp:
+                if resp.status == 429:  # Rate limited
+                    retry_count += 1
+                    retry_after = int(resp.headers.get('Retry-After', 1))
+                    continue
+
+                resp.raise_for_status()
+                channels = await resp.json()
+
+                # Filter and format channels
+                formatted_channels = []
+                for channel in channels:
+                    formatted_channels.append({
+                        "id": channel["id"],
+                        "name": channel["name"],
+                        "type": channel["type"],
+                        "parent_id": channel.get("parent_id")
+                    })
+
+                return formatted_channels
+
+        # If we get here, we've exceeded our retry limit
+        raise HTTPException(status_code=429, detail="Rate limited by Discord API. Please try again later.")
     except aiohttp.ClientResponseError as e:
         log.exception(f"Dashboard: HTTP error fetching guild channels: {e.status} {e.message}")
+        if e.status == 429:
+            raise HTTPException(status_code=429, detail="Rate limited by Discord API. Please try again later.")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Error communicating with Discord API.")
     except Exception as e:
         log.exception(f"Dashboard: Generic error fetching guild channels: {e}")
@@ -924,31 +968,52 @@ async def dashboard_get_guild_roles(
     try:
         # Use Discord Bot Token to fetch roles
         bot_headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
-        async with http_session.get(f"https://discord.com/api/v10/guilds/{guild_id}/roles", headers=bot_headers) as resp:
-            resp.raise_for_status()
-            roles = await resp.json()
 
-            # Filter and format roles
-            formatted_roles = []
-            for role in roles:
-                # Skip @everyone role
-                if role["name"] == "@everyone":
+        # Add rate limit handling
+        max_retries = 3
+        retry_count = 0
+        retry_after = 0
+
+        while retry_count < max_retries:
+            if retry_after > 0:
+                log.warning(f"Dashboard: Rate limited by Discord API, waiting {retry_after} seconds before retry")
+                await asyncio.sleep(retry_after)
+
+            async with http_session.get(f"https://discord.com/api/v10/guilds/{guild_id}/roles", headers=bot_headers) as resp:
+                if resp.status == 429:  # Rate limited
+                    retry_count += 1
+                    retry_after = int(resp.headers.get('Retry-After', 1))
                     continue
 
-                formatted_roles.append({
-                    "id": role["id"],
-                    "name": role["name"],
-                    "color": role["color"],
-                    "position": role["position"],
-                    "permissions": role["permissions"]
-                })
+                resp.raise_for_status()
+                roles = await resp.json()
 
-            # Sort roles by position (highest first)
-            formatted_roles.sort(key=lambda r: r["position"], reverse=True)
+                # Filter and format roles
+                formatted_roles = []
+                for role in roles:
+                    # Skip @everyone role
+                    if role["name"] == "@everyone":
+                        continue
 
-            return formatted_roles
+                    formatted_roles.append({
+                        "id": role["id"],
+                        "name": role["name"],
+                        "color": role["color"],
+                        "position": role["position"],
+                        "permissions": role["permissions"]
+                    })
+
+                # Sort roles by position (highest first)
+                formatted_roles.sort(key=lambda r: r["position"], reverse=True)
+
+                return formatted_roles
+
+        # If we get here, we've exceeded our retry limit
+        raise HTTPException(status_code=429, detail="Rate limited by Discord API. Please try again later.")
     except aiohttp.ClientResponseError as e:
         log.exception(f"Dashboard: HTTP error fetching guild roles: {e.status} {e.message}")
+        if e.status == 429:
+            raise HTTPException(status_code=429, detail="Rate limited by Discord API. Please try again later.")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Error communicating with Discord API.")
     except Exception as e:
         log.exception(f"Dashboard: Generic error fetching guild roles: {e}")
@@ -972,27 +1037,51 @@ async def dashboard_get_guild_commands(
         bot_headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
         application_id = settings.DISCORD_CLIENT_ID  # This should be the same as your bot's application ID
 
-        async with http_session.get(f"https://discord.com/api/v10/applications/{application_id}/guilds/{guild_id}/commands", headers=bot_headers) as resp:
-            resp.raise_for_status()
-            commands = await resp.json()
+        # Add rate limit handling
+        max_retries = 3
+        retry_count = 0
+        retry_after = 0
 
-            # Format commands
-            formatted_commands = []
-            for cmd in commands:
-                formatted_commands.append({
-                    "id": cmd["id"],
-                    "name": cmd["name"],
-                    "description": cmd.get("description", ""),
-                    "type": cmd.get("type", 1),  # Default to CHAT_INPUT type
-                    "options": cmd.get("options", [])
-                })
+        while retry_count < max_retries:
+            if retry_after > 0:
+                log.warning(f"Dashboard: Rate limited by Discord API, waiting {retry_after} seconds before retry")
+                await asyncio.sleep(retry_after)
 
-            return formatted_commands
+            async with http_session.get(f"https://discord.com/api/v10/applications/{application_id}/guilds/{guild_id}/commands", headers=bot_headers) as resp:
+                if resp.status == 429:  # Rate limited
+                    retry_count += 1
+                    retry_after = int(resp.headers.get('Retry-After', 1))
+                    continue
+
+                # Handle 404 specially - it's not an error, just means no commands are registered
+                if resp.status == 404:
+                    return []
+
+                resp.raise_for_status()
+                commands = await resp.json()
+
+                # Format commands
+                formatted_commands = []
+                for cmd in commands:
+                    formatted_commands.append({
+                        "id": cmd["id"],
+                        "name": cmd["name"],
+                        "description": cmd.get("description", ""),
+                        "type": cmd.get("type", 1),  # Default to CHAT_INPUT type
+                        "options": cmd.get("options", [])
+                    })
+
+                return formatted_commands
+
+        # If we get here, we've exceeded our retry limit
+        raise HTTPException(status_code=429, detail="Rate limited by Discord API. Please try again later.")
     except aiohttp.ClientResponseError as e:
         log.exception(f"Dashboard: HTTP error fetching guild commands: {e.status} {e.message}")
         if e.status == 404:
             # If no commands are registered yet, return an empty list
             return []
+        if e.status == 429:
+            raise HTTPException(status_code=429, detail="Rate limited by Discord API. Please try again later.")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Error communicating with Discord API.")
     except Exception as e:
         log.exception(f"Dashboard: Generic error fetching guild commands: {e}")

@@ -130,15 +130,19 @@ const API = {
    * @param {string} url - The API endpoint URL
    * @param {Object} options - Fetch options
    * @param {HTMLElement} loadingElement - Element to show loading state on
+   * @param {number} retryCount - Internal parameter for tracking retries
    * @returns {Promise} - The fetch promise
    */
-  async request(url, options = {}, loadingElement = null) {
+  async request(url, options = {}, loadingElement = null, retryCount = 0) {
     // Set default headers
     options.headers = options.headers || {};
     options.headers['Content-Type'] = options.headers['Content-Type'] || 'application/json';
 
     // Always include credentials for session cookies
     options.credentials = options.credentials || 'same-origin';
+
+    // Maximum number of retries for rate-limited requests
+    const MAX_RETRIES = 3;
 
     // Add loading state
     if (loadingElement) {
@@ -167,9 +171,27 @@ const API = {
     }
 
     try {
-      console.log(`API Request: ${options.method || 'GET'} ${url}`);
+      console.log(`API Request: ${options.method || 'GET'} ${url}${retryCount > 0 ? ` (Retry ${retryCount}/${MAX_RETRIES})` : ''}`);
       const response = await fetch(url, options);
       console.log(`API Response: ${response.status} ${response.statusText}`);
+
+      // Handle rate limiting with automatic retry
+      if (response.status === 429 && retryCount < MAX_RETRIES) {
+        // Get retry-after header or default to increasing backoff
+        const retryAfter = parseInt(response.headers.get('Retry-After') || Math.pow(2, retryCount));
+        console.log(`Rate limited. Retrying in ${retryAfter} seconds...`);
+
+        // Show toast only on first retry
+        if (retryCount === 0) {
+          Toast.warning(`Rate limited by Discord API. Retrying in ${retryAfter} seconds...`, 'Please Wait');
+        }
+
+        // Wait for the specified time
+        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+
+        // Retry the request
+        return this.request(url, options, loadingElement, retryCount + 1);
+      }
 
       // Parse JSON response
       let data;
@@ -202,13 +224,23 @@ const API = {
         error.status = response.status;
         error.data = data;
 
-        // Handle authentication errors
+        // Handle specific error types
         if (response.status === 401) {
           console.log('Authentication error detected, redirecting to login');
           // Redirect to login after a short delay to show the error
           setTimeout(() => {
             window.location.href = '/dashboard/api/auth/login';
           }, 2000);
+        }
+        else if (response.status === 429) {
+          // Rate limiting - show a more user-friendly message
+          Toast.warning('Discord API rate limit reached. Please wait a moment before trying again.', 'Rate Limited');
+
+          // If Retry-After header is present, we could use it to show a countdown
+          const retryAfter = response.headers.get('Retry-After');
+          if (retryAfter) {
+            console.log(`Rate limited. Retry after ${retryAfter} seconds`);
+          }
         }
 
         throw error;
