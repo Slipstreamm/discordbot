@@ -10,7 +10,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 import aiohttp
-import discord
 from database import Database # Existing DB
 import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -110,48 +109,96 @@ if not settings.GURT_STATS_PUSH_SECRET:
     print("Warning: GURT_STATS_PUSH_SECRET not set. Internal stats update endpoint will be insecure.")
 
 # --- Helper Functions ---
-async def safe_send_discord_message(channel, content: str, timeout: float = 5.0) -> Dict[str, Any]:
+async def send_discord_message_via_api(channel_id: int, content: str, timeout: float = 5.0) -> Dict[str, Any]:
     """
-    Safely send a message to a Discord channel with proper error handling.
+    Send a message to a Discord channel using Discord's REST API directly.
+    This avoids using Discord.py's channel.send() method which can cause issues with FastAPI.
 
     Args:
-        channel: The Discord channel object to send the message to
+        channel_id: The Discord channel ID to send the message to
         content: The message content to send
-        timeout: Maximum time to wait for the message to be sent (in seconds)
+        timeout: Maximum time to wait for the API request (in seconds)
 
     Returns:
         A dictionary with status information about the message send operation
     """
-    try:
-        # Create a task to send the message
-        send_task = asyncio.create_task(channel.send(content))
-        # Wait for the task to complete with a timeout
-        sent_message = await asyncio.wait_for(send_task, timeout=timeout)
-
+    if not settings.DISCORD_BOT_TOKEN:
         return {
-            "success": True,
-            "message": "Message sent successfully",
-            "message_id": str(sent_message.id) if hasattr(sent_message, 'id') else None
+            "success": False,
+            "message": "Discord bot token not configured",
+            "error": "no_token"
         }
+
+    # Discord API endpoint for sending messages
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+
+    # Headers for the request
+    headers = {
+        "Authorization": f"Bot {settings.DISCORD_BOT_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    # Message data
+    data = {
+        "content": content
+    }
+
+    try:
+        # Use global http_session if available, otherwise create a new one
+        session = http_session if http_session else aiohttp.ClientSession()
+
+        # Send the request with a timeout
+        async with session.post(url, headers=headers, json=data, timeout=timeout) as response:
+            if response.status == 200 or response.status == 201:
+                # Message sent successfully
+                response_data = await response.json()
+                return {
+                    "success": True,
+                    "message": "Message sent successfully",
+                    "message_id": response_data.get("id")
+                }
+            elif response.status == 403:
+                # Missing permissions
+                return {
+                    "success": False,
+                    "message": "Missing permissions to send message to this channel",
+                    "error": "forbidden",
+                    "status": response.status
+                }
+            elif response.status == 429:
+                # Rate limited
+                response_data = await response.json()
+                retry_after = response_data.get("retry_after", 1)
+                return {
+                    "success": False,
+                    "message": f"Rate limited by Discord API. Retry after {retry_after} seconds",
+                    "error": "rate_limited",
+                    "retry_after": retry_after,
+                    "status": response.status
+                }
+            else:
+                # Other error
+                try:
+                    response_data = await response.json()
+                    return {
+                        "success": False,
+                        "message": f"Discord API error: {response.status}",
+                        "error": "api_error",
+                        "status": response.status,
+                        "details": response_data
+                    }
+                except:
+                    return {
+                        "success": False,
+                        "message": f"Discord API error: {response.status}",
+                        "error": "api_error",
+                        "status": response.status
+                    }
     except asyncio.TimeoutError:
         return {
             "success": False,
-            "message": "Timeout sending message",
+            "message": "Timeout sending message to Discord API",
             "error": "timeout"
-        }
-    except discord.Forbidden:
-        return {
-            "success": False,
-            "message": "Missing permissions to send message",
-            "error": "forbidden"
-        }
-    except discord.HTTPException as e:
-        return {
-            "success": False,
-            "message": f"HTTP error sending message: {e.status} {e.text}",
-            "error": "http",
-            "status": e.status,
-            "details": e.text
         }
     except Exception as e:
         return {
@@ -1618,64 +1665,14 @@ async def dashboard_test_welcome_message(
             server=f"Server {guild_id}"
         )
 
-        # Import the bot instance from discord_bot_sync_api
-        from discord_bot_sync_api import bot_instance
+        # No need to import bot_instance anymore since we're using the direct API approach
 
-        # Check if bot instance is available
-        if not bot_instance:
-            log.error(f"Bot instance not available for sending test welcome message to guild {guild_id}")
-            return {
-                "message": "Test welcome message could not be sent (bot instance not available)",
-                "channel_id": welcome_channel_id_str,
-                "formatted_message": formatted_message
-            }
-
-        # Try to get the channel and send the message
+        # Send the message directly via Discord API
         try:
             welcome_channel_id = int(welcome_channel_id_str)
-            channel = bot_instance.get_channel(welcome_channel_id)
 
-            if not channel:
-                # Try fetching if not in cache
-                try:
-                    channel = await bot_instance.fetch_channel(welcome_channel_id)
-                except discord.NotFound:
-                    log.warning(f"Welcome channel ID {welcome_channel_id} not found for guild {guild_id}")
-                    return {
-                        "message": "Test welcome message could not be sent (channel not found)",
-                        "channel_id": welcome_channel_id_str,
-                        "formatted_message": formatted_message
-                    }
-                except discord.Forbidden:
-                    log.warning(f"Bot does not have permission to access channel {welcome_channel_id} in guild {guild_id}")
-                    return {
-                        "message": "Test welcome message could not be sent (no permission to access channel)",
-                        "channel_id": welcome_channel_id_str,
-                        "formatted_message": formatted_message
-                    }
-
-            # Check if channel is a text channel
-            if not hasattr(channel, 'send'):
-                log.warning(f"Channel {welcome_channel_id} in guild {guild_id} is not a text channel")
-                return {
-                    "message": "Test welcome message could not be sent (channel is not a text channel)",
-                    "channel_id": welcome_channel_id_str,
-                    "formatted_message": formatted_message
-                }
-
-            # Check permissions if it's a guild channel
-            if hasattr(channel, 'guild') and hasattr(channel.guild, 'me'):
-                bot_member = channel.guild.me
-                if not channel.permissions_for(bot_member).send_messages:
-                    log.warning(f"Bot does not have permission to send messages in channel {welcome_channel_id} in guild {guild_id}")
-                    return {
-                        "message": "Test welcome message could not be sent (no permission to send messages)",
-                        "channel_id": welcome_channel_id_str,
-                        "formatted_message": formatted_message
-                    }
-
-            # Send the message using our helper function
-            result = await safe_send_discord_message(channel, formatted_message)
+            # Send the message using our direct API approach
+            result = await send_discord_message_via_api(welcome_channel_id, formatted_message)
 
             if result["success"]:
                 log.info(f"Sent test welcome message to channel {welcome_channel_id} in guild {guild_id}")
@@ -1742,64 +1739,14 @@ async def dashboard_test_goodbye_message(
             server=f"Server {guild_id}"
         )
 
-        # Import the bot instance from discord_bot_sync_api
-        from discord_bot_sync_api import bot_instance
+        # No need to import bot_instance anymore since we're using the direct API approach
 
-        # Check if bot instance is available
-        if not bot_instance:
-            log.error(f"Bot instance not available for sending test goodbye message to guild {guild_id}")
-            return {
-                "message": "Test goodbye message could not be sent (bot instance not available)",
-                "channel_id": goodbye_channel_id_str,
-                "formatted_message": formatted_message
-            }
-
-        # Try to get the channel and send the message
+        # Send the message directly via Discord API
         try:
             goodbye_channel_id = int(goodbye_channel_id_str)
-            channel = bot_instance.get_channel(goodbye_channel_id)
 
-            if not channel:
-                # Try fetching if not in cache
-                try:
-                    channel = await bot_instance.fetch_channel(goodbye_channel_id)
-                except discord.NotFound:
-                    log.warning(f"Goodbye channel ID {goodbye_channel_id} not found for guild {guild_id}")
-                    return {
-                        "message": "Test goodbye message could not be sent (channel not found)",
-                        "channel_id": goodbye_channel_id_str,
-                        "formatted_message": formatted_message
-                    }
-                except discord.Forbidden:
-                    log.warning(f"Bot does not have permission to access channel {goodbye_channel_id} in guild {guild_id}")
-                    return {
-                        "message": "Test goodbye message could not be sent (no permission to access channel)",
-                        "channel_id": goodbye_channel_id_str,
-                        "formatted_message": formatted_message
-                    }
-
-            # Check if channel is a text channel
-            if not hasattr(channel, 'send'):
-                log.warning(f"Channel {goodbye_channel_id} in guild {guild_id} is not a text channel")
-                return {
-                    "message": "Test goodbye message could not be sent (channel is not a text channel)",
-                    "channel_id": goodbye_channel_id_str,
-                    "formatted_message": formatted_message
-                }
-
-            # Check permissions if it's a guild channel
-            if hasattr(channel, 'guild') and hasattr(channel.guild, 'me'):
-                bot_member = channel.guild.me
-                if not channel.permissions_for(bot_member).send_messages:
-                    log.warning(f"Bot does not have permission to send messages in channel {goodbye_channel_id} in guild {guild_id}")
-                    return {
-                        "message": "Test goodbye message could not be sent (no permission to send messages)",
-                        "channel_id": goodbye_channel_id_str,
-                        "formatted_message": formatted_message
-                    }
-
-            # Send the message using our helper function
-            result = await safe_send_discord_message(channel, formatted_message)
+            # Send the message using our direct API approach
+            result = await send_discord_message_via_api(goodbye_channel_id, formatted_message)
 
             if result["success"]:
                 log.info(f"Sent test goodbye message to channel {goodbye_channel_id} in guild {guild_id}")
