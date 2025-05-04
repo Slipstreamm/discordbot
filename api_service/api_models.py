@@ -18,7 +18,7 @@ class Conversation(BaseModel):
     messages: List[Message] = []
     created_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
     updated_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
-    
+
     # Conversation-specific settings
     model_id: str = "openai/gpt-3.5-turbo"
     reasoning_enabled: bool = False
@@ -27,6 +27,15 @@ class Conversation(BaseModel):
     max_tokens: int = 1000
     web_search_enabled: bool = False
     system_message: Optional[str] = None
+
+class ThemeSettings(BaseModel):
+    """Theme settings for the dashboard UI"""
+    theme_mode: str = "light"  # "light", "dark", "custom"
+    primary_color: str = "#5865F2"  # Discord blue
+    secondary_color: str = "#2D3748"
+    accent_color: str = "#7289DA"
+    font_family: str = "Inter, sans-serif"
+    custom_css: Optional[str] = None
 
 class UserSettings(BaseModel):
     # General settings
@@ -53,7 +62,10 @@ class UserSettings(BaseModel):
     # UI settings
     advanced_view_enabled: bool = False
     streaming_enabled: bool = True
-    
+
+    # Theme settings
+    theme: ThemeSettings = Field(default_factory=ThemeSettings)
+
     # Last updated timestamp
     last_updated: datetime.datetime = Field(default_factory=datetime.datetime.now)
 

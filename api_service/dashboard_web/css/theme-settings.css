@@ -1,0 +1,199 @@
+/* Theme Settings CSS */
+
+/* Color Picker Container */
+.color-picker-container {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+input[type="color"] {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background-color: white;
+  cursor: pointer;
+  padding: 0;
+}
+
+.color-text-input {
+  width: 100px;
+  font-family: monospace;
+}
+
+/* Theme Preview */
+.theme-preview {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-top: var(--spacing-4);
+}
+
+.preview-header {
+  background-color: var(--primary-color);
+  color: white;
+  padding: var(--spacing-4);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.preview-title {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.preview-button {
+  background-color: rgba(255, 255, 255, 0.2);
+  padding: var(--spacing-2) var(--spacing-4);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.preview-content {
+  padding: var(--spacing-4);
+  background-color: var(--light-bg);
+}
+
+.preview-card {
+  background-color: white;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.preview-card-header {
+  padding: var(--spacing-3) var(--spacing-4);
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+}
+
+.preview-card-body {
+  padding: var(--spacing-4);
+}
+
+.preview-form-control {
+  height: 40px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-4);
+}
+
+.preview-button-primary {
+  display: inline-block;
+  background-color: var(--primary-color);
+  color: white;
+  padding: var(--spacing-2) var(--spacing-4);
+  border-radius: var(--radius-md);
+  margin-right: var(--spacing-2);
+  cursor: pointer;
+}
+
+.preview-button-secondary {
+  display: inline-block;
+  background-color: var(--secondary-color);
+  color: white;
+  padding: var(--spacing-2) var(--spacing-4);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+/* Dark Mode Preview */
+.theme-preview.dark-mode {
+  --preview-bg: #1A202C;
+  --preview-card-bg: #2D3748;
+  --preview-text: #F7FAFC;
+  --preview-border: #4A5568;
+}
+
+.theme-preview.dark-mode .preview-content {
+  background-color: var(--preview-bg);
+}
+
+.theme-preview.dark-mode .preview-card {
+  background-color: var(--preview-card-bg);
+  color: var(--preview-text);
+}
+
+.theme-preview.dark-mode .preview-card-header {
+  border-bottom-color: var(--preview-border);
+}
+
+.theme-preview.dark-mode .preview-form-control {
+  border-color: var(--preview-border);
+  background-color: #4A5568;
+}
+
+/* Custom Mode Preview */
+.theme-preview.custom-mode .preview-header {
+  background-color: var(--primary-color);
+}
+
+.theme-preview.custom-mode .preview-button-primary {
+  background-color: var(--primary-color);
+}
+
+.theme-preview.custom-mode .preview-button-secondary {
+  background-color: var(--secondary-color);
+}
+
+/* Dark Mode for Dashboard */
+body.dark-mode {
+  --light-bg: #1A202C;
+  --dark-bg: #171923;
+  --card-bg: #2D3748;
+  --text-primary: #F7FAFC;
+  --text-secondary: #CBD5E0;
+  --border-color: #4A5568;
+}
+
+body.dark-mode .card {
+  background-color: var(--card-bg);
+  color: var(--text-primary);
+}
+
+body.dark-mode input[type="text"],
+body.dark-mode input[type="number"],
+body.dark-mode input[type="password"],
+body.dark-mode input[type="email"],
+body.dark-mode input[type="search"],
+body.dark-mode select,
+body.dark-mode textarea {
+  background-color: #4A5568;
+  color: var(--text-primary);
+  border-color: #718096;
+}
+
+body.dark-mode .sidebar {
+  background-color: #171923;
+}
+
+body.dark-mode .header {
+  background-color: #2D3748;
+  border-bottom-color: #4A5568;
+}
+
+/* Custom Mode for Dashboard */
+body.custom-mode {
+  --primary-color: var(--primary-color);
+  --secondary-color: var(--secondary-color);
+  --accent-color: var(--accent-color);
+  font-family: var(--font-family);
+}
+
+body.custom-mode .btn-primary {
+  background-color: var(--primary-color);
+}
+
+body.custom-mode .btn-secondary {
+  background-color: var(--secondary-color);
+}
+
+body.custom-mode .sidebar {
+  background-color: var(--secondary-color);
+}
+
+body.custom-mode .nav-item.active {
+  background-color: var(--primary-color);
+}

@@ -1,0 +1,60 @@
+<!-- Cog Management Section -->
+<div id="cog-management-section" class="dashboard-section" style="display: none;">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Manage Cogs & Commands</h2>
+        </div>
+        <div class="form-group">
+            <label for="cog-guild-select">Select Server:</label>
+            <select name="guilds" id="cog-guild-select" class="w-full">
+                <option value="">--Please choose a server--</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="cog-management-loading" class="loading-container">
+        <div class="loading-spinner"></div>
+        <p>Loading cogs and commands...</p>
+    </div>
+
+    <div id="cog-management-content" style="display: none;">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Cogs (Modules)</h3>
+                <p class="text-sm text-muted">Enable or disable entire modules of functionality</p>
+            </div>
+            <div class="cogs-list-container p-4">
+                <div id="cogs-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Cogs will be populated here -->
+                </div>
+            </div>
+            <div class="btn-group mt-4">
+                <button id="save-cogs-button" class="btn btn-primary">Save Cog Settings</button>
+            </div>
+            <p id="cogs-feedback" class="mt-2"></p>
+        </div>
+
+        <div class="card mt-6">
+            <div class="card-header">
+                <h3 class="card-title">Commands</h3>
+                <p class="text-sm text-muted">Enable or disable individual commands</p>
+            </div>
+            <div class="form-group">
+                <label for="cog-filter">Filter by Cog:</label>
+                <select id="cog-filter" class="w-full">
+                    <option value="all">All Cogs</option>
+                    <!-- Cog options will be populated here -->
+                </select>
+            </div>
+            <div class="commands-list-container p-4">
+                <div id="commands-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Commands will be populated here -->
+                </div>
+            </div>
+            <div class="btn-group mt-4">
+                <button id="save-commands-button" class="btn btn-primary">Save Command Settings</button>
+            </div>
+            <p id="commands-feedback" class="mt-2"></p>
+        </div>
+    </div>
+</div>

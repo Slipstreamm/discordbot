@@ -1,0 +1,161 @@
+<!-- Command Customization Section -->
+<div id="command-customization-section" class="dashboard-section" style="display: none;">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Command Customization</h2>
+        </div>
+    </div>
+
+    <div id="command-customization-form">
+        <!-- Command Customization Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Customize Commands</h3>
+                <p class="text-muted">Customize the names and descriptions of commands for your server.</p>
+            </div>
+            <div class="form-group">
+                <div class="search-container">
+                    <input type="text" id="command-search" placeholder="Search commands..." class="w-full">
+                </div>
+            </div>
+            <div id="command-list" class="command-list">
+                <div class="loading-spinner-container">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Command Group Customization Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Customize Command Groups</h3>
+                <p class="text-muted">Customize the names of command groups for your server.</p>
+            </div>
+            <div id="group-list" class="command-list">
+                <div class="loading-spinner-container">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Command Aliases Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Command Aliases</h3>
+                <p class="text-muted">Add alternative names for commands.</p>
+            </div>
+            <div id="alias-list" class="command-list">
+                <div class="loading-spinner-container">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
+            <div class="form-group mt-4">
+                <h4>Add New Alias</h4>
+                <div class="flex-row">
+                    <div class="flex-col mr-2">
+                        <label for="alias-command-select">Command:</label>
+                        <select id="alias-command-select" class="w-full">
+                            <option value="">Select a command</option>
+                        </select>
+                    </div>
+                    <div class="flex-col">
+                        <label for="alias-name-input">Alias:</label>
+                        <input type="text" id="alias-name-input" placeholder="Enter alias name" class="w-full">
+                    </div>
+                </div>
+                <button id="add-alias-button" class="btn btn-primary mt-2">Add Alias</button>
+                <p id="alias-feedback" class="mt-2"></p>
+            </div>
+        </div>
+
+        <!-- Sync Commands Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Sync Commands</h3>
+                <p class="text-muted">Sync command customizations to Discord.</p>
+            </div>
+            <div class="form-group">
+                <p>After making changes to command names, descriptions, or aliases, you need to sync the changes to Discord.</p>
+                <button id="sync-commands-button" class="btn btn-primary">Sync Commands</button>
+                <p id="sync-feedback" class="mt-2"></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Command Customization Template -->
+<template id="command-item-template">
+    <div class="command-item">
+        <div class="command-header">
+            <h4 class="command-name"></h4>
+            <div class="command-actions">
+                <button class="btn btn-sm btn-primary edit-command-btn">Edit</button>
+                <button class="btn btn-sm btn-warning reset-command-btn">Reset</button>
+            </div>
+        </div>
+        <div class="command-details">
+            <p class="command-description"></p>
+            <div class="command-customization" style="display: none;">
+                <div class="form-group">
+                    <label>Custom Name:</label>
+                    <input type="text" class="custom-command-name w-full" placeholder="Enter custom name">
+                </div>
+                <div class="form-group">
+                    <label>Custom Description:</label>
+                    <input type="text" class="custom-command-description w-full" placeholder="Enter custom description">
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-primary save-command-btn">Save</button>
+                    <button class="btn btn-sm btn-secondary cancel-command-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<!-- Group Customization Template -->
+<template id="group-item-template">
+    <div class="command-item">
+        <div class="command-header">
+            <h4 class="group-name"></h4>
+            <div class="command-actions">
+                <button class="btn btn-sm btn-primary edit-group-btn">Edit</button>
+                <button class="btn btn-sm btn-warning reset-group-btn">Reset</button>
+            </div>
+        </div>
+        <div class="group-details">
+            <div class="group-customization" style="display: none;">
+                <div class="form-group">
+                    <label>Custom Name:</label>
+                    <input type="text" class="custom-group-name w-full" placeholder="Enter custom name">
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-primary save-group-btn">Save</button>
+                    <button class="btn btn-sm btn-secondary cancel-group-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<!-- Alias Item Template -->
+<template id="alias-item-template">
+    <div class="alias-item">
+        <div class="alias-header">
+            <h4 class="command-name"></h4>
+        </div>
+        <div class="alias-list">
+            <ul class="alias-tags">
+                <!-- Alias tags will be added here -->
+            </ul>
+        </div>
+    </div>
+</template>
+
+<!-- Alias Tag Template -->
+<template id="alias-tag-template">
+    <li class="alias-tag">
+        <span class="alias-name"></span>
+        <button class="remove-alias-btn">×</button>
+    </li>
+</template>

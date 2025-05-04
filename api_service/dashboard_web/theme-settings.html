@@ -1,0 +1,107 @@
+<!-- Theme Settings Section -->
+<div id="theme-settings-section" class="dashboard-section" style="display: none;">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Theme Settings</h2>
+        </div>
+    </div>
+
+    <div id="theme-settings-form">
+        <!-- Theme Mode Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Theme Mode</h3>
+            </div>
+            <div class="form-group">
+                <div class="radio-group">
+                    <input type="radio" id="theme-mode-light" name="theme_mode" value="light" checked>
+                    <label for="theme-mode-light">Light Mode</label>
+                </div>
+                <div class="radio-group">
+                    <input type="radio" id="theme-mode-dark" name="theme_mode" value="dark">
+                    <label for="theme-mode-dark">Dark Mode</label>
+                </div>
+                <div class="radio-group">
+                    <input type="radio" id="theme-mode-custom" name="theme_mode" value="custom">
+                    <label for="theme-mode-custom">Custom Mode</label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Color Settings Card -->
+        <div id="custom-theme-settings" class="card" style="display: none;">
+            <div class="card-header">
+                <h3 class="card-title">Custom Colors</h3>
+            </div>
+            <div class="form-group">
+                <label for="primary-color">Primary Color:</label>
+                <div class="color-picker-container">
+                    <input type="color" id="primary-color" value="#5865F2">
+                    <input type="text" id="primary-color-text" value="#5865F2" class="color-text-input">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="secondary-color">Secondary Color:</label>
+                <div class="color-picker-container">
+                    <input type="color" id="secondary-color" value="#2D3748">
+                    <input type="text" id="secondary-color-text" value="#2D3748" class="color-text-input">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="accent-color">Accent Color:</label>
+                <div class="color-picker-container">
+                    <input type="color" id="accent-color" value="#7289DA">
+                    <input type="text" id="accent-color-text" value="#7289DA" class="color-text-input">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="font-family">Font Family:</label>
+                <select id="font-family" class="w-full">
+                    <option value="Inter, sans-serif">Inter</option>
+                    <option value="'Roboto', sans-serif">Roboto</option>
+                    <option value="'Open Sans', sans-serif">Open Sans</option>
+                    <option value="'Montserrat', sans-serif">Montserrat</option>
+                    <option value="'Poppins', sans-serif">Poppins</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="custom-css">Custom CSS (Advanced):</label>
+                <textarea id="custom-css" rows="6" class="w-full" placeholder="Enter custom CSS here..."></textarea>
+                <small class="text-muted">Custom CSS will be applied to the dashboard. Use with caution.</small>
+            </div>
+        </div>
+
+        <!-- Preview Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Theme Preview</h3>
+            </div>
+            <div id="theme-preview" class="theme-preview">
+                <div class="preview-header">
+                    <div class="preview-title">Header</div>
+                    <div class="preview-button">Button</div>
+                </div>
+                <div class="preview-content">
+                    <div class="preview-card">
+                        <div class="preview-card-header">Card Title</div>
+                        <div class="preview-card-body">
+                            <p>This is a preview of how your theme will look.</p>
+                            <div class="preview-form-control"></div>
+                            <div class="preview-button-primary">Primary Button</div>
+                            <div class="preview-button-secondary">Secondary Button</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save Button -->
+        <div class="card">
+            <div class="btn-group">
+                <button id="save-theme-settings-button" class="btn btn-primary">Save Theme Settings</button>
+                <button id="reset-theme-settings-button" class="btn btn-warning">Reset to Defaults</button>
+            </div>
+            <p id="theme-settings-feedback" class="mt-2"></p>
+        </div>
+    </div>
+</div>

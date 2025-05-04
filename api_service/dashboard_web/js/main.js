@@ -312,6 +312,12 @@ function showSection(sectionId) {
   if (sectionId === 'ai-settings' && typeof loadAiSettings === 'function' && typeof aiSettingsLoaded !== 'undefined' && !aiSettingsLoaded) {
     loadAiSettings();
   }
+
+  // Load cog management if needed
+  if (sectionId === 'cog-management' && typeof loadGuildsForCogManagement === 'function' && typeof cogManagementLoaded !== 'undefined' && !cogManagementLoaded) {
+    loadGuildsForCogManagement();
+    cogManagementLoaded = true;
+  }
 }
 
 /**

@@ -691,14 +691,19 @@ class CommandPermission(BaseModel):
 class CommandPermissionsResponse(BaseModel):
     permissions: Dict[str, List[str]] # Command name -> List of allowed role IDs
 
+class CommandCustomizationDetail(BaseModel):
+    name: str
+    description: Optional[str] = None
+
 class CommandCustomizationResponse(BaseModel):
-    command_customizations: Dict[str, str] = {} # Original command name -> Custom command name
+    command_customizations: Dict[str, Dict[str, Optional[str]]] = {} # Original command name -> {name, description}
     group_customizations: Dict[str, str] = {} # Original group name -> Custom group name
     command_aliases: Dict[str, List[str]] = {} # Original command name -> List of aliases
 
 class CommandCustomizationUpdate(BaseModel):
     command_name: str
     custom_name: Optional[str] = None # If None, removes customization
+    custom_description: Optional[str] = None # If None, keeps existing or no description
 
 class GroupCustomizationUpdate(BaseModel):
     group_name: str

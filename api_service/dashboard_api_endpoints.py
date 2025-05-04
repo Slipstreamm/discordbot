@@ -8,6 +8,9 @@ from typing import List, Dict, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from pydantic import BaseModel, Field
 
+# Default prefix for commands
+DEFAULT_PREFIX = "!"
+
 # Import the dependencies from api_server.py
 try:
     # Try relative import first
@@ -78,6 +81,14 @@ class Message(BaseModel):
     role: str  # 'user' or 'assistant'
     created_at: str
 
+class ThemeSettings(BaseModel):
+    theme_mode: str = "light"  # "light", "dark", "custom"
+    primary_color: str = "#5865F2"  # Discord blue
+    secondary_color: str = "#2D3748"
+    accent_color: str = "#7289DA"
+    font_family: str = "Inter, sans-serif"
+    custom_css: Optional[str] = None
+
 class GlobalSettings(BaseModel):
     system_message: Optional[str] = None
     character: Optional[str] = None
@@ -86,6 +97,19 @@ class GlobalSettings(BaseModel):
     model: Optional[str] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    theme: Optional[ThemeSettings] = None
+
+class CogInfo(BaseModel):
+    name: str
+    description: Optional[str] = None
+    enabled: bool = True
+    commands: List[Dict[str, Any]] = []
+
+class CommandInfo(BaseModel):
+    name: str
+    description: Optional[str] = None
+    enabled: bool = True
+    cog_name: Optional[str] = None
 
 # --- Endpoints ---
 @router.get("/guilds/{guild_id}/channels", response_model=List[Channel])
@@ -424,6 +448,58 @@ async def remove_command_alias(
             detail=f"Error removing command alias: {str(e)}"
         )
 
+@router.get("/guilds/{guild_id}/settings", response_model=Dict[str, Any])
+async def get_guild_settings(
+    guild_id: int,
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Get settings for a guild."""
+    try:
+        # Check if settings_manager is available
+        if not settings_manager or not settings_manager.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Settings manager not available"
+            )
+
+        # Get prefix
+        prefix = await settings_manager.get_guild_prefix(guild_id, DEFAULT_PREFIX)
+
+        # Get welcome/goodbye settings
+        welcome_channel_id = await settings_manager.get_setting(guild_id, 'welcome_channel_id')
+        welcome_message = await settings_manager.get_setting(guild_id, 'welcome_message')
+        goodbye_channel_id = await settings_manager.get_setting(guild_id, 'goodbye_channel_id')
+        goodbye_message = await settings_manager.get_setting(guild_id, 'goodbye_message')
+
+        # Get cog enabled statuses
+        cogs_enabled = await settings_manager.get_all_enabled_cogs(guild_id)
+
+        # Get command enabled statuses
+        commands_enabled = await settings_manager.get_all_enabled_commands(guild_id)
+
+        # Construct response
+        settings = {
+            "prefix": prefix,
+            "welcome_channel_id": welcome_channel_id,
+            "welcome_message": welcome_message,
+            "goodbye_channel_id": goodbye_channel_id,
+            "goodbye_message": goodbye_message,
+            "cogs": cogs_enabled,
+            "commands": commands_enabled
+        }
+
+        return settings
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error getting settings for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting settings: {str(e)}"
+        )
+
 @router.patch("/guilds/{guild_id}/settings", status_code=status.HTTP_200_OK)
 async def update_guild_settings(
     guild_id: int,
@@ -444,7 +520,14 @@ async def update_guild_settings(
         log.debug(f"Update data received: {settings_update}")
 
         success_flags = []
-        core_cogs_list = {'SettingsCog', 'HelpCog'}  # Core cogs that cannot be disabled
+
+        # Get bot instance for core cogs check
+        try:
+            from discordbot import discord_bot_sync_api
+            bot = discord_bot_sync_api.bot_instance
+            core_cogs_list = bot.core_cogs if bot and hasattr(bot, 'core_cogs') else {'SettingsCog', 'HelpCog'}
+        except ImportError:
+            core_cogs_list = {'SettingsCog', 'HelpCog'}  # Core cogs that cannot be disabled
 
         # Update prefix if provided
         if 'prefix' in settings_update:
@@ -493,6 +576,14 @@ async def update_guild_settings(
                         log.error(f"Failed to update status for cog '{cog_name}' for guild {guild_id}")
                 else:
                     log.warning(f"Attempted to change status of core cog '{cog_name}' for guild {guild_id} - ignored.")
+
+        # Update commands if provided
+        if 'commands' in settings_update and isinstance(settings_update['commands'], dict):
+            for command_name, enabled_status in settings_update['commands'].items():
+                success = await settings_manager.set_command_enabled(guild_id, command_name, enabled_status)
+                success_flags.append(success)
+                if not success:
+                    log.error(f"Failed to update status for command '{command_name}' for guild {guild_id}")
 
         if all(s is True for s in success_flags):  # Check if all operations returned True
             return {"message": "Settings updated successfully."}
@@ -628,7 +719,7 @@ async def get_global_settings(
             )
 
         # Convert from UserSettings to GlobalSettings
-        return GlobalSettings(
+        global_settings = GlobalSettings(
             system_message=user_settings.get("system_message", ""),
             character=user_settings.get("character", ""),
             character_info=user_settings.get("character_info", ""),
@@ -637,6 +728,20 @@ async def get_global_settings(
             temperature=user_settings.get("temperature", 0.7),
             max_tokens=user_settings.get("max_tokens", 1000)
         )
+
+        # Add theme settings if available
+        if "theme" in user_settings:
+            theme_data = user_settings["theme"]
+            global_settings.theme = ThemeSettings(
+                theme_mode=theme_data.get("theme_mode", "light"),
+                primary_color=theme_data.get("primary_color", "#5865F2"),
+                secondary_color=theme_data.get("secondary_color", "#2D3748"),
+                accent_color=theme_data.get("accent_color", "#7289DA"),
+                font_family=theme_data.get("font_family", "Inter, sans-serif"),
+                custom_css=theme_data.get("custom_css")
+            )
+
+        return global_settings
     except HTTPException:
         # Re-raise HTTP exceptions
         raise
@@ -688,6 +793,18 @@ async def update_global_settings(
             custom_instructions=settings.custom_instructions
         )
 
+        # Add theme settings if provided
+        if settings.theme:
+            from discordbot.api_service.api_models import ThemeSettings as ApiThemeSettings
+            user_settings.theme = ApiThemeSettings(
+                theme_mode=settings.theme.theme_mode,
+                primary_color=settings.theme.primary_color,
+                secondary_color=settings.theme.secondary_color,
+                accent_color=settings.theme.accent_color,
+                font_family=settings.theme.font_family,
+                custom_css=settings.theme.custom_css
+            )
+
         # Save user settings to the database
         updated_settings = db.save_user_settings(user_id, user_settings)
         if not updated_settings:
@@ -706,6 +823,200 @@ async def update_global_settings(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error updating global settings: {str(e)}"
+        )
+
+# --- Cog and Command Management Endpoints ---
+
+@router.get("/guilds/{guild_id}/cogs", response_model=List[CogInfo])
+async def get_guild_cogs(
+    guild_id: int,
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Get all cogs and their commands for a guild."""
+    try:
+        # Check if bot instance is available via discord_bot_sync_api
+        try:
+            from discordbot import discord_bot_sync_api
+            bot = discord_bot_sync_api.bot_instance
+            if not bot:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Bot instance not available"
+                )
+        except ImportError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Bot sync API not available"
+            )
+
+        # Get all cogs from the bot
+        cogs_list = []
+        for cog_name, cog in bot.cogs.items():
+            # Get enabled status from settings_manager
+            is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=True)
+
+            # Get commands for this cog
+            commands_list = []
+            for command in cog.get_commands():
+                # Get command enabled status
+                cmd_enabled = await settings_manager.is_command_enabled(guild_id, command.qualified_name, default_enabled=True)
+                commands_list.append({
+                    "name": command.qualified_name,
+                    "description": command.help or "No description available",
+                    "enabled": cmd_enabled
+                })
+
+            # Add slash commands if any
+            app_commands = [cmd for cmd in bot.tree.get_commands() if hasattr(cmd, 'cog') and cmd.cog and cmd.cog.qualified_name == cog_name]
+            for cmd in app_commands:
+                # Get command enabled status
+                cmd_enabled = await settings_manager.is_command_enabled(guild_id, cmd.name, default_enabled=True)
+                if not any(c["name"] == cmd.name for c in commands_list):  # Avoid duplicates
+                    commands_list.append({
+                        "name": cmd.name,
+                        "description": cmd.description or "No description available",
+                        "enabled": cmd_enabled
+                    })
+
+            cogs_list.append(CogInfo(
+                name=cog_name,
+                description=cog.__doc__ or "No description available",
+                enabled=is_enabled,
+                commands=commands_list
+            ))
+
+        return cogs_list
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error getting cogs for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting cogs: {str(e)}"
+        )
+
+@router.patch("/guilds/{guild_id}/cogs/{cog_name}", status_code=status.HTTP_200_OK)
+async def update_cog_status(
+    guild_id: int,
+    cog_name: str,
+    enabled: bool = Body(..., embed=True),
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Enable or disable a cog for a guild."""
+    try:
+        # Check if settings_manager is available
+        if not settings_manager or not settings_manager.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Settings manager not available"
+            )
+
+        # Check if the cog exists
+        try:
+            from discordbot import discord_bot_sync_api
+            bot = discord_bot_sync_api.bot_instance
+            if not bot:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Bot instance not available"
+                )
+
+            if cog_name not in bot.cogs:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Cog '{cog_name}' not found"
+                )
+
+            # Check if it's a core cog
+            if cog_name in bot.core_cogs:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Core cog '{cog_name}' cannot be disabled"
+                )
+        except ImportError:
+            # If we can't import the bot, we'll just assume the cog exists
+            log.warning("Bot sync API not available, skipping cog existence check")
+
+        # Update the cog enabled status
+        success = await settings_manager.set_cog_enabled(guild_id, cog_name, enabled)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update cog '{cog_name}' status"
+            )
+
+        return {"message": f"Cog '{cog_name}' {'enabled' if enabled else 'disabled'} successfully"}
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error updating cog status for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating cog status: {str(e)}"
+        )
+
+@router.patch("/guilds/{guild_id}/commands/{command_name}", status_code=status.HTTP_200_OK)
+async def update_command_status(
+    guild_id: int,
+    command_name: str,
+    enabled: bool = Body(..., embed=True),
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Enable or disable a command for a guild."""
+    try:
+        # Check if settings_manager is available
+        if not settings_manager or not settings_manager.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Settings manager not available"
+            )
+
+        # Check if the command exists
+        try:
+            from discordbot import discord_bot_sync_api
+            bot = discord_bot_sync_api.bot_instance
+            if not bot:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Bot instance not available"
+                )
+
+            # Check if it's a prefix command
+            command = bot.get_command(command_name)
+            if not command:
+                # Check if it's an app command
+                app_commands = [cmd for cmd in bot.tree.get_commands() if cmd.name == command_name]
+                if not app_commands:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Command '{command_name}' not found"
+                    )
+        except ImportError:
+            # If we can't import the bot, we'll just assume the command exists
+            log.warning("Bot sync API not available, skipping command existence check")
+
+        # Update the command enabled status
+        success = await settings_manager.set_command_enabled(guild_id, command_name, enabled)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update command '{command_name}' status"
+            )
+
+        return {"message": f"Command '{command_name}' {'enabled' if enabled else 'disabled'} successfully"}
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error updating command status for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating command status: {str(e)}"
         )
 
 # --- Conversations Endpoints ---

@@ -201,6 +201,9 @@ async def on_command_error(ctx, error):
     elif isinstance(error, CommandPermissionError):
         await ctx.send(str(error), ephemeral=True) # Send the error message from the exception
         log.warning(f"Command '{ctx.command.qualified_name}' blocked for user {ctx.author.id} in guild {ctx.guild.id}: {error}")
+    elif isinstance(error, CommandDisabledError):
+        await ctx.send(str(error), ephemeral=True) # Send the error message from the exception
+        log.warning(f"Command '{ctx.command.qualified_name}' blocked for user {ctx.author.id} in guild {ctx.guild.id}: {error}")
     else:
         # Pass other errors to the original handler
         await handle_error(ctx, error)
@@ -231,6 +234,12 @@ class CommandPermissionError(commands.CheckFailure):
     def __init__(self, command_name):
         self.command_name = command_name
         super().__init__(f"You do not have the required role to use the command `{command_name}`.")
+
+class CommandDisabledError(commands.CheckFailure):
+    """Custom exception for disabled commands."""
+    def __init__(self, command_name):
+        self.command_name = command_name
+        super().__init__(f"The command `{command_name}` is disabled in this server.")
 
 @bot.before_invoke
 async def global_command_checks(ctx: commands.Context):
@@ -268,7 +277,14 @@ async def global_command_checks(ctx: commands.Context):
             log.warning(f"Command '{command_name}' blocked in guild {guild_id}: Cog '{cog_name}' is disabled.")
             raise CogDisabledError(cog_name)
 
-    # 2. Check command permissions based on roles
+    # 2. Check if the Command is enabled
+    # This only applies if the command has been explicitly disabled
+    is_cmd_enabled = await settings_manager.is_command_enabled(guild_id, command_name, default_enabled=True)
+    if not is_cmd_enabled:
+        log.warning(f"Command '{command_name}' blocked in guild {guild_id}: Command is disabled.")
+        raise CommandDisabledError(command_name)
+
+    # 3. Check command permissions based on roles
     # This check only applies if specific permissions HAVE been set for this command.
     # If no permissions are set in the DB, check_command_permission returns True.
     has_perm = await settings_manager.check_command_permission(guild_id, command_name, member_roles_ids)
@@ -276,7 +292,7 @@ async def global_command_checks(ctx: commands.Context):
         log.warning(f"Command '{command_name}' blocked for user {ctx.author.id} in guild {guild_id}: Insufficient role permissions.")
         raise CommandPermissionError(command_name)
 
-    # If both checks pass, the command proceeds.
+    # If all checks pass, the command proceeds.
     log.debug(f"Command '{command_name}' passed global checks for user {ctx.author.id} in guild {guild_id}.")
 
 

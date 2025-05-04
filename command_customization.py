@@ -54,7 +54,7 @@ class GuildCommandSyncer:
 
     async def prepare_guild_commands(self, guild_id: int) -> List[app_commands.Command]:
         """
-        Prepare guild-specific commands with customized names.
+        Prepare guild-specific commands with customized names and descriptions.
         Returns a list of commands with guild-specific customizations applied.
         """
         # Get all global commands
@@ -69,12 +69,18 @@ class GuildCommandSyncer:
         if not customizations:
             return global_commands  # No customizations, use global commands
 
-        # Create guild-specific commands with custom names
+        # Create guild-specific commands with custom names and descriptions
         guild_commands = []
         for cmd in global_commands:
+            # Set guild_id attribute for use in _create_custom_command
+            setattr(cmd, 'guild_id', guild_id)
+
             if cmd.name in customizations:
-                # Create a copy of the command with the custom name
-                custom_name = customizations[cmd.name]
+                # Get the custom name
+                custom_data = customizations[cmd.name]
+                custom_name = custom_data.get('name', cmd.name)
+
+                # Create a copy of the command with the custom name and description
                 custom_cmd = self._create_custom_command(cmd, custom_name)
                 guild_commands.append(custom_cmd)
             else:
@@ -91,14 +97,23 @@ class GuildCommandSyncer:
 
     def _create_custom_command(self, original_cmd: app_commands.Command, custom_name: str) -> app_commands.Command:
         """
-        Create a copy of a command with a custom name.
+        Create a copy of a command with a custom name and description.
         This is a simplified version - in practice, you'd need to handle all command attributes.
         """
-        # For simplicity, we're just creating a basic copy with the custom name
+        # Get custom description if available
+        custom_description = None
+        if hasattr(original_cmd, 'guild_id') and original_cmd.guild_id:
+            # This is a guild-specific command, get the custom description
+            custom_description = asyncio.run_coroutine_threadsafe(
+                settings_manager.get_custom_command_description(original_cmd.guild_id, original_cmd.name),
+                asyncio.get_event_loop()
+            ).result()
+
+        # For simplicity, we're just creating a basic copy with the custom name and description
         # In a real implementation, you'd need to handle all command attributes and options
         custom_cmd = app_commands.Command(
             name=custom_name,
-            description=original_cmd.description,
+            description=custom_description or original_cmd.description,
             callback=original_cmd.callback
         )
 
@@ -116,6 +131,11 @@ class GuildCommandSyncer:
         try:
             # Prepare guild-specific commands
             guild_commands = await self.prepare_guild_commands(guild.id)
+
+            # Set the commands for this guild
+            self.bot.tree.clear_commands(guild=guild)
+            for cmd in guild_commands:
+                self.bot.tree.add_command(cmd, guild=guild)
 
             # Sync commands with Discord
             synced = await self.bot.tree.sync(guild=guild)

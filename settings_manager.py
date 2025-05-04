@@ -3,6 +3,7 @@ import redis.asyncio as redis
 import os
 import logging
 from dotenv import load_dotenv
+from typing import Dict
 
 # Load environment variables
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
@@ -138,6 +139,17 @@ async def initialize_database():
                 );
             """)
 
+            # Enabled Commands table - Stores the explicit enabled/disabled state for individual commands
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS enabled_commands (
+                    guild_id BIGINT NOT NULL,
+                    command_name TEXT NOT NULL,
+                    enabled BOOLEAN NOT NULL,
+                    PRIMARY KEY (guild_id, command_name),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+
             # Command Permissions table (simple role-based for now)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS command_permissions (
@@ -149,12 +161,13 @@ async def initialize_database():
                 );
             """)
 
-            # Command Customization table - Stores guild-specific command names
+            # Command Customization table - Stores guild-specific command names and descriptions
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS command_customization (
                     guild_id BIGINT NOT NULL,
                     original_command_name TEXT NOT NULL,
                     custom_command_name TEXT NOT NULL,
+                    custom_command_description TEXT,
                     PRIMARY KEY (guild_id, original_command_name),
                     FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
                 );
@@ -428,6 +441,119 @@ async def set_cog_enabled(guild_id: int, cog_name: str, enabled: bool):
              log.exception(f"Failed to invalidate Redis cache for cog enabled status '{cog_name}' (Guild: {guild_id}): {redis_err}")
         return False
 
+
+async def is_command_enabled(guild_id: int, command_name: str, default_enabled: bool = True) -> bool:
+    """Checks if a command is enabled for a guild, checking cache first.
+       Uses default_enabled if no specific setting is found."""
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, returning default for command '{command_name}'.")
+        return default_enabled
+
+    cache_key = _get_redis_key(guild_id, "cmd_enabled", command_name)
+    try:
+        cached_value = await redis_pool.get(cache_key)
+        if cached_value is not None:
+            log.debug(f"Cache hit for command enabled status '{command_name}' (Guild: {guild_id})")
+            return cached_value == "True" # Redis stores strings
+    except Exception as e:
+        log.exception(f"Redis error getting command enabled status for '{command_name}' (Guild: {guild_id}): {e}")
+
+    log.debug(f"Cache miss for command enabled status '{command_name}' (Guild: {guild_id})")
+    db_enabled_status = None
+    try:
+        async with pg_pool.acquire() as conn:
+            db_enabled_status = await conn.fetchval(
+                "SELECT enabled FROM enabled_commands WHERE guild_id = $1 AND command_name = $2",
+                guild_id, command_name
+            )
+    except Exception as e:
+        log.exception(f"Database error getting command enabled status for '{command_name}' (Guild: {guild_id}): {e}")
+        # Fallback to default on DB error after cache miss
+        return default_enabled
+
+    final_status = db_enabled_status if db_enabled_status is not None else default_enabled
+
+    # Cache the result (True or False)
+    try:
+        await redis_pool.set(cache_key, str(final_status), ex=3600) # Cache for 1 hour
+    except Exception as e:
+        log.exception(f"Redis error setting cache for command enabled status '{command_name}' (Guild: {guild_id}): {e}")
+
+    return final_status
+
+
+async def set_command_enabled(guild_id: int, command_name: str, enabled: bool):
+    """Sets the enabled status for a command in a guild and updates the cache."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot set command enabled status for '{command_name}'.")
+        return False
+
+    cache_key = _get_redis_key(guild_id, "cmd_enabled", command_name)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            # Upsert the enabled status
+            await conn.execute(
+                """
+                INSERT INTO enabled_commands (guild_id, command_name, enabled)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (guild_id, command_name) DO UPDATE SET enabled = $3;
+                """,
+                guild_id, command_name, enabled
+            )
+
+        # Update cache
+        await redis_pool.set(cache_key, str(enabled), ex=3600)
+        log.info(f"Set command '{command_name}' enabled status to {enabled} for guild {guild_id}")
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error setting command enabled status for '{command_name}' in guild {guild_id}: {e}")
+        # Attempt to invalidate cache on error
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+             log.exception(f"Failed to invalidate Redis cache for command enabled status '{command_name}' (Guild: {guild_id}): {redis_err}")
+        return False
+
+
+async def get_all_enabled_commands(guild_id: int) -> Dict[str, bool]:
+    """Gets all command enabled statuses for a guild.
+       Returns a dictionary of command_name -> enabled status."""
+    if not pg_pool:
+        log.error(f"Database pool not initialized, cannot get command enabled statuses for guild {guild_id}.")
+        return {}
+
+    try:
+        async with pg_pool.acquire() as conn:
+            records = await conn.fetch(
+                "SELECT command_name, enabled FROM enabled_commands WHERE guild_id = $1",
+                guild_id
+            )
+            return {record['command_name']: record['enabled'] for record in records}
+    except Exception as e:
+        log.exception(f"Database error getting command enabled statuses for guild {guild_id}: {e}")
+        return {}
+
+
+async def get_all_enabled_cogs(guild_id: int) -> Dict[str, bool]:
+    """Gets all cog enabled statuses for a guild.
+       Returns a dictionary of cog_name -> enabled status."""
+    if not pg_pool:
+        log.error(f"Database pool not initialized, cannot get cog enabled statuses for guild {guild_id}.")
+        return {}
+
+    try:
+        async with pg_pool.acquire() as conn:
+            records = await conn.fetch(
+                "SELECT cog_name, enabled FROM enabled_cogs WHERE guild_id = $1",
+                guild_id
+            )
+            return {record['cog_name']: record['enabled'] for record in records}
+    except Exception as e:
+        log.exception(f"Database error getting cog enabled statuses for guild {guild_id}: {e}")
+        return {}
+
 # --- Command Permission Functions ---
 
 async def add_command_permission(guild_id: int, command_name: str, role_id: int) -> bool:
@@ -680,6 +806,39 @@ async def get_custom_command_name(guild_id: int, original_command_name: str) -> 
     return custom_name
 
 
+async def get_custom_command_description(guild_id: int, original_command_name: str) -> str | None:
+    """Gets the custom command description for a guild, checking cache first.
+       Returns None if no custom description is set."""
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, returning None for custom command description '{original_command_name}'.")
+        return None
+
+    cache_key = _get_redis_key(guild_id, "cmd_desc", original_command_name)
+    try:
+        cached_value = await redis_pool.get(cache_key)
+        if cached_value is not None:
+            log.debug(f"Cache hit for custom command description '{original_command_name}' (Guild: {guild_id})")
+            return None if cached_value == "__NONE__" else cached_value
+    except Exception as e:
+        log.exception(f"Redis error getting custom command description for '{original_command_name}' (Guild: {guild_id}): {e}")
+
+    log.debug(f"Cache miss for custom command description '{original_command_name}' (Guild: {guild_id})")
+    async with pg_pool.acquire() as conn:
+        custom_desc = await conn.fetchval(
+            "SELECT custom_command_description FROM command_customization WHERE guild_id = $1 AND original_command_name = $2",
+            guild_id, original_command_name
+        )
+
+    # Cache the result (even if None)
+    try:
+        value_to_cache = custom_desc if custom_desc is not None else "__NONE__"
+        await redis_pool.set(cache_key, value_to_cache, ex=3600)  # Cache for 1 hour
+    except Exception as e:
+        log.exception(f"Redis error setting cache for custom command description '{original_command_name}' (Guild: {guild_id}): {e}")
+
+    return custom_desc
+
+
 async def set_custom_command_name(guild_id: int, original_command_name: str, custom_command_name: str | None) -> bool:
     """Sets a custom command name for a guild and updates the cache.
        Setting custom_command_name to None removes the customization."""
@@ -724,6 +883,74 @@ async def set_custom_command_name(guild_id: int, original_command_name: str, cus
             await redis_pool.delete(cache_key)
         except Exception as redis_err:
             log.exception(f"Failed to invalidate Redis cache for custom command name '{original_command_name}' (Guild: {guild_id}): {redis_err}")
+        return False
+
+
+async def set_custom_command_description(guild_id: int, original_command_name: str, custom_command_description: str | None) -> bool:
+    """Sets a custom command description for a guild and updates the cache.
+       Setting custom_command_description to None removes the description."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot set custom command description for '{original_command_name}'.")
+        return False
+
+    cache_key = _get_redis_key(guild_id, "cmd_desc", original_command_name)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+
+            # Check if the command customization exists
+            exists = await conn.fetchval(
+                "SELECT 1 FROM command_customization WHERE guild_id = $1 AND original_command_name = $2",
+                guild_id, original_command_name
+            )
+
+            if custom_command_description is not None:
+                if exists:
+                    # Update the existing record
+                    await conn.execute(
+                        """
+                        UPDATE command_customization
+                        SET custom_command_description = $3
+                        WHERE guild_id = $1 AND original_command_name = $2;
+                        """,
+                        guild_id, original_command_name, custom_command_description
+                    )
+                else:
+                    # Insert a new record with default custom_command_name (same as original)
+                    await conn.execute(
+                        """
+                        INSERT INTO command_customization (guild_id, original_command_name, custom_command_name, custom_command_description)
+                        VALUES ($1, $2, $2, $3);
+                        """,
+                        guild_id, original_command_name, custom_command_description
+                    )
+                # Update cache
+                await redis_pool.set(cache_key, custom_command_description, ex=3600)
+                log.info(f"Set custom command description for '{original_command_name}' for guild {guild_id}")
+            else:
+                if exists:
+                    # Update the existing record to remove the description
+                    await conn.execute(
+                        """
+                        UPDATE command_customization
+                        SET custom_command_description = NULL
+                        WHERE guild_id = $1 AND original_command_name = $2;
+                        """,
+                        guild_id, original_command_name
+                    )
+                    # Update cache to indicate no description
+                    await redis_pool.set(cache_key, "__NONE__", ex=3600)
+                    log.info(f"Removed custom command description for '{original_command_name}' for guild {guild_id}")
+
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error setting custom command description for '{original_command_name}' in guild {guild_id}: {e}")
+        # Attempt to invalidate cache on error
+        try:
+            await redis_pool.delete(cache_key)
+        except Exception as redis_err:
+            log.exception(f"Failed to invalidate Redis cache for custom command description '{original_command_name}' (Guild: {guild_id}): {redis_err}")
         return False
 
 
@@ -923,19 +1150,26 @@ async def get_command_aliases(guild_id: int, original_command_name: str) -> list
         return None  # Indicate error
 
 
-async def get_all_command_customizations(guild_id: int) -> dict[str, str] | None:
+async def get_all_command_customizations(guild_id: int) -> dict[str, dict[str, str]] | None:
     """Gets all command customizations for a guild.
-       Returns a dictionary mapping original command names to custom names, or None on error."""
+       Returns a dictionary mapping original command names to a dict with 'name' and 'description' keys,
+       or None on error."""
     if not pg_pool:
         log.error("Pools not initialized, cannot get command customizations.")
         return None
     try:
         async with pg_pool.acquire() as conn:
             records = await conn.fetch(
-                "SELECT original_command_name, custom_command_name FROM command_customization WHERE guild_id = $1",
+                "SELECT original_command_name, custom_command_name, custom_command_description FROM command_customization WHERE guild_id = $1",
                 guild_id
             )
-        customizations = {record['original_command_name']: record['custom_command_name'] for record in records}
+        customizations = {}
+        for record in records:
+            cmd_name = record['original_command_name']
+            customizations[cmd_name] = {
+                'name': record['custom_command_name'],
+                'description': record['custom_command_description']
+            }
         log.debug(f"Fetched {len(customizations)} command customizations for guild {guild_id}.")
         return customizations
     except Exception as e:

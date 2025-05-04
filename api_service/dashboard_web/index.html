@@ -12,6 +12,9 @@
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/components.css">
     <link rel="stylesheet" href="css/layout.css">
+    <link rel="stylesheet" href="css/theme-settings.css">
+    <link rel="stylesheet" href="css/command-customization.css">
+    <link rel="stylesheet" href="css/cog-management.css">
 </head>
 <body>
     <!-- Auth Section -->
@@ -46,6 +49,10 @@
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
                     Modules
                 </a>
+                <a href="#cog-management" class="nav-item" data-section="cog-management-section" id="nav-cog-management">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    Cog Management
+                </a>
                 <a href="#permissions-settings" class="nav-item" data-section="permissions-settings-section">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
                     Permissions
@@ -53,6 +60,14 @@
                 <a href="#ai-settings" class="nav-item" data-section="ai-settings-section" id="nav-ai-settings">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                     AI Settings
+                </a>
+                <a href="#theme-settings" class="nav-item" data-section="theme-settings-section">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    Theme Settings
+                </a>
+                <a href="#command-customization" class="nav-item" data-section="command-customization-section">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                    Command Customization
                 </a>
             </div>
             <div class="sidebar-footer">
@@ -366,6 +381,340 @@
             </div>
         </div>
 
+                <!-- Include Theme Settings Section -->
+                <div id="theme-settings-template" style="display: none;">
+                    <!-- This template will be used to restore the form after loading -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Theme Mode</h3>
+                        </div>
+                        <div class="form-group">
+                            <div class="radio-group">
+                                <input type="radio" id="theme-mode-light" name="theme_mode" value="light" checked>
+                                <label for="theme-mode-light">Light Mode</label>
+                            </div>
+                            <div class="radio-group">
+                                <input type="radio" id="theme-mode-dark" name="theme_mode" value="dark">
+                                <label for="theme-mode-dark">Dark Mode</label>
+                            </div>
+                            <div class="radio-group">
+                                <input type="radio" id="theme-mode-custom" name="theme_mode" value="custom">
+                                <label for="theme-mode-custom">Custom Mode</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="custom-theme-settings" class="card" style="display: none;">
+                        <div class="card-header">
+                            <h3 class="card-title">Custom Colors</h3>
+                        </div>
+                        <div class="form-group">
+                            <label for="primary-color">Primary Color:</label>
+                            <div class="color-picker-container">
+                                <input type="color" id="primary-color" value="#5865F2">
+                                <input type="text" id="primary-color-text" value="#5865F2" class="color-text-input">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="secondary-color">Secondary Color:</label>
+                            <div class="color-picker-container">
+                                <input type="color" id="secondary-color" value="#2D3748">
+                                <input type="text" id="secondary-color-text" value="#2D3748" class="color-text-input">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="accent-color">Accent Color:</label>
+                            <div class="color-picker-container">
+                                <input type="color" id="accent-color" value="#7289DA">
+                                <input type="text" id="accent-color-text" value="#7289DA" class="color-text-input">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="font-family">Font Family:</label>
+                            <select id="font-family" class="w-full">
+                                <option value="Inter, sans-serif">Inter</option>
+                                <option value="'Roboto', sans-serif">Roboto</option>
+                                <option value="'Open Sans', sans-serif">Open Sans</option>
+                                <option value="'Montserrat', sans-serif">Montserrat</option>
+                                <option value="'Poppins', sans-serif">Poppins</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="custom-css">Custom CSS (Advanced):</label>
+                            <textarea id="custom-css" rows="6" class="w-full" placeholder="Enter custom CSS here..."></textarea>
+                            <small class="text-muted">Custom CSS will be applied to the dashboard. Use with caution.</small>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Theme Preview</h3>
+                        </div>
+                        <div id="theme-preview" class="theme-preview">
+                            <div class="preview-header">
+                                <div class="preview-title">Header</div>
+                                <div class="preview-button">Button</div>
+                            </div>
+                            <div class="preview-content">
+                                <div class="preview-card">
+                                    <div class="preview-card-header">Card Title</div>
+                                    <div class="preview-card-body">
+                                        <p>This is a preview of how your theme will look.</p>
+                                        <div class="preview-form-control"></div>
+                                        <div class="preview-button-primary">Primary Button</div>
+                                        <div class="preview-button-secondary">Secondary Button</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="btn-group">
+                            <button id="save-theme-settings-button" class="btn btn-primary">Save Theme Settings</button>
+                            <button id="reset-theme-settings-button" class="btn btn-warning">Reset to Defaults</button>
+                        </div>
+                        <p id="theme-settings-feedback" class="mt-2"></p>
+                    </div>
+                </div>
+
+                <!-- Theme Settings Section -->
+                <div id="theme-settings-section" class="dashboard-section" style="display: none;">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title">Theme Settings</h2>
+                        </div>
+                    </div>
+
+                    <div id="theme-settings-form">
+                        <!-- Will be populated by JS -->
+                        <div class="loading-spinner-container">
+                            <div class="loading-spinner"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Include Cog Management Section -->
+                <!-- Cog Management Section -->
+                <div id="cog-management-section" class="dashboard-section" style="display: none;">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title">Manage Cogs & Commands</h2>
+                        </div>
+                        <div class="form-group">
+                            <label for="cog-guild-select">Select Server:</label>
+                            <select name="guilds" id="cog-guild-select" class="w-full">
+                                <option value="">--Please choose a server--</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="cog-management-loading" class="loading-container">
+                        <div class="loading-spinner"></div>
+                        <p>Loading cogs and commands...</p>
+                    </div>
+
+                    <div id="cog-management-content" style="display: none;">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 class="card-title">Cogs (Modules)</h3>
+                                <p class="text-sm text-muted">Enable or disable entire modules of functionality</p>
+                            </div>
+                            <div class="cogs-list-container p-4">
+                                <div id="cogs-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <!-- Cogs will be populated here -->
+                                </div>
+                            </div>
+                            <div class="btn-group mt-4">
+                                <button id="save-cogs-button" class="btn btn-primary">Save Cog Settings</button>
+                            </div>
+                            <p id="cogs-feedback" class="mt-2"></p>
+                        </div>
+
+                        <div class="card mt-6">
+                            <div class="card-header">
+                                <h3 class="card-title">Commands</h3>
+                                <p class="text-sm text-muted">Enable or disable individual commands</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="cog-filter">Filter by Cog:</label>
+                                <select id="cog-filter" class="w-full">
+                                    <option value="all">All Cogs</option>
+                                    <!-- Cog options will be populated here -->
+                                </select>
+                            </div>
+                            <div class="commands-list-container p-4">
+                                <div id="commands-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <!-- Commands will be populated here -->
+                                </div>
+                            </div>
+                            <div class="btn-group mt-4">
+                                <button id="save-commands-button" class="btn btn-primary">Save Command Settings</button>
+                            </div>
+                            <p id="commands-feedback" class="mt-2"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Include Command Customization Section -->
+                <div id="command-customization-section" class="dashboard-section" style="display: none;">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title">Command Customization</h2>
+                        </div>
+                    </div>
+
+                    <div id="command-customization-form">
+                        <!-- Command Customization Card -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 class="card-title">Customize Commands</h3>
+                                <p class="text-muted">Customize the names and descriptions of commands for your server.</p>
+                            </div>
+                            <div class="form-group">
+                                <div class="search-container">
+                                    <input type="text" id="command-search" placeholder="Search commands..." class="w-full">
+                                </div>
+                            </div>
+                            <div id="command-list" class="command-list">
+                                <div class="loading-spinner-container">
+                                    <div class="loading-spinner"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Command Group Customization Card -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 class="card-title">Customize Command Groups</h3>
+                                <p class="text-muted">Customize the names of command groups for your server.</p>
+                            </div>
+                            <div id="group-list" class="command-list">
+                                <div class="loading-spinner-container">
+                                    <div class="loading-spinner"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Command Aliases Card -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 class="card-title">Command Aliases</h3>
+                                <p class="text-muted">Add alternative names for commands.</p>
+                            </div>
+                            <div id="alias-list" class="command-list">
+                                <div class="loading-spinner-container">
+                                    <div class="loading-spinner"></div>
+                                </div>
+                            </div>
+                            <div class="form-group mt-4">
+                                <h4>Add New Alias</h4>
+                                <div class="flex-row">
+                                    <div class="flex-col mr-2">
+                                        <label for="alias-command-select">Command:</label>
+                                        <select id="alias-command-select" class="w-full">
+                                            <option value="">Select a command</option>
+                                        </select>
+                                    </div>
+                                    <div class="flex-col">
+                                        <label for="alias-name-input">Alias:</label>
+                                        <input type="text" id="alias-name-input" placeholder="Enter alias name" class="w-full">
+                                    </div>
+                                </div>
+                                <button id="add-alias-button" class="btn btn-primary mt-2">Add Alias</button>
+                                <p id="alias-feedback" class="mt-2"></p>
+                            </div>
+                        </div>
+
+                        <!-- Sync Commands Card -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 class="card-title">Sync Commands</h3>
+                                <p class="text-muted">Sync command customizations to Discord.</p>
+                            </div>
+                            <div class="form-group">
+                                <p>After making changes to command names, descriptions, or aliases, you need to sync the changes to Discord.</p>
+                                <button id="sync-commands-button" class="btn btn-primary">Sync Commands</button>
+                                <p id="sync-feedback" class="mt-2"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Command Customization Templates -->
+                <template id="command-item-template">
+                    <div class="command-item">
+                        <div class="command-header">
+                            <h4 class="command-name"></h4>
+                            <div class="command-actions">
+                                <button class="btn btn-sm btn-primary edit-command-btn">Edit</button>
+                                <button class="btn btn-sm btn-warning reset-command-btn">Reset</button>
+                            </div>
+                        </div>
+                        <div class="command-details">
+                            <p class="command-description"></p>
+                            <div class="command-customization" style="display: none;">
+                                <div class="form-group">
+                                    <label>Custom Name:</label>
+                                    <input type="text" class="custom-command-name w-full" placeholder="Enter custom name">
+                                </div>
+                                <div class="form-group">
+                                    <label>Custom Description:</label>
+                                    <input type="text" class="custom-command-description w-full" placeholder="Enter custom description">
+                                </div>
+                                <div class="btn-group">
+                                    <button class="btn btn-sm btn-primary save-command-btn">Save</button>
+                                    <button class="btn btn-sm btn-secondary cancel-command-btn">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <template id="group-item-template">
+                    <div class="command-item">
+                        <div class="command-header">
+                            <h4 class="group-name"></h4>
+                            <div class="command-actions">
+                                <button class="btn btn-sm btn-primary edit-group-btn">Edit</button>
+                                <button class="btn btn-sm btn-warning reset-group-btn">Reset</button>
+                            </div>
+                        </div>
+                        <div class="group-details">
+                            <div class="group-customization" style="display: none;">
+                                <div class="form-group">
+                                    <label>Custom Name:</label>
+                                    <input type="text" class="custom-group-name w-full" placeholder="Enter custom name">
+                                </div>
+                                <div class="btn-group">
+                                    <button class="btn btn-sm btn-primary save-group-btn">Save</button>
+                                    <button class="btn btn-sm btn-secondary cancel-group-btn">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <template id="alias-item-template">
+                    <div class="alias-item">
+                        <div class="alias-header">
+                            <h4 class="command-name"></h4>
+                        </div>
+                        <div class="alias-list">
+                            <ul class="alias-tags">
+                                <!-- Alias tags will be added here -->
+                            </ul>
+                        </div>
+                    </div>
+                </template>
+
+                <template id="alias-tag-template">
+                    <li class="alias-tag">
+                        <span class="alias-name"></span>
+                        <button class="remove-alias-btn">×</button>
+                    </li>
+                </template>
+
             </div>
         </div>
     </div>
@@ -376,5 +725,8 @@
     <script src="js/utils.js"></script>
     <script src="js/main.js"></script>
     <script src="js/ai-settings.js"></script>
+    <script src="js/theme-settings.js"></script>
+    <script src="js/command-customization.js"></script>
+    <script src="js/cog-management.js"></script>
 </body>
 </html>
