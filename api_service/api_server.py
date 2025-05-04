@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 import aiohttp
+import discord
 from database import Database # Existing DB
 import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -1558,19 +1559,92 @@ async def dashboard_test_welcome_message(
                 detail="Welcome channel not configured"
             )
 
-        # In a real implementation, this would send a test message to the welcome channel
-        # For now, we'll just return a success message with the formatted message
+        # Format the message
         formatted_message = welcome_message_template.format(
             user="@TestUser",
             username="TestUser",
             server=f"Server {guild_id}"
         )
 
-        return {
-            "message": "Test welcome message sent",
-            "channel_id": welcome_channel_id_str,
-            "formatted_message": formatted_message
-        }
+        # Import the bot instance from discord_bot_sync_api
+        from discord_bot_sync_api import bot_instance
+
+        # Check if bot instance is available
+        if not bot_instance:
+            log.error(f"Bot instance not available for sending test welcome message to guild {guild_id}")
+            return {
+                "message": "Test welcome message could not be sent (bot instance not available)",
+                "channel_id": welcome_channel_id_str,
+                "formatted_message": formatted_message
+            }
+
+        # Try to get the channel and send the message
+        try:
+            welcome_channel_id = int(welcome_channel_id_str)
+            channel = bot_instance.get_channel(welcome_channel_id)
+
+            if not channel:
+                # Try fetching if not in cache
+                try:
+                    channel = await bot_instance.fetch_channel(welcome_channel_id)
+                except discord.NotFound:
+                    log.warning(f"Welcome channel ID {welcome_channel_id} not found for guild {guild_id}")
+                    return {
+                        "message": "Test welcome message could not be sent (channel not found)",
+                        "channel_id": welcome_channel_id_str,
+                        "formatted_message": formatted_message
+                    }
+                except discord.Forbidden:
+                    log.warning(f"Bot does not have permission to access channel {welcome_channel_id} in guild {guild_id}")
+                    return {
+                        "message": "Test welcome message could not be sent (no permission to access channel)",
+                        "channel_id": welcome_channel_id_str,
+                        "formatted_message": formatted_message
+                    }
+
+            # Check if channel is a text channel
+            if not hasattr(channel, 'send'):
+                log.warning(f"Channel {welcome_channel_id} in guild {guild_id} is not a text channel")
+                return {
+                    "message": "Test welcome message could not be sent (channel is not a text channel)",
+                    "channel_id": welcome_channel_id_str,
+                    "formatted_message": formatted_message
+                }
+
+            # Check permissions if it's a guild channel
+            if hasattr(channel, 'guild') and hasattr(channel.guild, 'me'):
+                bot_member = channel.guild.me
+                if not channel.permissions_for(bot_member).send_messages:
+                    log.warning(f"Bot does not have permission to send messages in channel {welcome_channel_id} in guild {guild_id}")
+                    return {
+                        "message": "Test welcome message could not be sent (no permission to send messages)",
+                        "channel_id": welcome_channel_id_str,
+                        "formatted_message": formatted_message
+                    }
+
+            # Send the message
+            await channel.send(formatted_message)
+            log.info(f"Sent test welcome message to channel {welcome_channel_id} in guild {guild_id}")
+
+            return {
+                "message": "Test welcome message sent successfully",
+                "channel_id": welcome_channel_id_str,
+                "formatted_message": formatted_message
+            }
+        except ValueError:
+            log.error(f"Invalid welcome channel ID '{welcome_channel_id_str}' for guild {guild_id}")
+            return {
+                "message": "Test welcome message could not be sent (invalid channel ID)",
+                "channel_id": welcome_channel_id_str,
+                "formatted_message": formatted_message
+            }
+        except Exception as e:
+            log.error(f"Error sending test welcome message to channel {welcome_channel_id_str} in guild {guild_id}: {e}")
+            return {
+                "message": f"Test welcome message could not be sent: {str(e)}",
+                "channel_id": welcome_channel_id_str,
+                "formatted_message": formatted_message
+            }
     except HTTPException:
         # Re-raise HTTP exceptions
         raise
@@ -1600,18 +1674,91 @@ async def dashboard_test_goodbye_message(
                 detail="Goodbye channel not configured"
             )
 
-        # In a real implementation, this would send a test message to the goodbye channel
-        # For now, we'll just return a success message with the formatted message
+        # Format the message
         formatted_message = goodbye_message_template.format(
             username="TestUser",
             server=f"Server {guild_id}"
         )
 
-        return {
-            "message": "Test goodbye message sent",
-            "channel_id": goodbye_channel_id_str,
-            "formatted_message": formatted_message
-        }
+        # Import the bot instance from discord_bot_sync_api
+        from discord_bot_sync_api import bot_instance
+
+        # Check if bot instance is available
+        if not bot_instance:
+            log.error(f"Bot instance not available for sending test goodbye message to guild {guild_id}")
+            return {
+                "message": "Test goodbye message could not be sent (bot instance not available)",
+                "channel_id": goodbye_channel_id_str,
+                "formatted_message": formatted_message
+            }
+
+        # Try to get the channel and send the message
+        try:
+            goodbye_channel_id = int(goodbye_channel_id_str)
+            channel = bot_instance.get_channel(goodbye_channel_id)
+
+            if not channel:
+                # Try fetching if not in cache
+                try:
+                    channel = await bot_instance.fetch_channel(goodbye_channel_id)
+                except discord.NotFound:
+                    log.warning(f"Goodbye channel ID {goodbye_channel_id} not found for guild {guild_id}")
+                    return {
+                        "message": "Test goodbye message could not be sent (channel not found)",
+                        "channel_id": goodbye_channel_id_str,
+                        "formatted_message": formatted_message
+                    }
+                except discord.Forbidden:
+                    log.warning(f"Bot does not have permission to access channel {goodbye_channel_id} in guild {guild_id}")
+                    return {
+                        "message": "Test goodbye message could not be sent (no permission to access channel)",
+                        "channel_id": goodbye_channel_id_str,
+                        "formatted_message": formatted_message
+                    }
+
+            # Check if channel is a text channel
+            if not hasattr(channel, 'send'):
+                log.warning(f"Channel {goodbye_channel_id} in guild {guild_id} is not a text channel")
+                return {
+                    "message": "Test goodbye message could not be sent (channel is not a text channel)",
+                    "channel_id": goodbye_channel_id_str,
+                    "formatted_message": formatted_message
+                }
+
+            # Check permissions if it's a guild channel
+            if hasattr(channel, 'guild') and hasattr(channel.guild, 'me'):
+                bot_member = channel.guild.me
+                if not channel.permissions_for(bot_member).send_messages:
+                    log.warning(f"Bot does not have permission to send messages in channel {goodbye_channel_id} in guild {guild_id}")
+                    return {
+                        "message": "Test goodbye message could not be sent (no permission to send messages)",
+                        "channel_id": goodbye_channel_id_str,
+                        "formatted_message": formatted_message
+                    }
+
+            # Send the message
+            await channel.send(formatted_message)
+            log.info(f"Sent test goodbye message to channel {goodbye_channel_id} in guild {guild_id}")
+
+            return {
+                "message": "Test goodbye message sent successfully",
+                "channel_id": goodbye_channel_id_str,
+                "formatted_message": formatted_message
+            }
+        except ValueError:
+            log.error(f"Invalid goodbye channel ID '{goodbye_channel_id_str}' for guild {guild_id}")
+            return {
+                "message": "Test goodbye message could not be sent (invalid channel ID)",
+                "channel_id": goodbye_channel_id_str,
+                "formatted_message": formatted_message
+            }
+        except Exception as e:
+            log.error(f"Error sending test goodbye message to channel {goodbye_channel_id_str} in guild {guild_id}: {e}")
+            return {
+                "message": f"Test goodbye message could not be sent: {str(e)}",
+                "channel_id": goodbye_channel_id_str,
+                "formatted_message": formatted_message
+            }
     except HTTPException:
         # Re-raise HTTP exceptions
         raise

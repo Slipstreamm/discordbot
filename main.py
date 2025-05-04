@@ -447,7 +447,7 @@ async def main(args): # Pass parsed args
             # This should now include WelcomeCog and SettingsCog if they are in the cogs dir
             await load_all_cogs(bot, skip_cogs=ai_cogs_to_skip)
 
-            # --- Share GurtCog instance with the sync API ---
+            # --- Share GurtCog instance and bot instance with the sync API ---
             try:
                 gurt_cog = bot.get_cog("Gurt") # Get the loaded GurtCog instance
                 if gurt_cog:
@@ -455,8 +455,12 @@ async def main(args): # Pass parsed args
                     print("Successfully shared GurtCog instance with discord_bot_sync_api.")
                 else:
                     print("Warning: GurtCog not found after loading cogs. Stats API might not work.")
+
+                # Share the bot instance with the sync API
+                discord_bot_sync_api.bot_instance = bot
+                print("Successfully shared bot instance with discord_bot_sync_api.")
             except Exception as e:
-                print(f"Error sharing GurtCog instance: {e}")
+                print(f"Error sharing instances with discord_bot_sync_api: {e}")
             # ------------------------------------------------
 
             # --- Manually Load FreakTetoCog (only if AI is NOT disabled) ---

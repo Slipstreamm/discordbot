@@ -17,10 +17,11 @@ from typing import Optional # Added for GurtCog type hint
 # This file contains the API endpoints for syncing conversations between
 # the Flutter app and the Discord bot, AND the Gurt stats endpoint.
 
-# --- Placeholder for GurtCog instance ---
-# This needs to be set by the script that starts the bot and API server
+# --- Placeholder for GurtCog instance and bot instance ---
+# These need to be set by the script that starts the bot and API server
 from discordbot.gurt.cog import GurtCog # Import GurtCog for type hint and access
 gurt_cog_instance: Optional[GurtCog] = None
+bot_instance = None  # Will be set to the Discord bot instance
 
 # ============= Models =============
 
