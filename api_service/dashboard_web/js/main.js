@@ -343,6 +343,39 @@ function loadDashboardData() {
 }
 
 /**
+ * Show a global error message about missing bot token
+ */
+function showBotTokenMissingError() {
+  // Create error banner
+  const errorBanner = document.createElement('div');
+  errorBanner.className = 'error-message';
+  errorBanner.style.margin = '0';
+  errorBanner.style.borderRadius = '0';
+  errorBanner.style.position = 'sticky';
+  errorBanner.style.top = '0';
+  errorBanner.style.zIndex = '1000';
+
+  errorBanner.innerHTML = `
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <div>
+        <strong>Configuration Error:</strong> Discord Bot Token is not configured.
+        <p>Some features like channel selection, role management, and command permissions will not work.</p>
+        <p>Please set the <code>DISCORD_BOT_TOKEN</code> environment variable in your .env file.</p>
+      </div>
+      <button class="btn btn-sm" id="close-error-banner" style="background: transparent; border: none;">×</button>
+    </div>
+  `;
+
+  // Add to the top of the page
+  document.body.insertBefore(errorBanner, document.body.firstChild);
+
+  // Add close button functionality
+  document.getElementById('close-error-banner').addEventListener('click', () => {
+    errorBanner.remove();
+  });
+}
+
+/**
  * Load guilds for server select dropdown
  */
 function loadGuilds() {
@@ -556,7 +589,37 @@ function loadGuildChannels(guildId) {
     })
     .catch(error => {
       console.error('Error loading channels:', error);
-      Toast.error('Failed to load channels. Please try again.');
+
+      // Check for specific error about missing bot token
+      if (error.status === 503 && error.message && error.message.includes('Bot token not configured')) {
+        // Show global error banner
+        showBotTokenMissingError();
+
+        // Show a more helpful message in the channel selects
+        if (welcomeChannelSelect) {
+          welcomeChannelSelect.innerHTML = '<option value="">Bot token not configured</option>';
+          welcomeChannelSelect.disabled = true;
+        }
+        if (goodbyeChannelSelect) {
+          goodbyeChannelSelect.innerHTML = '<option value="">Bot token not configured</option>';
+          goodbyeChannelSelect.disabled = true;
+        }
+
+        // Add a visible error message
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.innerHTML = `
+          <p>The Discord bot token is not configured. Channel selection is unavailable.</p>
+          <p>Please set the <code>DISCORD_BOT_TOKEN</code> environment variable in your .env file.</p>
+        `;
+
+        // Add the error message near the channel selects
+        if (welcomeChannelSelect && welcomeChannelSelect.parentNode) {
+          welcomeChannelSelect.parentNode.appendChild(errorDiv);
+        }
+      } else {
+        Toast.error('Failed to load channels. Please try again.');
+      }
     });
 }
 
@@ -588,7 +651,31 @@ function loadGuildRoles(guildId) {
     })
     .catch(error => {
       console.error('Error loading roles:', error);
-      Toast.error('Failed to load roles. Please try again.');
+
+      // Check for specific error about missing bot token
+      if (error.status === 503 && error.message && error.message.includes('Bot token not configured')) {
+        // Show global error banner (if not already shown)
+        showBotTokenMissingError();
+
+        // Show a more helpful message in the role select
+        roleSelect.innerHTML = '<option value="">Bot token not configured</option>';
+        roleSelect.disabled = true;
+
+        // Add a visible error message
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.innerHTML = `
+          <p>The Discord bot token is not configured. Role selection is unavailable.</p>
+          <p>Please set the <code>DISCORD_BOT_TOKEN</code> environment variable in your .env file.</p>
+        `;
+
+        // Add the error message near the role select
+        if (roleSelect.parentNode) {
+          roleSelect.parentNode.appendChild(errorDiv);
+        }
+      } else {
+        Toast.error('Failed to load roles. Please try again.');
+      }
     });
 }
 
@@ -623,7 +710,31 @@ function loadGuildCommands(guildId) {
     })
     .catch(error => {
       console.error('Error loading commands:', error);
-      Toast.error('Failed to load commands. Please try again.');
+
+      // Check for specific error about missing bot token
+      if (error.status === 503 && error.message && error.message.includes('Bot token not configured')) {
+        // Show global error banner (if not already shown)
+        showBotTokenMissingError();
+
+        // Show a more helpful message in the command select
+        commandSelect.innerHTML = '<option value="">Bot token not configured</option>';
+        commandSelect.disabled = true;
+
+        // Add a visible error message
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.innerHTML = `
+          <p>The Discord bot token is not configured. Command selection is unavailable.</p>
+          <p>Please set the <code>DISCORD_BOT_TOKEN</code> environment variable in your .env file.</p>
+        `;
+
+        // Add the error message near the command select
+        if (commandSelect.parentNode) {
+          commandSelect.parentNode.appendChild(errorDiv);
+        }
+      } else {
+        Toast.error('Failed to load commands. Please try again.');
+      }
     });
 }
 

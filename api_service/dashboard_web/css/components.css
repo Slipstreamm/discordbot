@@ -506,3 +506,24 @@
   visibility: visible;
   opacity: 1;
 }
+
+/* Error message */
+.error-message {
+  background-color: rgba(220, 53, 69, 0.1);
+  border-left: 4px solid var(--danger-color);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-3) var(--spacing-4);
+  margin: var(--spacing-3) 0;
+  color: var(--text-primary);
+}
+
+.error-message p {
+  margin: var(--spacing-1) 0;
+}
+
+.error-message code {
+  background-color: rgba(0, 0, 0, 0.1);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+}

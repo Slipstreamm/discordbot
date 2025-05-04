@@ -45,7 +45,7 @@ class ApiSettings(BaseSettings):
     DISCORD_CLIENT_ID: str
     DISCORD_CLIENT_SECRET: str
     DISCORD_REDIRECT_URI: str
-    DISCORD_BOT_TOKEN: str  # Add bot token for API calls
+    DISCORD_BOT_TOKEN: Optional[str] = None  # Add bot token for API calls (optional)
 
     # Secret key for dashboard session management
     DASHBOARD_SECRET_KEY: str = "a_default_secret_key_for_development_only" # Provide a default for dev
@@ -928,7 +928,14 @@ async def dashboard_get_guild_channels(
     log.info(f"Dashboard: Fetching channels for guild {guild_id} requested by user {current_user['user_id']}")
 
     try:
-        # Use Discord Bot Token to fetch channels
+        # Use Discord Bot Token to fetch channels if available
+        if not settings.DISCORD_BOT_TOKEN:
+            log.error("Dashboard: DISCORD_BOT_TOKEN not set in environment variables")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Bot token not configured. Please set DISCORD_BOT_TOKEN in environment variables."
+            )
+
         bot_headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
 
         # Add rate limit handling
@@ -978,12 +985,19 @@ async def dashboard_get_guild_channels(
                 }
 
                 # If we're getting close to the rate limit, log a warning
-                if rate_limit['remaining'] and int(rate_limit['remaining']) < 5:
-                    log.warning(
-                        f"Dashboard: Rate limit warning: {rate_limit['remaining']}/{rate_limit['limit']} "
-                        f"requests remaining in bucket {rate_limit['bucket']}. "
-                        f"Resets in {rate_limit['reset_after']}s"
-                    )
+                if rate_limit['remaining'] and rate_limit['limit']:
+                    try:
+                        remaining = int(rate_limit['remaining'])
+                        limit = int(rate_limit['limit'])
+                        if remaining < 5:
+                            log.warning(
+                                f"Dashboard: Rate limit warning: {remaining}/{limit} "
+                                f"requests remaining in bucket {rate_limit['bucket'] or 'unknown'}. "
+                                f"Resets in {rate_limit['reset_after'] or 'unknown'}s"
+                            )
+                    except (ValueError, TypeError):
+                        # Handle case where headers might be present but not valid integers
+                        pass
 
                 resp.raise_for_status()
                 channels = await resp.json()
@@ -1025,7 +1039,14 @@ async def dashboard_get_guild_roles(
     log.info(f"Dashboard: Fetching roles for guild {guild_id} requested by user {current_user['user_id']}")
 
     try:
-        # Use Discord Bot Token to fetch roles
+        # Use Discord Bot Token to fetch roles if available
+        if not settings.DISCORD_BOT_TOKEN:
+            log.error("Dashboard: DISCORD_BOT_TOKEN not set in environment variables")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Bot token not configured. Please set DISCORD_BOT_TOKEN in environment variables."
+            )
+
         bot_headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
 
         # Add rate limit handling
@@ -1113,7 +1134,14 @@ async def dashboard_get_guild_commands(
     log.info(f"Dashboard: Fetching commands for guild {guild_id} requested by user {current_user['user_id']}")
 
     try:
-        # Use Discord Bot Token to fetch application commands
+        # Use Discord Bot Token to fetch application commands if available
+        if not settings.DISCORD_BOT_TOKEN:
+            log.error("Dashboard: DISCORD_BOT_TOKEN not set in environment variables")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Bot token not configured. Please set DISCORD_BOT_TOKEN in environment variables."
+            )
+
         bot_headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
         application_id = settings.DISCORD_CLIENT_ID  # This should be the same as your bot's application ID
 

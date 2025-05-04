@@ -185,8 +185,20 @@ const API = {
       };
 
       // If we're getting close to the rate limit, log a warning
-      if (rateLimit.remaining && parseInt(rateLimit.remaining) < 5) {
-        console.warn(`API Rate limit warning: ${rateLimit.remaining}/${rateLimit.limit} requests remaining in bucket ${rateLimit.bucket}. Resets in ${rateLimit.resetAfter}s`);
+      if (rateLimit.remaining && rateLimit.limit) {
+        try {
+          const remaining = parseInt(rateLimit.remaining);
+          const limit = parseInt(rateLimit.limit);
+          if (remaining < 5) {
+            console.warn(
+              `API Rate limit warning: ${remaining}/${limit} requests remaining` +
+              (rateLimit.bucket ? ` in bucket ${rateLimit.bucket}` : '') +
+              (rateLimit.resetAfter ? `. Resets in ${rateLimit.resetAfter}s` : '')
+            );
+          }
+        } catch (e) {
+          // Ignore parsing errors for rate limit headers
+        }
       }
 
       // Handle rate limiting with automatic retry
