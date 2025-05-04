@@ -313,6 +313,11 @@ function showSection(sectionId) {
     loadAiSettings();
   }
 
+  // Load theme settings if needed
+  if (sectionId === 'theme-settings' && typeof loadThemeSettings === 'function' && typeof themeSettingsLoaded !== 'undefined' && !themeSettingsLoaded) {
+    loadThemeSettings();
+  }
+
   // Load cog management if needed
   if (sectionId === 'cog-management' && typeof loadGuildsForCogManagement === 'function' && typeof cogManagementLoaded !== 'undefined' && !cogManagementLoaded) {
     loadGuildsForCogManagement();
