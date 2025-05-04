@@ -31,18 +31,50 @@ async def initialize_pools():
     """Initializes the PostgreSQL and Redis connection pools."""
     global pg_pool, redis_pool
     log.info("Initializing database and cache connection pools...")
+
+    # Close existing pools if they exist
+    if pg_pool:
+        log.info("Closing existing PostgreSQL pool before reinitializing...")
+        await pg_pool.close()
+        pg_pool = None
+
+    if redis_pool:
+        log.info("Closing existing Redis pool before reinitializing...")
+        await redis_pool.close()
+        redis_pool = None
+
+    # Initialize new pools
     try:
-        pg_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
+        # Create PostgreSQL pool with more conservative settings
+        # Increase max_inactive_connection_lifetime to avoid connections being closed too quickly
+        pg_pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=1,
+            max_size=10,
+            max_inactive_connection_lifetime=60.0,  # 60 seconds (default is 10 minutes)
+            command_timeout=30.0  # 30 seconds timeout for commands
+        )
         log.info(f"PostgreSQL pool connected to {POSTGRES_HOST}/{POSTGRES_DB}")
 
+        # Create Redis pool
         redis_pool = redis.from_url(REDIS_URL, decode_responses=True)
-        await redis_pool.ping() # Test connection
+        await redis_pool.ping()  # Test connection
         log.info(f"Redis pool connected to {REDIS_HOST}:{REDIS_PORT}")
 
-        await initialize_database() # Ensure tables exist
+        # Initialize database schema
+        await initialize_database()  # Ensure tables exist
+
+        return True  # Indicate successful initialization
     except Exception as e:
         log.exception(f"Failed to initialize connection pools: {e}")
-        # Depending on bot structure, might want to raise or exit here
+        # Clean up any partially initialized resources
+        if pg_pool:
+            await pg_pool.close()
+            pg_pool = None
+        if redis_pool:
+            await redis_pool.close()
+            redis_pool = None
+        # Raise the exception to be handled by the caller
         raise
 
 async def close_pools():
@@ -587,17 +619,29 @@ async def get_command_permissions(guild_id: int, command_name: str) -> set[int] 
 
 async def get_bot_guild_ids() -> set[int] | None:
     """Gets the set of all guild IDs known to the bot from the guilds table. Returns None on error."""
+    global pg_pool
     if not pg_pool:
         log.error("Pools not initialized, cannot get bot guild IDs.")
         return None
+
+    # Create a new connection for this specific operation to avoid event loop conflicts
     try:
-        async with pg_pool.acquire() as conn:
-            records = await conn.fetch("SELECT guild_id FROM guilds")
-        guild_ids = {record['guild_id'] for record in records}
-        log.debug(f"Fetched {len(guild_ids)} guild IDs from database.")
-        return guild_ids
+        # Create a temporary connection just for this operation
+        # This ensures we're using the current event loop
+        temp_conn = await asyncpg.connect(DATABASE_URL)
+        try:
+            records = await temp_conn.fetch("SELECT guild_id FROM guilds")
+            guild_ids = {record['guild_id'] for record in records}
+            log.debug(f"Fetched {len(guild_ids)} guild IDs from database.")
+            return guild_ids
+        finally:
+            # Always close the temporary connection
+            await temp_conn.close()
+    except asyncpg.exceptions.PostgresError as e:
+        log.exception(f"PostgreSQL error fetching bot guild IDs: {e}")
+        return None
     except Exception as e:
-        log.exception("Database error fetching bot guild IDs.")
+        log.exception(f"Unexpected error fetching bot guild IDs: {e}")
         return None
 
 

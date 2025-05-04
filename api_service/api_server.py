@@ -156,13 +156,38 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
     # than the main bot, so it needs its own connection pools
     if settings_manager:
         log.info("Initializing database and cache connection pools for API server...")
-        try:
-            # Initialize the pools in the settings_manager module
-            await settings_manager.initialize_pools()
-            log.info("Database and cache connection pools initialized for API server.")
-        except Exception as e:
-            log.exception(f"Failed to initialize connection pools for API server: {e}")
-            log.error("Dashboard endpoints requiring DB/cache will fail.")
+
+        # Add retry logic for database initialization
+        max_retries = 3
+        retry_count = 0
+        success = False
+
+        while retry_count < max_retries and not success:
+            try:
+                # Initialize the pools in the settings_manager module
+                # Close any existing pools first to ensure clean state
+                if settings_manager.pg_pool or settings_manager.redis_pool:
+                    log.info("Closing existing database pools before reinitializing...")
+                    await settings_manager.close_pools()
+
+                # Initialize new pools
+                await settings_manager.initialize_pools()
+                log.info("Database and cache connection pools initialized for API server.")
+                success = True
+            except Exception as e:
+                retry_count += 1
+                log.warning(f"Failed to initialize connection pools (attempt {retry_count}/{max_retries}): {e}")
+                if retry_count < max_retries:
+                    # Wait before retrying with exponential backoff
+                    wait_time = 2 ** retry_count  # 2, 4, 8 seconds
+                    log.info(f"Waiting {wait_time} seconds before retrying...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    log.exception(f"Failed to initialize connection pools after {max_retries} attempts")
+                    log.error("Dashboard endpoints requiring DB/cache will fail.")
+
+        if not success:
+            log.error("Failed to initialize database pools after all retries.")
     else:
         log.error("settings_manager not imported. Dashboard endpoints requiring DB/cache will fail.")
 
@@ -883,9 +908,28 @@ async def dashboard_get_user_guilds(current_user: dict = Depends(get_dashboard_u
 
         # 2. Fetch guilds the bot is in from our DB
         try:
-            bot_guild_ids = await settings_manager.get_bot_guild_ids()
+            # Add retry logic for database operations
+            max_db_retries = 3
+            retry_count = 0
+            bot_guild_ids = None
+
+            while retry_count < max_db_retries and bot_guild_ids is None:
+                try:
+                    bot_guild_ids = await settings_manager.get_bot_guild_ids()
+                    if bot_guild_ids is None:
+                        log.warning(f"Dashboard: Failed to fetch bot guild IDs, retry {retry_count+1}/{max_db_retries}")
+                        retry_count += 1
+                        if retry_count < max_db_retries:
+                            await asyncio.sleep(1)  # Wait before retrying
+                except Exception as e:
+                    log.warning(f"Dashboard: Error fetching bot guild IDs, retry {retry_count+1}/{max_db_retries}: {e}")
+                    retry_count += 1
+                    if retry_count < max_db_retries:
+                        await asyncio.sleep(1)  # Wait before retrying
+
+            # After retries, if still no data, raise exception
             if bot_guild_ids is None:
-                log.error("Dashboard: Failed to fetch bot guild IDs from settings_manager.")
+                log.error("Dashboard: Failed to fetch bot guild IDs from settings_manager after retries.")
                 raise HTTPException(status_code=500, detail="Could not retrieve bot's guild list.")
         except Exception as e:
             log.exception("Dashboard: Exception while fetching bot guild IDs from settings_manager.")
