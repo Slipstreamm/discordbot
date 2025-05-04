@@ -379,6 +379,24 @@ const API = {
   },
 
   /**
+   * Make a PATCH request
+   * @param {string} url - The API endpoint URL
+   * @param {Object} data - The data to send
+   * @param {HTMLElement} loadingElement - Element to show loading state on
+   * @returns {Promise} - The fetch promise
+   */
+  async patch(url, data, loadingElement = null) {
+    return this.request(
+      url,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data)
+      },
+      loadingElement
+    );
+  },
+
+  /**
    * Make a DELETE request
    * @param {string} url - The API endpoint URL
    * @param {HTMLElement} loadingElement - Element to show loading state on
