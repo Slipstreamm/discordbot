@@ -3,7 +3,7 @@ import json
 import sys
 import asyncio
 from typing import Dict, List, Optional, Any
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response, status
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response, status, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +13,7 @@ import aiohttp
 from database import Database # Existing DB
 import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, Field
 from functools import lru_cache
 from contextlib import asynccontextmanager
 
@@ -471,6 +472,11 @@ app.mount("/api", api_app)
 app.mount("/discordapi", discordapi_app)
 app.mount("/dashboard/api", dashboard_api_app) # Mount the new dashboard API
 
+# Log the available routes for debugging
+log.info("Available routes in dashboard_api_app:")
+for route in dashboard_api_app.routes:
+    log.info(f"  {route.path} - {route.name} - {route.methods}")
+
 # Create a middleware for redirecting /discordapi to /api with a deprecation warning
 class DeprecationRedirectMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -533,6 +539,48 @@ async def root():
 @dashboard_api_app.get("/")
 async def dashboard_api_root():
      return {"message": "Bot Dashboard API is running"}
+
+# Add a test endpoint for cogs
+@dashboard_api_app.get("/test-cogs", tags=["Test"])
+async def test_cogs_endpoint():
+    """Test endpoint to verify the API server is working correctly."""
+    return {"message": "Test cogs endpoint is working"}
+
+# Add a direct endpoint for cogs without dependencies
+@dashboard_api_app.get("/guilds/{guild_id}/cogs-direct", tags=["Test"])
+async def get_guild_cogs_no_deps(guild_id: int):
+    """Get all cogs for a guild without any dependencies."""
+    try:
+        # Check if bot instance is available via discord_bot_sync_api
+        try:
+            from discordbot import discord_bot_sync_api
+            bot = discord_bot_sync_api.bot_instance
+            if not bot:
+                return {"error": "Bot instance not available"}
+        except ImportError:
+            return {"error": "Bot sync API not available"}
+
+        # Get all cogs from the bot
+        cogs_list = []
+        for cog_name, cog in bot.cogs.items():
+            # Get enabled status from settings_manager
+            is_enabled = True
+            if settings_manager and settings_manager.pg_pool:
+                try:
+                    is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=True)
+                except Exception as e:
+                    log.error(f"Error getting cog enabled status: {e}")
+
+            cogs_list.append({
+                "name": cog_name,
+                "description": cog.__doc__ or "No description available",
+                "enabled": is_enabled
+            })
+
+        return {"cogs": cogs_list}
+    except Exception as e:
+        log.error(f"Error getting cogs for guild {guild_id}: {e}")
+        return {"error": str(e)}
 
 
 @discordapi_app.get("/")
@@ -869,6 +917,213 @@ async def verify_dashboard_guild_admin(guild_id: int, current_user: dict = Depen
 
 # ============= Dashboard API Routes =============
 # (Mounted under /dashboard/api)
+
+# --- Direct Cog Management Endpoints ---
+# These are direct implementations in case the imported endpoints don't work
+
+class CogCommandInfo(BaseModel):
+    name: str
+    description: Optional[str] = None
+    enabled: bool = True
+
+class CogInfo(BaseModel):
+    name: str
+    description: Optional[str] = None
+    enabled: bool = True
+    commands: List[Dict[str, Any]] = []
+
+@dashboard_api_app.get("/guilds/{guild_id}/cogs", response_model=List[CogInfo], tags=["Cog Management"])
+async def get_guild_cogs_direct(
+    guild_id: int,
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Get all cogs and their commands for a guild."""
+    try:
+        # Check if bot instance is available via discord_bot_sync_api
+        try:
+            from discordbot import discord_bot_sync_api
+            bot = discord_bot_sync_api.bot_instance
+            if not bot:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Bot instance not available"
+                )
+        except ImportError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Bot sync API not available"
+            )
+
+        # Get all cogs from the bot
+        cogs_list = []
+        for cog_name, cog in bot.cogs.items():
+            # Get enabled status from settings_manager
+            is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=True)
+
+            # Get commands for this cog
+            commands_list = []
+            for command in cog.get_commands():
+                # Get command enabled status
+                cmd_enabled = await settings_manager.is_command_enabled(guild_id, command.qualified_name, default_enabled=True)
+                commands_list.append({
+                    "name": command.qualified_name,
+                    "description": command.help or "No description available",
+                    "enabled": cmd_enabled
+                })
+
+            # Add slash commands if any
+            app_commands = [cmd for cmd in bot.tree.get_commands() if hasattr(cmd, 'cog') and cmd.cog and cmd.cog.qualified_name == cog_name]
+            for cmd in app_commands:
+                # Get command enabled status
+                cmd_enabled = await settings_manager.is_command_enabled(guild_id, cmd.name, default_enabled=True)
+                if not any(c["name"] == cmd.name for c in commands_list):  # Avoid duplicates
+                    commands_list.append({
+                        "name": cmd.name,
+                        "description": cmd.description or "No description available",
+                        "enabled": cmd_enabled
+                    })
+
+            cogs_list.append(CogInfo(
+                name=cog_name,
+                description=cog.__doc__ or "No description available",
+                enabled=is_enabled,
+                commands=commands_list
+            ))
+
+        return cogs_list
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error getting cogs for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting cogs: {str(e)}"
+        )
+
+@dashboard_api_app.patch("/guilds/{guild_id}/cogs/{cog_name}", status_code=status.HTTP_200_OK, tags=["Cog Management"])
+async def update_cog_status_direct(
+    guild_id: int,
+    cog_name: str,
+    enabled: bool = Body(..., embed=True),
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Enable or disable a cog for a guild."""
+    try:
+        # Check if settings_manager is available
+        if not settings_manager or not settings_manager.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Settings manager not available"
+            )
+
+        # Check if the cog exists
+        try:
+            from discordbot import discord_bot_sync_api
+            bot = discord_bot_sync_api.bot_instance
+            if not bot:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Bot instance not available"
+                )
+
+            if cog_name not in bot.cogs:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Cog '{cog_name}' not found"
+                )
+
+            # Check if it's a core cog
+            core_cogs = getattr(bot, 'core_cogs', {'SettingsCog', 'HelpCog'})
+            if cog_name in core_cogs:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Core cog '{cog_name}' cannot be disabled"
+                )
+        except ImportError:
+            # If we can't import the bot, we'll just assume the cog exists
+            log.warning("Bot sync API not available, skipping cog existence check")
+
+        # Update the cog enabled status
+        success = await settings_manager.set_cog_enabled(guild_id, cog_name, enabled)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update cog '{cog_name}' status"
+            )
+
+        return {"message": f"Cog '{cog_name}' {'enabled' if enabled else 'disabled'} successfully"}
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error updating cog status for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating cog status: {str(e)}"
+        )
+
+@dashboard_api_app.patch("/guilds/{guild_id}/commands/{command_name}", status_code=status.HTTP_200_OK, tags=["Cog Management"])
+async def update_command_status_direct(
+    guild_id: int,
+    command_name: str,
+    enabled: bool = Body(..., embed=True),
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin)
+):
+    """Enable or disable a command for a guild."""
+    try:
+        # Check if settings_manager is available
+        if not settings_manager or not settings_manager.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Settings manager not available"
+            )
+
+        # Check if the command exists
+        try:
+            from discordbot import discord_bot_sync_api
+            bot = discord_bot_sync_api.bot_instance
+            if not bot:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Bot instance not available"
+                )
+
+            # Check if it's a prefix command
+            command = bot.get_command(command_name)
+            if not command:
+                # Check if it's an app command
+                app_commands = [cmd for cmd in bot.tree.get_commands() if cmd.name == command_name]
+                if not app_commands:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Command '{command_name}' not found"
+                    )
+        except ImportError:
+            # If we can't import the bot, we'll just assume the command exists
+            log.warning("Bot sync API not available, skipping command existence check")
+
+        # Update the command enabled status
+        success = await settings_manager.set_command_enabled(guild_id, command_name, enabled)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update command '{command_name}' status"
+            )
+
+        return {"message": f"Command '{command_name}' {'enabled' if enabled else 'disabled'} successfully"}
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        log.error(f"Error updating command status for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating command status: {str(e)}"
+        )
 
 # --- Dashboard Authentication Routes ---
 @dashboard_api_app.get("/auth/login", tags=["Dashboard Authentication"])
