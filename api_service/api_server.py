@@ -423,6 +423,22 @@ except ImportError as e:
     log.error(f"Could not import command customization endpoints: {e}")
     log.error("Command customization endpoints will not be available")
 
+# Import cog management endpoints
+try:
+    # Try relative import first
+    try:
+        from .cog_management_endpoints import router as cog_management_router
+    except ImportError:
+        # Fall back to absolute import
+        from cog_management_endpoints import router as cog_management_router
+
+    # Add the cog management router to the dashboard API app
+    dashboard_api_app.include_router(cog_management_router, tags=["Cog Management"])
+    log.info("Cog management endpoints loaded successfully")
+except ImportError as e:
+    log.error(f"Could not import cog management endpoints: {e}")
+    log.error("Cog management endpoints will not be available")
+
 # Mount the API apps at their respective paths
 app.mount("/api", api_app)
 app.mount("/discordapi", discordapi_app)
