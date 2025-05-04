@@ -428,14 +428,41 @@ try:
     # Try relative import first
     try:
         from .cog_management_endpoints import router as cog_management_router
-    except ImportError:
+        log.info("Successfully imported cog_management_endpoints via relative import")
+    except ImportError as e:
+        log.warning(f"Relative import of cog_management_endpoints failed: {e}")
         # Fall back to absolute import
-        from cog_management_endpoints import router as cog_management_router
+        try:
+            from cog_management_endpoints import router as cog_management_router
+            log.info("Successfully imported cog_management_endpoints via absolute import")
+        except ImportError as e2:
+            log.error(f"Both import attempts for cog_management_endpoints failed: {e2}")
+            # Try to import the module directly to see what's available
+            try:
+                import sys
+                log.info(f"Python path: {sys.path}")
+                # Try to find the module in the current directory
+                import os
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                log.info(f"Current directory: {current_dir}")
+                files = os.listdir(current_dir)
+                log.info(f"Files in current directory: {files}")
+
+                # Try to import the module with a full path
+                sys.path.append(current_dir)
+                import cog_management_endpoints
+                log.info(f"Successfully imported cog_management_endpoints module")
+                router = cog_management_endpoints.router
+                log.info(f"Successfully got router from cog_management_endpoints")
+                cog_management_router = router
+            except Exception as e3:
+                log.error(f"Failed to import cog_management_endpoints module: {e3}")
+                raise e2
 
     # Add the cog management router to the dashboard API app
     dashboard_api_app.include_router(cog_management_router, tags=["Cog Management"])
     log.info("Cog management endpoints loaded successfully")
-except ImportError as e:
+except Exception as e:
     log.error(f"Could not import cog management endpoints: {e}")
     log.error("Cog management endpoints will not be available")
 

@@ -459,36 +459,78 @@ async def get_guild_settings(
                 detail="Settings manager not available"
             )
 
-        # Get prefix
-        prefix = await settings_manager.get_guild_prefix(guild_id, DEFAULT_PREFIX)
-
-        # Get welcome/goodbye settings
-        welcome_channel_id = await settings_manager.get_setting(guild_id, 'welcome_channel_id')
-        welcome_message = await settings_manager.get_setting(guild_id, 'welcome_message')
-        goodbye_channel_id = await settings_manager.get_setting(guild_id, 'goodbye_channel_id')
-        goodbye_message = await settings_manager.get_setting(guild_id, 'goodbye_message')
-
-        # Get cog enabled statuses
-        cogs_enabled = await settings_manager.get_all_enabled_cogs(guild_id)
-
-        # Get command enabled statuses
-        commands_enabled = await settings_manager.get_all_enabled_commands(guild_id)
-
-        # Construct response
+        # Initialize settings with defaults
         settings = {
-            "prefix": prefix,
-            "welcome_channel_id": welcome_channel_id,
-            "welcome_message": welcome_message,
-            "goodbye_channel_id": goodbye_channel_id,
-            "goodbye_message": goodbye_message,
-            "cogs": cogs_enabled,
-            "commands": commands_enabled
+            "prefix": DEFAULT_PREFIX,
+            "welcome_channel_id": None,
+            "welcome_message": None,
+            "goodbye_channel_id": None,
+            "goodbye_message": None,
+            "cogs": {},
+            "commands": {}
         }
+
+        # Get prefix with error handling
+        try:
+            settings["prefix"] = await settings_manager.get_guild_prefix(guild_id, DEFAULT_PREFIX)
+        except Exception as e:
+            log.warning(f"Error getting prefix for guild {guild_id}, using default: {e}")
+            # Keep default prefix
+
+        # Get welcome/goodbye settings with error handling
+        try:
+            settings["welcome_channel_id"] = await settings_manager.get_setting(guild_id, 'welcome_channel_id')
+        except Exception as e:
+            log.warning(f"Error getting welcome_channel_id for guild {guild_id}: {e}")
+
+        try:
+            settings["welcome_message"] = await settings_manager.get_setting(guild_id, 'welcome_message')
+        except Exception as e:
+            log.warning(f"Error getting welcome_message for guild {guild_id}: {e}")
+
+        try:
+            settings["goodbye_channel_id"] = await settings_manager.get_setting(guild_id, 'goodbye_channel_id')
+        except Exception as e:
+            log.warning(f"Error getting goodbye_channel_id for guild {guild_id}: {e}")
+
+        try:
+            settings["goodbye_message"] = await settings_manager.get_setting(guild_id, 'goodbye_message')
+        except Exception as e:
+            log.warning(f"Error getting goodbye_message for guild {guild_id}: {e}")
+
+        # Get cog enabled statuses with error handling
+        try:
+            settings["cogs"] = await settings_manager.get_all_enabled_cogs(guild_id)
+        except Exception as e:
+            log.warning(f"Error getting cog enabled statuses for guild {guild_id}: {e}")
+            # Keep empty dict for cogs
+
+        # Get command enabled statuses with error handling
+        try:
+            settings["commands"] = await settings_manager.get_all_enabled_commands(guild_id)
+        except Exception as e:
+            log.warning(f"Error getting command enabled statuses for guild {guild_id}: {e}")
+            # Keep empty dict for commands
 
         return settings
     except HTTPException:
         # Re-raise HTTP exceptions
         raise
+    except RuntimeError as e:
+        # Handle event loop errors specifically
+        if "got Future" in str(e) and "attached to a different loop" in str(e):
+            log.error(f"Event loop error getting settings for guild {guild_id}: {e}")
+            # Return a more helpful error message
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database connection error. Please try again."
+            )
+        else:
+            log.error(f"Runtime error getting settings for guild {guild_id}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error getting settings: {str(e)}"
+            )
     except Exception as e:
         log.error(f"Error getting settings for guild {guild_id}: {e}")
         raise HTTPException(
@@ -824,8 +866,20 @@ async def update_global_settings(
 # --- Cog and Command Management Endpoints ---
 # Note: These endpoints have been moved to cog_management_endpoints.py
 
-# --- Cog Management Redirect Endpoints ---
-# These endpoints redirect to the cog management endpoints in cog_management_endpoints.py
+# --- Cog Management Endpoints ---
+# These endpoints provide direct implementation and fallback for cog management
+
+# Define models needed for cog management
+class CogCommandInfo(BaseModel):
+    name: str
+    description: Optional[str] = None
+    enabled: bool = True
+
+class CogInfo(BaseModel):
+    name: str
+    description: Optional[str] = None
+    enabled: bool = True
+    commands: List[Dict[str, Any]] = []
 
 @router.get("/guilds/{guild_id}/cogs", response_model=List[Any])
 async def get_guild_cogs_redirect(
@@ -833,18 +887,93 @@ async def get_guild_cogs_redirect(
     _user: dict = Depends(get_dashboard_user),
     _admin: bool = Depends(verify_dashboard_guild_admin)
 ):
-    """Redirect to the cog management endpoint."""
+    """Get all cogs and their commands for a guild."""
     try:
-        # Import the cog management endpoint
+        # First try to use the dedicated cog management endpoint
         try:
+            # Try relative import first
             from .cog_management_endpoints import get_guild_cogs
-        except ImportError:
-            from cog_management_endpoints import get_guild_cogs
+            log.info(f"Successfully imported get_guild_cogs via relative import")
 
-        # Call the cog management endpoint
-        return await get_guild_cogs(guild_id, _user, _admin)
+            # Call the cog management endpoint
+            log.info(f"Calling get_guild_cogs for guild {guild_id}")
+            result = await get_guild_cogs(guild_id, _user, _admin)
+            log.info(f"Successfully retrieved cogs for guild {guild_id}")
+            return result
+        except ImportError as e:
+            log.warning(f"Relative import failed: {e}, trying absolute import")
+            try:
+                # Fall back to absolute import
+                from cog_management_endpoints import get_guild_cogs
+                log.info(f"Successfully imported get_guild_cogs via absolute import")
+
+                # Call the cog management endpoint
+                log.info(f"Calling get_guild_cogs for guild {guild_id}")
+                result = await get_guild_cogs(guild_id, _user, _admin)
+                log.info(f"Successfully retrieved cogs for guild {guild_id}")
+                return result
+            except ImportError as e2:
+                log.error(f"Both import attempts failed: {e2}")
+                log.warning("Falling back to direct implementation")
+
+                # Fall back to direct implementation
+                # Check if bot instance is available via discord_bot_sync_api
+                try:
+                    from discordbot import discord_bot_sync_api
+                    bot = discord_bot_sync_api.bot_instance
+                    if not bot:
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Bot instance not available"
+                        )
+                except ImportError:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Bot sync API not available"
+                    )
+
+                # Get all cogs from the bot
+                cogs_list = []
+                for cog_name, cog in bot.cogs.items():
+                    # Get enabled status from settings_manager
+                    is_enabled = await settings_manager.is_cog_enabled(guild_id, cog_name, default_enabled=True)
+
+                    # Get commands for this cog
+                    commands_list = []
+                    for command in cog.get_commands():
+                        # Get command enabled status
+                        cmd_enabled = await settings_manager.is_command_enabled(guild_id, command.qualified_name, default_enabled=True)
+                        commands_list.append({
+                            "name": command.qualified_name,
+                            "description": command.help or "No description available",
+                            "enabled": cmd_enabled
+                        })
+
+                    # Add slash commands if any
+                    app_commands = [cmd for cmd in bot.tree.get_commands() if hasattr(cmd, 'cog') and cmd.cog and cmd.cog.qualified_name == cog_name]
+                    for cmd in app_commands:
+                        # Get command enabled status
+                        cmd_enabled = await settings_manager.is_command_enabled(guild_id, cmd.name, default_enabled=True)
+                        if not any(c["name"] == cmd.name for c in commands_list):  # Avoid duplicates
+                            commands_list.append({
+                                "name": cmd.name,
+                                "description": cmd.description or "No description available",
+                                "enabled": cmd_enabled
+                            })
+
+                    cogs_list.append(CogInfo(
+                        name=cog_name,
+                        description=cog.__doc__ or "No description available",
+                        enabled=is_enabled,
+                        commands=commands_list
+                    ))
+
+                return cogs_list
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
-        log.error(f"Error redirecting to cog management endpoint: {e}")
+        log.error(f"Error getting cogs for guild {guild_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting cogs: {str(e)}"
@@ -858,18 +987,84 @@ async def update_cog_status_redirect(
     _user: dict = Depends(get_dashboard_user),
     _admin: bool = Depends(verify_dashboard_guild_admin)
 ):
-    """Redirect to the cog management endpoint for updating cog status."""
+    """Enable or disable a cog for a guild."""
     try:
-        # Import the cog management endpoint
+        # First try to use the dedicated cog management endpoint
         try:
+            # Try relative import first
             from .cog_management_endpoints import update_cog_status
-        except ImportError:
-            from cog_management_endpoints import update_cog_status
+            log.info(f"Successfully imported update_cog_status via relative import")
 
-        # Call the cog management endpoint
-        return await update_cog_status(guild_id, cog_name, enabled, _user, _admin)
+            # Call the cog management endpoint
+            log.info(f"Calling update_cog_status for guild {guild_id}, cog {cog_name}, enabled={enabled}")
+            result = await update_cog_status(guild_id, cog_name, enabled, _user, _admin)
+            log.info(f"Successfully updated cog status for guild {guild_id}, cog {cog_name}")
+            return result
+        except ImportError as e:
+            log.warning(f"Relative import failed: {e}, trying absolute import")
+            try:
+                # Fall back to absolute import
+                from cog_management_endpoints import update_cog_status
+                log.info(f"Successfully imported update_cog_status via absolute import")
+
+                # Call the cog management endpoint
+                log.info(f"Calling update_cog_status for guild {guild_id}, cog {cog_name}, enabled={enabled}")
+                result = await update_cog_status(guild_id, cog_name, enabled, _user, _admin)
+                log.info(f"Successfully updated cog status for guild {guild_id}, cog {cog_name}")
+                return result
+            except ImportError as e2:
+                log.error(f"Both import attempts failed: {e2}")
+                log.warning("Falling back to direct implementation")
+
+                # Fall back to direct implementation
+                # Check if settings_manager is available
+                if not settings_manager or not settings_manager.pg_pool:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Settings manager not available"
+                    )
+
+                # Check if the cog exists
+                try:
+                    from discordbot import discord_bot_sync_api
+                    bot = discord_bot_sync_api.bot_instance
+                    if not bot:
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Bot instance not available"
+                        )
+
+                    if cog_name not in bot.cogs:
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Cog '{cog_name}' not found"
+                        )
+
+                    # Check if it's a core cog
+                    core_cogs = getattr(bot, 'core_cogs', {'SettingsCog', 'HelpCog'})
+                    if cog_name in core_cogs:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Core cog '{cog_name}' cannot be disabled"
+                        )
+                except ImportError:
+                    # If we can't import the bot, we'll just assume the cog exists
+                    log.warning("Bot sync API not available, skipping cog existence check")
+
+                # Update the cog enabled status
+                success = await settings_manager.set_cog_enabled(guild_id, cog_name, enabled)
+                if not success:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to update cog '{cog_name}' status"
+                    )
+
+                return {"message": f"Cog '{cog_name}' {'enabled' if enabled else 'disabled'} successfully"}
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
-        log.error(f"Error redirecting to cog management endpoint for updating cog status: {e}")
+        log.error(f"Error updating cog status for guild {guild_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error updating cog status: {str(e)}"
@@ -883,18 +1078,81 @@ async def update_command_status_redirect(
     _user: dict = Depends(get_dashboard_user),
     _admin: bool = Depends(verify_dashboard_guild_admin)
 ):
-    """Redirect to the cog management endpoint for updating command status."""
+    """Enable or disable a command for a guild."""
     try:
-        # Import the cog management endpoint
+        # First try to use the dedicated cog management endpoint
         try:
+            # Try relative import first
             from .cog_management_endpoints import update_command_status
-        except ImportError:
-            from cog_management_endpoints import update_command_status
+            log.info(f"Successfully imported update_command_status via relative import")
 
-        # Call the cog management endpoint
-        return await update_command_status(guild_id, command_name, enabled, _user, _admin)
+            # Call the cog management endpoint
+            log.info(f"Calling update_command_status for guild {guild_id}, command {command_name}, enabled={enabled}")
+            result = await update_command_status(guild_id, command_name, enabled, _user, _admin)
+            log.info(f"Successfully updated command status for guild {guild_id}, command {command_name}")
+            return result
+        except ImportError as e:
+            log.warning(f"Relative import failed: {e}, trying absolute import")
+            try:
+                # Fall back to absolute import
+                from cog_management_endpoints import update_command_status
+                log.info(f"Successfully imported update_command_status via absolute import")
+
+                # Call the cog management endpoint
+                log.info(f"Calling update_command_status for guild {guild_id}, command {command_name}, enabled={enabled}")
+                result = await update_command_status(guild_id, command_name, enabled, _user, _admin)
+                log.info(f"Successfully updated command status for guild {guild_id}, command {command_name}")
+                return result
+            except ImportError as e2:
+                log.error(f"Both import attempts failed: {e2}")
+                log.warning("Falling back to direct implementation")
+
+                # Fall back to direct implementation
+                # Check if settings_manager is available
+                if not settings_manager or not settings_manager.pg_pool:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Settings manager not available"
+                    )
+
+                # Check if the command exists
+                try:
+                    from discordbot import discord_bot_sync_api
+                    bot = discord_bot_sync_api.bot_instance
+                    if not bot:
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Bot instance not available"
+                        )
+
+                    # Check if it's a prefix command
+                    command = bot.get_command(command_name)
+                    if not command:
+                        # Check if it's an app command
+                        app_commands = [cmd for cmd in bot.tree.get_commands() if cmd.name == command_name]
+                        if not app_commands:
+                            raise HTTPException(
+                                status_code=status.HTTP_404_NOT_FOUND,
+                                detail=f"Command '{command_name}' not found"
+                            )
+                except ImportError:
+                    # If we can't import the bot, we'll just assume the command exists
+                    log.warning("Bot sync API not available, skipping command existence check")
+
+                # Update the command enabled status
+                success = await settings_manager.set_command_enabled(guild_id, command_name, enabled)
+                if not success:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to update command '{command_name}' status"
+                    )
+
+                return {"message": f"Command '{command_name}' {'enabled' if enabled else 'disabled'} successfully"}
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
-        log.error(f"Error redirecting to cog management endpoint for updating command status: {e}")
+        log.error(f"Error updating command status for guild {guild_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error updating command status: {str(e)}"

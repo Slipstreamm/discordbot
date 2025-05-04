@@ -2,6 +2,7 @@ import asyncpg
 import redis.asyncio as redis
 import os
 import logging
+import asyncio
 from dotenv import load_dotenv
 from typing import Dict
 
@@ -57,10 +58,25 @@ async def initialize_pools():
         )
         log.info(f"PostgreSQL pool connected to {POSTGRES_HOST}/{POSTGRES_DB}")
 
-        # Create Redis pool
-        redis_pool = redis.from_url(REDIS_URL, decode_responses=True)
-        await redis_pool.ping()  # Test connection
-        log.info(f"Redis pool connected to {REDIS_HOST}:{REDIS_PORT}")
+        # Create Redis pool with connection_cls=None to avoid event loop issues
+        # This creates a connection pool that doesn't bind to a specific event loop
+        redis_pool = redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            max_connections=20,  # Limit max connections
+            socket_timeout=5.0,  # 5 second timeout for operations
+            socket_connect_timeout=3.0,  # 3 second timeout for connections
+            retry_on_timeout=True,  # Retry on timeout
+            health_check_interval=30  # Check connection health every 30 seconds
+        )
+
+        # Test connection with a timeout
+        try:
+            await asyncio.wait_for(redis_pool.ping(), timeout=5.0)
+            log.info(f"Redis pool connected to {REDIS_HOST}:{REDIS_PORT}")
+        except asyncio.TimeoutError:
+            log.error(f"Redis connection timeout when connecting to {REDIS_HOST}:{REDIS_PORT}")
+            raise
 
         # Initialize database schema
         await initialize_database()  # Ensure tables exist
@@ -258,30 +274,56 @@ async def get_guild_prefix(guild_id: int, default_prefix: str) -> str:
         return default_prefix
 
     cache_key = _get_redis_key(guild_id, "prefix")
+
+    # Try to get from cache with timeout and error handling
     try:
-        cached_prefix = await redis_pool.get(cache_key)
+        # Use a timeout to prevent hanging on Redis operations
+        cached_prefix = await asyncio.wait_for(redis_pool.get(cache_key), timeout=2.0)
         if cached_prefix is not None:
             log.debug(f"Cache hit for prefix (Guild: {guild_id})")
             return cached_prefix
+    except asyncio.TimeoutError:
+        log.warning(f"Redis timeout getting prefix for guild {guild_id}, falling back to database")
+    except RuntimeError as e:
+        if "got Future" in str(e) and "attached to a different loop" in str(e):
+            log.warning(f"Redis event loop error for guild {guild_id}, falling back to database: {e}")
+        else:
+            log.exception(f"Redis error getting prefix for guild {guild_id}: {e}")
     except Exception as e:
         log.exception(f"Redis error getting prefix for guild {guild_id}: {e}")
 
+    # Cache miss or Redis error, get from database
     log.debug(f"Cache miss for prefix (Guild: {guild_id})")
-    async with pg_pool.acquire() as conn:
-        prefix = await conn.fetchval(
-            "SELECT setting_value FROM guild_settings WHERE guild_id = $1 AND setting_key = 'prefix'",
-            guild_id
-        )
-
-    final_prefix = prefix if prefix is not None else default_prefix
-
-    # Cache the result (even if it's the default, to avoid future DB lookups)
     try:
-        await redis_pool.set(cache_key, final_prefix, ex=3600) # Cache for 1 hour
-    except Exception as e:
-        log.exception(f"Redis error setting prefix for guild {guild_id}: {e}")
+        async with pg_pool.acquire() as conn:
+            prefix = await conn.fetchval(
+                "SELECT setting_value FROM guild_settings WHERE guild_id = $1 AND setting_key = 'prefix'",
+                guild_id
+            )
 
-    return final_prefix
+        final_prefix = prefix if prefix is not None else default_prefix
+
+        # Try to cache the result with timeout and error handling
+        try:
+            # Use a timeout to prevent hanging on Redis operations
+            await asyncio.wait_for(
+                redis_pool.set(cache_key, final_prefix, ex=3600),  # Cache for 1 hour
+                timeout=2.0
+            )
+        except asyncio.TimeoutError:
+            log.warning(f"Redis timeout setting prefix for guild {guild_id}")
+        except RuntimeError as e:
+            if "got Future" in str(e) and "attached to a different loop" in str(e):
+                log.warning(f"Redis event loop error setting prefix for guild {guild_id}: {e}")
+            else:
+                log.exception(f"Redis error setting prefix for guild {guild_id}: {e}")
+        except Exception as e:
+            log.exception(f"Redis error setting prefix for guild {guild_id}: {e}")
+
+        return final_prefix
+    except Exception as e:
+        log.exception(f"Database error getting prefix for guild {guild_id}: {e}")
+        return default_prefix  # Fall back to default on database error
 
 async def set_guild_prefix(guild_id: int, prefix: str):
     """Sets the command prefix for a guild and updates the cache."""
@@ -326,33 +368,64 @@ async def get_setting(guild_id: int, key: str, default=None):
         return default
 
     cache_key = _get_redis_key(guild_id, "setting", key)
+
+    # Try to get from cache with timeout and error handling
     try:
-        cached_value = await redis_pool.get(cache_key)
+        # Use a timeout to prevent hanging on Redis operations
+        cached_value = await asyncio.wait_for(redis_pool.get(cache_key), timeout=2.0)
         if cached_value is not None:
             # Note: Redis stores everything as strings. Consider type conversion if needed.
             log.debug(f"Cache hit for setting '{key}' (Guild: {guild_id})")
+            # Handle the None marker
+            if cached_value == "__NONE__":
+                return default
             return cached_value
+    except asyncio.TimeoutError:
+        log.warning(f"Redis timeout getting setting '{key}' for guild {guild_id}, falling back to database")
+    except RuntimeError as e:
+        if "got Future" in str(e) and "attached to a different loop" in str(e):
+            log.warning(f"Redis event loop error for guild {guild_id}, falling back to database: {e}")
+        else:
+            log.exception(f"Redis error getting setting '{key}' for guild {guild_id}: {e}")
     except Exception as e:
         log.exception(f"Redis error getting setting '{key}' for guild {guild_id}: {e}")
 
+    # Cache miss or Redis error, get from database
     log.debug(f"Cache miss for setting '{key}' (Guild: {guild_id})")
-    async with pg_pool.acquire() as conn:
-        value = await conn.fetchval(
-            "SELECT setting_value FROM guild_settings WHERE guild_id = $1 AND setting_key = $2",
-            guild_id, key
-        )
-
-    final_value = value if value is not None else default
-
-    # Cache the result (even if None or default, cache the absence or default value)
-    # Store None as a special marker, e.g., "None" string, or handle appropriately
-    value_to_cache = final_value if final_value is not None else "__NONE__" # Marker for None
     try:
-        await redis_pool.set(cache_key, value_to_cache, ex=3600) # Cache for 1 hour
-    except Exception as e:
-        log.exception(f"Redis error setting cache for setting '{key}' for guild {guild_id}: {e}")
+        async with pg_pool.acquire() as conn:
+            value = await conn.fetchval(
+                "SELECT setting_value FROM guild_settings WHERE guild_id = $1 AND setting_key = $2",
+                guild_id, key
+            )
 
-    return final_value
+        final_value = value if value is not None else default
+
+        # Cache the result (even if None or default, cache the absence or default value)
+        # Store None as a special marker, e.g., "None" string, or handle appropriately
+        value_to_cache = final_value if final_value is not None else "__NONE__" # Marker for None
+
+        # Try to cache the result with timeout and error handling
+        try:
+            # Use a timeout to prevent hanging on Redis operations
+            await asyncio.wait_for(
+                redis_pool.set(cache_key, value_to_cache, ex=3600),  # Cache for 1 hour
+                timeout=2.0
+            )
+        except asyncio.TimeoutError:
+            log.warning(f"Redis timeout setting cache for setting '{key}' for guild {guild_id}")
+        except RuntimeError as e:
+            if "got Future" in str(e) and "attached to a different loop" in str(e):
+                log.warning(f"Redis event loop error setting cache for setting '{key}' for guild {guild_id}: {e}")
+            else:
+                log.exception(f"Redis error setting cache for setting '{key}' for guild {guild_id}: {e}")
+        except Exception as e:
+            log.exception(f"Redis error setting cache for setting '{key}' for guild {guild_id}: {e}")
+
+        return final_value
+    except Exception as e:
+        log.exception(f"Database error getting setting '{key}' for guild {guild_id}: {e}")
+        return default  # Fall back to default on database error
 
 
 async def set_setting(guild_id: int, key: str, value: str | None):
@@ -411,14 +484,25 @@ async def is_cog_enabled(guild_id: int, cog_name: str, default_enabled: bool = T
         return default_enabled
 
     cache_key = _get_redis_key(guild_id, "cog_enabled", cog_name)
+
+    # Try to get from cache with timeout and error handling
     try:
-        cached_value = await redis_pool.get(cache_key)
+        # Use a timeout to prevent hanging on Redis operations
+        cached_value = await asyncio.wait_for(redis_pool.get(cache_key), timeout=2.0)
         if cached_value is not None:
             log.debug(f"Cache hit for cog enabled status '{cog_name}' (Guild: {guild_id})")
             return cached_value == "True" # Redis stores strings
+    except asyncio.TimeoutError:
+        log.warning(f"Redis timeout getting cog enabled status for '{cog_name}' (Guild: {guild_id}), falling back to database")
+    except RuntimeError as e:
+        if "got Future" in str(e) and "attached to a different loop" in str(e):
+            log.warning(f"Redis event loop error for guild {guild_id}, falling back to database: {e}")
+        else:
+            log.exception(f"Redis error getting cog enabled status for '{cog_name}' (Guild: {guild_id}): {e}")
     except Exception as e:
         log.exception(f"Redis error getting cog enabled status for '{cog_name}' (Guild: {guild_id}): {e}")
 
+    # Cache miss or Redis error, get from database
     log.debug(f"Cache miss for cog enabled status '{cog_name}' (Guild: {guild_id})")
     db_enabled_status = None
     try:
@@ -427,20 +511,31 @@ async def is_cog_enabled(guild_id: int, cog_name: str, default_enabled: bool = T
                 "SELECT enabled FROM enabled_cogs WHERE guild_id = $1 AND cog_name = $2",
                 guild_id, cog_name
             )
+
+        final_status = db_enabled_status if db_enabled_status is not None else default_enabled
+
+        # Try to cache the result with timeout and error handling
+        try:
+            # Use a timeout to prevent hanging on Redis operations
+            await asyncio.wait_for(
+                redis_pool.set(cache_key, str(final_status), ex=3600),  # Cache for 1 hour
+                timeout=2.0
+            )
+        except asyncio.TimeoutError:
+            log.warning(f"Redis timeout setting cache for cog enabled status '{cog_name}' (Guild: {guild_id})")
+        except RuntimeError as e:
+            if "got Future" in str(e) and "attached to a different loop" in str(e):
+                log.warning(f"Redis event loop error setting cache for cog enabled status '{cog_name}' (Guild: {guild_id}): {e}")
+            else:
+                log.exception(f"Redis error setting cache for cog enabled status '{cog_name}' (Guild: {guild_id}): {e}")
+        except Exception as e:
+            log.exception(f"Redis error setting cache for cog enabled status '{cog_name}' (Guild: {guild_id}): {e}")
+
+        return final_status
     except Exception as e:
         log.exception(f"Database error getting cog enabled status for '{cog_name}' (Guild: {guild_id}): {e}")
         # Fallback to default on DB error after cache miss
         return default_enabled
-
-    final_status = db_enabled_status if db_enabled_status is not None else default_enabled
-
-    # Cache the result (True or False)
-    try:
-        await redis_pool.set(cache_key, str(final_status), ex=3600) # Cache for 1 hour
-    except Exception as e:
-        log.exception(f"Redis error setting cache for cog enabled status '{cog_name}' (Guild: {guild_id}): {e}")
-
-    return final_status
 
 
 async def set_cog_enabled(guild_id: int, cog_name: str, enabled: bool):
@@ -486,14 +581,25 @@ async def is_command_enabled(guild_id: int, command_name: str, default_enabled: 
         return default_enabled
 
     cache_key = _get_redis_key(guild_id, "cmd_enabled", command_name)
+
+    # Try to get from cache with timeout and error handling
     try:
-        cached_value = await redis_pool.get(cache_key)
+        # Use a timeout to prevent hanging on Redis operations
+        cached_value = await asyncio.wait_for(redis_pool.get(cache_key), timeout=2.0)
         if cached_value is not None:
             log.debug(f"Cache hit for command enabled status '{command_name}' (Guild: {guild_id})")
             return cached_value == "True" # Redis stores strings
+    except asyncio.TimeoutError:
+        log.warning(f"Redis timeout getting command enabled status for '{command_name}' (Guild: {guild_id}), falling back to database")
+    except RuntimeError as e:
+        if "got Future" in str(e) and "attached to a different loop" in str(e):
+            log.warning(f"Redis event loop error for guild {guild_id}, falling back to database: {e}")
+        else:
+            log.exception(f"Redis error getting command enabled status for '{command_name}' (Guild: {guild_id}): {e}")
     except Exception as e:
         log.exception(f"Redis error getting command enabled status for '{command_name}' (Guild: {guild_id}): {e}")
 
+    # Cache miss or Redis error, get from database
     log.debug(f"Cache miss for command enabled status '{command_name}' (Guild: {guild_id})")
     db_enabled_status = None
     try:
@@ -502,20 +608,31 @@ async def is_command_enabled(guild_id: int, command_name: str, default_enabled: 
                 "SELECT enabled FROM enabled_commands WHERE guild_id = $1 AND command_name = $2",
                 guild_id, command_name
             )
+
+        final_status = db_enabled_status if db_enabled_status is not None else default_enabled
+
+        # Try to cache the result with timeout and error handling
+        try:
+            # Use a timeout to prevent hanging on Redis operations
+            await asyncio.wait_for(
+                redis_pool.set(cache_key, str(final_status), ex=3600),  # Cache for 1 hour
+                timeout=2.0
+            )
+        except asyncio.TimeoutError:
+            log.warning(f"Redis timeout setting cache for command enabled status '{command_name}' (Guild: {guild_id})")
+        except RuntimeError as e:
+            if "got Future" in str(e) and "attached to a different loop" in str(e):
+                log.warning(f"Redis event loop error setting cache for command enabled status '{command_name}' (Guild: {guild_id}): {e}")
+            else:
+                log.exception(f"Redis error setting cache for command enabled status '{command_name}' (Guild: {guild_id}): {e}")
+        except Exception as e:
+            log.exception(f"Redis error setting cache for command enabled status '{command_name}' (Guild: {guild_id}): {e}")
+
+        return final_status
     except Exception as e:
         log.exception(f"Database error getting command enabled status for '{command_name}' (Guild: {guild_id}): {e}")
         # Fallback to default on DB error after cache miss
         return default_enabled
-
-    final_status = db_enabled_status if db_enabled_status is not None else default_enabled
-
-    # Cache the result (True or False)
-    try:
-        await redis_pool.set(cache_key, str(final_status), ex=3600) # Cache for 1 hour
-    except Exception as e:
-        log.exception(f"Redis error setting cache for command enabled status '{command_name}' (Guild: {guild_id}): {e}")
-
-    return final_status
 
 
 async def set_command_enabled(guild_id: int, command_name: str, enabled: bool):
