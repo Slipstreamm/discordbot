@@ -109,6 +109,51 @@ if not settings.GURT_STATS_PUSH_SECRET:
     print("Warning: GURT_STATS_PUSH_SECRET not set. Internal stats update endpoint will be insecure.")
 
 # --- Helper Functions ---
+async def get_guild_name_from_api(guild_id: int, timeout: float = 5.0) -> str:
+    """
+    Get a guild's name from Discord API using the bot token.
+
+    Args:
+        guild_id: The Discord guild ID to get the name for
+        timeout: Maximum time to wait for the API request (in seconds)
+
+    Returns:
+        The guild name if successful, otherwise a fallback string with the guild ID
+    """
+    fallback = f"Server {guild_id}"  # Default fallback
+
+    if not settings.DISCORD_BOT_TOKEN:
+        log.warning("DISCORD_BOT_TOKEN not set, using guild ID as fallback")
+        return fallback
+
+    try:
+        # Use global http_session if available, otherwise create a new one
+        session = http_session if http_session else aiohttp.ClientSession()
+
+        # Headers for the request
+        headers = {'Authorization': f'Bot {settings.DISCORD_BOT_TOKEN}'}
+
+        # Send the request with a timeout
+        async with session.get(
+            f"https://discord.com/api/v10/guilds/{guild_id}",
+            headers=headers,
+            timeout=timeout
+        ) as response:
+            if response.status == 200:
+                guild_data = await response.json()
+                guild_name = guild_data.get('name', fallback)
+                log.info(f"Retrieved guild name '{guild_name}' for guild ID {guild_id}")
+                return guild_name
+            else:
+                log.warning(f"Failed to get guild name for guild ID {guild_id}: HTTP {response.status}")
+                return fallback
+    except asyncio.TimeoutError:
+        log.error(f"Timeout getting guild name for guild ID {guild_id}")
+        return fallback
+    except Exception as e:
+        log.error(f"Error getting guild name for guild ID {guild_id}: {e}")
+        return fallback
+
 async def send_discord_message_via_api(channel_id: int, content: str, timeout: float = 5.0) -> Dict[str, Any]:
     """
     Send a message to a Discord channel using Discord's REST API directly.
@@ -1658,11 +1703,14 @@ async def dashboard_test_welcome_message(
                 detail="Welcome channel not configured"
             )
 
+        # Get the guild name from Discord API
+        guild_name = await get_guild_name_from_api(guild_id)
+
         # Format the message
         formatted_message = welcome_message_template.format(
             user="@TestUser",
             username="TestUser",
-            server=f"Server {guild_id}"
+            server=guild_name
         )
 
         # No need to import bot_instance anymore since we're using the direct API approach
@@ -1733,10 +1781,13 @@ async def dashboard_test_goodbye_message(
                 detail="Goodbye channel not configured"
             )
 
+        # Get the guild name from Discord API
+        guild_name = await get_guild_name_from_api(guild_id)
+
         # Format the message
         formatted_message = goodbye_message_template.format(
             username="TestUser",
-            server=f"Server {guild_id}"
+            server=guild_name
         )
 
         # No need to import bot_instance anymore since we're using the direct API approach
