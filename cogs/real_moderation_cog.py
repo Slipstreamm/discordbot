@@ -1,0 +1,484 @@
+import discord
+from discord.ext import commands
+from discord import app_commands
+import datetime
+import logging
+from typing import Optional, Union, List
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+class ModerationCog(commands.Cog):
+    """Real moderation commands that perform actual moderation actions."""
+
+    def __init__(self, bot):
+        self.bot = bot
+
+        # Create the main command group for this cog
+        self.moderate_group = app_commands.Group(
+            name="moderate",
+            description="Moderation commands for server management"
+        )
+
+        # Register commands
+        self.register_commands()
+
+        # Add command group to the bot's tree
+        self.bot.tree.add_command(self.moderate_group)
+
+    def register_commands(self):
+        """Register all commands for this cog"""
+
+        # --- Ban Command ---
+        ban_command = app_commands.Command(
+            name="ban",
+            description="Ban a member from the server",
+            callback=self.moderate_ban_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            member="The member to ban",
+            reason="The reason for the ban",
+            delete_days="Number of days of messages to delete (0-7)"
+        )(ban_command)
+        self.moderate_group.add_command(ban_command)
+
+        # --- Unban Command ---
+        unban_command = app_commands.Command(
+            name="unban",
+            description="Unban a user from the server",
+            callback=self.moderate_unban_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            user_id="The ID of the user to unban",
+            reason="The reason for the unban"
+        )(unban_command)
+        self.moderate_group.add_command(unban_command)
+
+        # --- Kick Command ---
+        kick_command = app_commands.Command(
+            name="kick",
+            description="Kick a member from the server",
+            callback=self.moderate_kick_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            member="The member to kick",
+            reason="The reason for the kick"
+        )(kick_command)
+        self.moderate_group.add_command(kick_command)
+
+        # --- Timeout Command ---
+        timeout_command = app_commands.Command(
+            name="timeout",
+            description="Timeout a member in the server",
+            callback=self.moderate_timeout_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            member="The member to timeout",
+            duration="The duration of the timeout (e.g., '1d', '2h', '30m', '60s')",
+            reason="The reason for the timeout"
+        )(timeout_command)
+        self.moderate_group.add_command(timeout_command)
+
+        # --- Remove Timeout Command ---
+        remove_timeout_command = app_commands.Command(
+            name="removetimeout",
+            description="Remove a timeout from a member",
+            callback=self.moderate_remove_timeout_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            member="The member to remove timeout from",
+            reason="The reason for removing the timeout"
+        )(remove_timeout_command)
+        self.moderate_group.add_command(remove_timeout_command)
+
+        # --- Purge Command ---
+        purge_command = app_commands.Command(
+            name="purge",
+            description="Delete a specified number of messages from a channel",
+            callback=self.moderate_purge_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            amount="Number of messages to delete (1-100)",
+            user="Optional: Only delete messages from this user"
+        )(purge_command)
+        self.moderate_group.add_command(purge_command)
+
+        # --- Warn Command ---
+        warn_command = app_commands.Command(
+            name="warn",
+            description="Warn a member in the server",
+            callback=self.moderate_warn_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            member="The member to warn",
+            reason="The reason for the warning"
+        )(warn_command)
+        self.moderate_group.add_command(warn_command)
+
+    # Helper method for parsing duration strings
+    def _parse_duration(self, duration_str: str) -> Optional[datetime.timedelta]:
+        """Parse a duration string like '1d', '2h', '30m' into a timedelta."""
+        if not duration_str:
+            return None
+
+        try:
+            # Extract the number and unit
+            amount = int(''.join(filter(str.isdigit, duration_str)))
+            unit = ''.join(filter(str.isalpha, duration_str)).lower()
+
+            if unit == 'd' or unit == 'day' or unit == 'days':
+                return datetime.timedelta(days=amount)
+            elif unit == 'h' or unit == 'hour' or unit == 'hours':
+                return datetime.timedelta(hours=amount)
+            elif unit == 'm' or unit == 'min' or unit == 'minute' or unit == 'minutes':
+                return datetime.timedelta(minutes=amount)
+            elif unit == 's' or unit == 'sec' or unit == 'second' or unit == 'seconds':
+                return datetime.timedelta(seconds=amount)
+            else:
+                return None
+        except (ValueError, TypeError):
+            return None
+
+    # --- Command Callbacks ---
+
+    async def moderate_ban_callback(self, interaction: discord.Interaction, member: discord.Member, reason: str = None, delete_days: int = 0):
+        """Ban a member from the server."""
+        # Check if the user has permission to ban members
+        if not interaction.user.guild_permissions.ban_members:
+            await interaction.response.send_message("❌ You don't have permission to ban members.", ephemeral=True)
+            return
+
+        # Check if the bot has permission to ban members
+        if not interaction.guild.me.guild_permissions.ban_members:
+            await interaction.response.send_message("❌ I don't have permission to ban members.", ephemeral=True)
+            return
+
+        # Check if the user is trying to ban themselves
+        if member.id == interaction.user.id:
+            await interaction.response.send_message("❌ You cannot ban yourself.", ephemeral=True)
+            return
+
+        # Check if the user is trying to ban the bot
+        if member.id == self.bot.user.id:
+            await interaction.response.send_message("❌ I cannot ban myself.", ephemeral=True)
+            return
+
+        # Check if the user is trying to ban someone with a higher role
+        if interaction.user.top_role <= member.top_role and interaction.user.id != interaction.guild.owner_id:
+            await interaction.response.send_message("❌ You cannot ban someone with a higher or equal role.", ephemeral=True)
+            return
+
+        # Check if the bot can ban the member (role hierarchy)
+        if interaction.guild.me.top_role <= member.top_role:
+            await interaction.response.send_message("❌ I cannot ban someone with a higher or equal role than me.", ephemeral=True)
+            return
+
+        # Ensure delete_days is within valid range (0-7)
+        delete_days = max(0, min(7, delete_days))
+
+        # Perform the ban
+        try:
+            await member.ban(reason=reason, delete_message_days=delete_days)
+
+            # Log the action
+            logger.info(f"User {member} (ID: {member.id}) was banned from {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
+
+            # Send confirmation message
+            await interaction.response.send_message(f"🔨 **Banned {member.mention}**! Reason: {reason or 'No reason provided'}")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I don't have permission to ban this member.", ephemeral=True)
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ An error occurred while banning the member: {e}", ephemeral=True)
+
+    async def moderate_unban_callback(self, interaction: discord.Interaction, user_id: str, reason: str = None):
+        """Unban a user from the server."""
+        # Check if the user has permission to ban members (which includes unbanning)
+        if not interaction.user.guild_permissions.ban_members:
+            await interaction.response.send_message("❌ You don't have permission to unban users.", ephemeral=True)
+            return
+
+        # Check if the bot has permission to ban members (which includes unbanning)
+        if not interaction.guild.me.guild_permissions.ban_members:
+            await interaction.response.send_message("❌ I don't have permission to unban users.", ephemeral=True)
+            return
+
+        # Validate user ID
+        try:
+            user_id_int = int(user_id)
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid user ID. Please provide a valid user ID.", ephemeral=True)
+            return
+
+        # Check if the user is banned
+        try:
+            ban_entry = await interaction.guild.fetch_ban(discord.Object(id=user_id_int))
+            banned_user = ban_entry.user
+        except discord.NotFound:
+            await interaction.response.send_message("❌ This user is not banned.", ephemeral=True)
+            return
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I don't have permission to view the ban list.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ An error occurred while checking the ban list: {e}", ephemeral=True)
+            return
+
+        # Perform the unban
+        try:
+            await interaction.guild.unban(banned_user, reason=reason)
+
+            # Log the action
+            logger.info(f"User {banned_user} (ID: {banned_user.id}) was unbanned from {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
+
+            # Send confirmation message
+            await interaction.response.send_message(f"🔓 **Unbanned {banned_user}**! Reason: {reason or 'No reason provided'}")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I don't have permission to unban this user.", ephemeral=True)
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ An error occurred while unbanning the user: {e}", ephemeral=True)
+
+    async def moderate_kick_callback(self, interaction: discord.Interaction, member: discord.Member, reason: str = None):
+        """Kick a member from the server."""
+        # Check if the user has permission to kick members
+        if not interaction.user.guild_permissions.kick_members:
+            await interaction.response.send_message("❌ You don't have permission to kick members.", ephemeral=True)
+            return
+
+        # Check if the bot has permission to kick members
+        if not interaction.guild.me.guild_permissions.kick_members:
+            await interaction.response.send_message("❌ I don't have permission to kick members.", ephemeral=True)
+            return
+
+        # Check if the user is trying to kick themselves
+        if member.id == interaction.user.id:
+            await interaction.response.send_message("❌ You cannot kick yourself.", ephemeral=True)
+            return
+
+        # Check if the user is trying to kick the bot
+        if member.id == self.bot.user.id:
+            await interaction.response.send_message("❌ I cannot kick myself.", ephemeral=True)
+            return
+
+        # Check if the user is trying to kick someone with a higher role
+        if interaction.user.top_role <= member.top_role and interaction.user.id != interaction.guild.owner_id:
+            await interaction.response.send_message("❌ You cannot kick someone with a higher or equal role.", ephemeral=True)
+            return
+
+        # Check if the bot can kick the member (role hierarchy)
+        if interaction.guild.me.top_role <= member.top_role:
+            await interaction.response.send_message("❌ I cannot kick someone with a higher or equal role than me.", ephemeral=True)
+            return
+
+        # Perform the kick
+        try:
+            await member.kick(reason=reason)
+
+            # Log the action
+            logger.info(f"User {member} (ID: {member.id}) was kicked from {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
+
+            # Send confirmation message
+            await interaction.response.send_message(f"👢 **Kicked {member.mention}**! Reason: {reason or 'No reason provided'}")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I don't have permission to kick this member.", ephemeral=True)
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ An error occurred while kicking the member: {e}", ephemeral=True)
+
+    async def moderate_timeout_callback(self, interaction: discord.Interaction, member: discord.Member, duration: str, reason: str = None):
+        """Timeout a member in the server."""
+        # Check if the user has permission to moderate members
+        if not interaction.user.guild_permissions.moderate_members:
+            await interaction.response.send_message("❌ You don't have permission to timeout members.", ephemeral=True)
+            return
+
+        # Check if the bot has permission to moderate members
+        if not interaction.guild.me.guild_permissions.moderate_members:
+            await interaction.response.send_message("❌ I don't have permission to timeout members.", ephemeral=True)
+            return
+
+        # Check if the user is trying to timeout themselves
+        if member.id == interaction.user.id:
+            await interaction.response.send_message("❌ You cannot timeout yourself.", ephemeral=True)
+            return
+
+        # Check if the user is trying to timeout the bot
+        if member.id == self.bot.user.id:
+            await interaction.response.send_message("❌ I cannot timeout myself.", ephemeral=True)
+            return
+
+        # Check if the user is trying to timeout someone with a higher role
+        if interaction.user.top_role <= member.top_role and interaction.user.id != interaction.guild.owner_id:
+            await interaction.response.send_message("❌ You cannot timeout someone with a higher or equal role.", ephemeral=True)
+            return
+
+        # Check if the bot can timeout the member (role hierarchy)
+        if interaction.guild.me.top_role <= member.top_role:
+            await interaction.response.send_message("❌ I cannot timeout someone with a higher or equal role than me.", ephemeral=True)
+            return
+
+        # Parse the duration
+        delta = self._parse_duration(duration)
+        if not delta:
+            await interaction.response.send_message("❌ Invalid duration format. Please use formats like '1d', '2h', '30m', or '60s'.", ephemeral=True)
+            return
+
+        # Check if the duration is within Discord's limits (max 28 days)
+        max_timeout = datetime.timedelta(days=28)
+        if delta > max_timeout:
+            await interaction.response.send_message("❌ Timeout duration cannot exceed 28 days.", ephemeral=True)
+            return
+
+        # Calculate the end time
+        until = discord.utils.utcnow() + delta
+
+        # Perform the timeout
+        try:
+            await member.timeout(until, reason=reason)
+
+            # Log the action
+            logger.info(f"User {member} (ID: {member.id}) was timed out in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}) for {duration}. Reason: {reason}")
+
+            # Send confirmation message
+            await interaction.response.send_message(f"⏰ **Timed out {member.mention}** for {duration}! Reason: {reason or 'No reason provided'}")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I don't have permission to timeout this member.", ephemeral=True)
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ An error occurred while timing out the member: {e}", ephemeral=True)
+
+    async def moderate_remove_timeout_callback(self, interaction: discord.Interaction, member: discord.Member, reason: str = None):
+        """Remove a timeout from a member."""
+        # Check if the user has permission to moderate members
+        if not interaction.user.guild_permissions.moderate_members:
+            await interaction.response.send_message("❌ You don't have permission to remove timeouts.", ephemeral=True)
+            return
+
+        # Check if the bot has permission to moderate members
+        if not interaction.guild.me.guild_permissions.moderate_members:
+            await interaction.response.send_message("❌ I don't have permission to remove timeouts.", ephemeral=True)
+            return
+
+        # Check if the member is timed out
+        if not member.timed_out_until:
+            await interaction.response.send_message("❌ This member is not timed out.", ephemeral=True)
+            return
+
+        # Perform the timeout removal
+        try:
+            await member.timeout(None, reason=reason)
+
+            # Log the action
+            logger.info(f"Timeout was removed from user {member} (ID: {member.id}) in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
+
+            # Send confirmation message
+            await interaction.response.send_message(f"⏰ **Removed timeout from {member.mention}**! Reason: {reason or 'No reason provided'}")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I don't have permission to remove the timeout from this member.", ephemeral=True)
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ An error occurred while removing the timeout: {e}", ephemeral=True)
+
+    async def moderate_purge_callback(self, interaction: discord.Interaction, amount: int, user: Optional[discord.Member] = None):
+        """Delete a specified number of messages from a channel."""
+        # Check if the user has permission to manage messages
+        if not interaction.user.guild_permissions.manage_messages:
+            await interaction.response.send_message("❌ You don't have permission to purge messages.", ephemeral=True)
+            return
+
+        # Check if the bot has permission to manage messages
+        if not interaction.guild.me.guild_permissions.manage_messages:
+            await interaction.response.send_message("❌ I don't have permission to purge messages.", ephemeral=True)
+            return
+
+        # Validate the amount
+        if amount < 1 or amount > 100:
+            await interaction.response.send_message("❌ You can only purge between 1 and 100 messages at a time.", ephemeral=True)
+            return
+
+        # Defer the response since this might take a moment
+        await interaction.response.defer(ephemeral=True)
+
+        # Perform the purge
+        try:
+            if user:
+                # Delete messages from a specific user
+                def check(message):
+                    return message.author.id == user.id
+
+                deleted = await interaction.channel.purge(limit=amount, check=check)
+
+                # Log the action
+                logger.info(f"{len(deleted)} messages from user {user} (ID: {user.id}) were purged from channel {interaction.channel.name} (ID: {interaction.channel.id}) in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}).")
+
+                # Send confirmation message
+                await interaction.followup.send(f"🧹 **Purged {len(deleted)} messages** from {user.mention}!", ephemeral=True)
+            else:
+                # Delete messages from anyone
+                deleted = await interaction.channel.purge(limit=amount)
+
+                # Log the action
+                logger.info(f"{len(deleted)} messages were purged from channel {interaction.channel.name} (ID: {interaction.channel.id}) in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}).")
+
+                # Send confirmation message
+                await interaction.followup.send(f"🧹 **Purged {len(deleted)} messages**!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ I don't have permission to delete messages in this channel.", ephemeral=True)
+        except discord.HTTPException as e:
+            await interaction.followup.send(f"❌ An error occurred while purging messages: {e}", ephemeral=True)
+
+    async def moderate_warn_callback(self, interaction: discord.Interaction, member: discord.Member, reason: str):
+        """Warn a member in the server."""
+        # Check if the user has permission to kick members (using kick permission as a baseline for warning)
+        if not interaction.user.guild_permissions.kick_members:
+            await interaction.response.send_message("❌ You don't have permission to warn members.", ephemeral=True)
+            return
+
+        # Check if the user is trying to warn themselves
+        if member.id == interaction.user.id:
+            await interaction.response.send_message("❌ You cannot warn yourself.", ephemeral=True)
+            return
+
+        # Check if the user is trying to warn the bot
+        if member.id == self.bot.user.id:
+            await interaction.response.send_message("❌ I cannot warn myself.", ephemeral=True)
+            return
+
+        # Check if the user is trying to warn someone with a higher role
+        if interaction.user.top_role <= member.top_role and interaction.user.id != interaction.guild.owner_id:
+            await interaction.response.send_message("❌ You cannot warn someone with a higher or equal role.", ephemeral=True)
+            return
+
+        # Log the warning
+        logger.info(f"User {member} (ID: {member.id}) was warned in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
+
+        # Send warning message in the channel
+        await interaction.response.send_message(f"⚠️ **{member.mention} has been warned**! Reason: {reason}")
+
+        # Try to DM the user about the warning
+        try:
+            embed = discord.Embed(
+                title="Warning Notice",
+                description=f"You have been warned in **{interaction.guild.name}**",
+                color=discord.Color.yellow()
+            )
+            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(name="Moderator", value=interaction.user.name, inline=False)
+            embed.set_footer(text=f"Server ID: {interaction.guild.id} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+            await member.send(embed=embed)
+        except discord.Forbidden:
+            # User has DMs closed, ignore
+            pass
+        except Exception as e:
+            logger.error(f"Error sending warning DM to {member} (ID: {member.id}): {e}")
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        print(f'{self.__class__.__name__} cog has been loaded.')
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(ModerationCog(bot))
