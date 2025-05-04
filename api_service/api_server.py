@@ -108,6 +108,58 @@ latest_gurt_stats: Optional[Dict[str, Any]] = None
 # GURT_STATS_PUSH_SECRET is now loaded via ApiSettings
 if not settings.GURT_STATS_PUSH_SECRET:
     print("Warning: GURT_STATS_PUSH_SECRET not set. Internal stats update endpoint will be insecure.")
+
+# --- Helper Functions ---
+async def safe_send_discord_message(channel, content: str, timeout: float = 5.0) -> Dict[str, Any]:
+    """
+    Safely send a message to a Discord channel with proper error handling.
+
+    Args:
+        channel: The Discord channel object to send the message to
+        content: The message content to send
+        timeout: Maximum time to wait for the message to be sent (in seconds)
+
+    Returns:
+        A dictionary with status information about the message send operation
+    """
+    try:
+        # Create a task to send the message
+        send_task = asyncio.create_task(channel.send(content))
+        # Wait for the task to complete with a timeout
+        sent_message = await asyncio.wait_for(send_task, timeout=timeout)
+
+        return {
+            "success": True,
+            "message": "Message sent successfully",
+            "message_id": str(sent_message.id) if hasattr(sent_message, 'id') else None
+        }
+    except asyncio.TimeoutError:
+        return {
+            "success": False,
+            "message": "Timeout sending message",
+            "error": "timeout"
+        }
+    except discord.Forbidden:
+        return {
+            "success": False,
+            "message": "Missing permissions to send message",
+            "error": "forbidden"
+        }
+    except discord.HTTPException as e:
+        return {
+            "success": False,
+            "message": f"HTTP error sending message: {e.status} {e.text}",
+            "error": "http",
+            "status": e.status,
+            "details": e.text
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error sending message: {str(e)}",
+            "error": "unknown",
+            "details": str(e)
+        }
 # ---------------------------------
 
 from api_models import (
@@ -1622,15 +1674,25 @@ async def dashboard_test_welcome_message(
                         "formatted_message": formatted_message
                     }
 
-            # Send the message
-            await channel.send(formatted_message)
-            log.info(f"Sent test welcome message to channel {welcome_channel_id} in guild {guild_id}")
+            # Send the message using our helper function
+            result = await safe_send_discord_message(channel, formatted_message)
 
-            return {
-                "message": "Test welcome message sent successfully",
-                "channel_id": welcome_channel_id_str,
-                "formatted_message": formatted_message
-            }
+            if result["success"]:
+                log.info(f"Sent test welcome message to channel {welcome_channel_id} in guild {guild_id}")
+                return {
+                    "message": "Test welcome message sent successfully",
+                    "channel_id": welcome_channel_id_str,
+                    "formatted_message": formatted_message,
+                    "message_id": result.get("message_id")
+                }
+            else:
+                log.error(f"Error sending test welcome message to channel {welcome_channel_id} in guild {guild_id}: {result['message']}")
+                return {
+                    "message": f"Test welcome message could not be sent: {result['message']}",
+                    "channel_id": welcome_channel_id_str,
+                    "formatted_message": formatted_message,
+                    "error": result.get("error")
+                }
         except ValueError:
             log.error(f"Invalid welcome channel ID '{welcome_channel_id_str}' for guild {guild_id}")
             return {
@@ -1736,15 +1798,25 @@ async def dashboard_test_goodbye_message(
                         "formatted_message": formatted_message
                     }
 
-            # Send the message
-            await channel.send(formatted_message)
-            log.info(f"Sent test goodbye message to channel {goodbye_channel_id} in guild {guild_id}")
+            # Send the message using our helper function
+            result = await safe_send_discord_message(channel, formatted_message)
 
-            return {
-                "message": "Test goodbye message sent successfully",
-                "channel_id": goodbye_channel_id_str,
-                "formatted_message": formatted_message
-            }
+            if result["success"]:
+                log.info(f"Sent test goodbye message to channel {goodbye_channel_id} in guild {guild_id}")
+                return {
+                    "message": "Test goodbye message sent successfully",
+                    "channel_id": goodbye_channel_id_str,
+                    "formatted_message": formatted_message,
+                    "message_id": result.get("message_id")
+                }
+            else:
+                log.error(f"Error sending test goodbye message to channel {goodbye_channel_id} in guild {guild_id}: {result['message']}")
+                return {
+                    "message": f"Test goodbye message could not be sent: {result['message']}",
+                    "channel_id": goodbye_channel_id_str,
+                    "formatted_message": formatted_message,
+                    "error": result.get("error")
+                }
         except ValueError:
             log.error(f"Invalid goodbye channel ID '{goodbye_channel_id_str}' for guild {guild_id}")
             return {
