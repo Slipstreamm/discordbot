@@ -57,27 +57,11 @@ function initSidebar() {
       if (href && href.startsWith('#')) {
         event.preventDefault();
 
-        // Remove active class from all nav items
-        document.querySelectorAll('.nav-item').forEach(navItem => {
-          navItem.classList.remove('active');
-        });
+        // Get the section ID from the href (remove the # symbol)
+        const sectionId = href.substring(1);
 
-        // Add active class to clicked item
-        item.classList.add('active');
-
-        // Hide all sections
-        document.querySelectorAll('.dashboard-section').forEach(section => {
-          section.style.display = 'none';
-        });
-
-        // Show the target section
-        const sectionId = item.getAttribute('data-section');
-        if (sectionId) {
-          const section = document.getElementById(sectionId);
-          if (section) {
-            section.style.display = 'block';
-          }
-        }
+        // Show the section
+        showSection(sectionId);
 
         // Close sidebar on mobile
         if (window.innerWidth <= 768 && sidebar) {
@@ -295,6 +279,39 @@ function initTabs() {
       });
     });
   });
+}
+
+/**
+ * Show a specific section of the dashboard
+ * @param {string} sectionId - The ID of the section to show
+ */
+function showSection(sectionId) {
+  // Hide all sections
+  document.querySelectorAll('.dashboard-section').forEach(section => {
+    section.style.display = 'none';
+  });
+
+  // Remove active class from all nav items
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.classList.remove('active');
+  });
+
+  // Show the selected section
+  const section = document.getElementById(`${sectionId}-section`);
+  if (section) {
+    section.style.display = 'block';
+  }
+
+  // Add active class to the corresponding nav item
+  const navItem = document.querySelector(`.nav-item[data-section="${sectionId}-section"]`);
+  if (navItem) {
+    navItem.classList.add('active');
+  }
+
+  // Load AI settings if needed
+  if (sectionId === 'ai-settings' && typeof loadAiSettings === 'function' && typeof aiSettingsLoaded !== 'undefined' && !aiSettingsLoaded) {
+    loadAiSettings();
+  }
 }
 
 /**

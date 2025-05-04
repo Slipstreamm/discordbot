@@ -534,18 +534,52 @@ async def get_global_settings(
 ):
     """Get global settings for the current user."""
     try:
-        # This would normally fetch settings from the database
-        # For now, we'll return a mock response
-        settings = GlobalSettings(
-            system_message="You are a helpful assistant.",
-            character="Kasane Teto",
-            character_info="Kasane Teto is a cheerful and energetic character.",
-            custom_instructions="Be helpful and friendly.",
-            model="gpt-4",
-            temperature=0.7,
-            max_tokens=2048
+        # Import the database module for user settings
+        try:
+            from discordbot.api_service.api_server import db
+        except ImportError:
+            from api_server import db
+
+        if not db:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
+            )
+
+        # Get user settings from the database
+        user_id = _user.get('user_id')
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User ID not found in session"
+            )
+
+        user_settings = db.get_user_settings(user_id)
+        if not user_settings:
+            # Return default settings if none exist
+            return GlobalSettings(
+                system_message="",
+                character="",
+                character_info="",
+                custom_instructions="",
+                model="openai/gpt-3.5-turbo",
+                temperature=0.7,
+                max_tokens=1000
+            )
+
+        # Convert from UserSettings to GlobalSettings
+        return GlobalSettings(
+            system_message=user_settings.get("system_message", ""),
+            character=user_settings.get("character", ""),
+            character_info=user_settings.get("character_info", ""),
+            custom_instructions=user_settings.get("custom_instructions", ""),
+            model=user_settings.get("model_id", "openai/gpt-3.5-turbo"),
+            temperature=user_settings.get("temperature", 0.7),
+            max_tokens=user_settings.get("max_tokens", 1000)
         )
-        return settings
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         log.error(f"Error getting global settings: {e}")
         raise HTTPException(
@@ -554,15 +588,59 @@ async def get_global_settings(
         )
 
 @router.post("/settings", status_code=status.HTTP_200_OK)
+@router.put("/settings", status_code=status.HTTP_200_OK)
 async def update_global_settings(
     settings: GlobalSettings,
     _user: dict = Depends(get_dashboard_user)
 ):
     """Update global settings for the current user."""
     try:
-        # This would normally update settings in the database
-        # For now, we'll just return a success message
+        # Import the database module for user settings
+        try:
+            from discordbot.api_service.api_server import db
+            from discordbot.api_service.api_models import UserSettings
+        except ImportError:
+            from api_server import db
+            from api_models import UserSettings
+
+        if not db:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
+            )
+
+        # Get user ID from session
+        user_id = _user.get('user_id')
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User ID not found in session"
+            )
+
+        # Convert from GlobalSettings to UserSettings
+        user_settings = UserSettings(
+            model_id=settings.model,
+            temperature=settings.temperature,
+            max_tokens=settings.max_tokens,
+            system_message=settings.system_message,
+            character=settings.character,
+            character_info=settings.character_info,
+            custom_instructions=settings.custom_instructions
+        )
+
+        # Save user settings to the database
+        updated_settings = db.save_user_settings(user_id, user_settings)
+        if not updated_settings:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save user settings"
+            )
+
+        log.info(f"Updated global settings for user {user_id}")
         return {"message": "Settings updated successfully"}
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         log.error(f"Error updating global settings: {e}")
         raise HTTPException(

@@ -1,0 +1,119 @@
+<!-- AI Settings Section -->
+<div id="ai-settings-section" class="dashboard-section" style="display: none;">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">AI Settings</h2>
+        </div>
+    </div>
+
+    <div id="ai-settings-form">
+        <!-- Model Settings Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Model Settings</h3>
+            </div>
+            <div class="form-group">
+                <label for="ai-model-select">AI Model:</label>
+                <select id="ai-model-select" class="w-full">
+                    <option value="openai/gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                    <option value="openai/gpt-4">GPT-4</option>
+                    <option value="anthropic/claude-3-opus">Claude 3 Opus</option>
+                    <option value="anthropic/claude-3-sonnet">Claude 3 Sonnet</option>
+                    <option value="anthropic/claude-3-haiku">Claude 3 Haiku</option>
+                    <option value="google/gemini-pro">Gemini Pro</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="ai-temperature">Temperature: <span id="temperature-value">0.7</span></label>
+                <input type="range" id="ai-temperature" min="0" max="1" step="0.1" value="0.7" class="w-full">
+            </div>
+            <div class="form-group">
+                <label for="ai-max-tokens">Max Tokens:</label>
+                <input type="number" id="ai-max-tokens" min="100" max="8000" value="1000" class="w-full">
+            </div>
+            <div class="form-group">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="ai-reasoning-enabled" name="reasoning_enabled">
+                    <label for="ai-reasoning-enabled">Enable Reasoning</label>
+                </div>
+            </div>
+            <div id="reasoning-effort-group" class="form-group" style="display: none;">
+                <label for="ai-reasoning-effort">Reasoning Effort:</label>
+                <select id="ai-reasoning-effort" class="w-full">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="ai-web-search-enabled" name="web_search_enabled">
+                    <label for="ai-web-search-enabled">Enable Web Search</label>
+                </div>
+            </div>
+            <div class="btn-group">
+                <button id="save-ai-settings-button" class="btn btn-primary">Save Model Settings</button>
+                <button id="reset-ai-settings-button" class="btn btn-warning">Reset to Defaults</button>
+            </div>
+            <p id="ai-settings-feedback" class="mt-2"></p>
+        </div>
+
+        <!-- System Prompt Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">System Prompt</h3>
+            </div>
+            <div class="form-group">
+                <label for="ai-system-prompt">System Prompt:</label>
+                <textarea id="ai-system-prompt" rows="6" class="w-full" placeholder="Enter a system prompt for the AI..."></textarea>
+            </div>
+            <div class="btn-group">
+                <button id="save-system-prompt-button" class="btn btn-primary">Save System Prompt</button>
+                <button id="reset-system-prompt-button" class="btn btn-warning">Reset to Default</button>
+            </div>
+            <p id="system-prompt-feedback" class="mt-2"></p>
+        </div>
+
+        <!-- Character Settings Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Character Settings</h3>
+            </div>
+            <div class="form-group">
+                <label for="ai-character">Character Name:</label>
+                <input type="text" id="ai-character" class="w-full" placeholder="Enter a character name...">
+            </div>
+            <div class="form-group">
+                <label for="ai-character-info">Character Information:</label>
+                <textarea id="ai-character-info" rows="6" class="w-full" placeholder="Enter character information..."></textarea>
+            </div>
+            <div class="form-group">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="ai-character-breakdown" name="character_breakdown">
+                    <label for="ai-character-breakdown">Enable Character Breakdown</label>
+                </div>
+            </div>
+            <div class="btn-group">
+                <button id="save-character-settings-button" class="btn btn-primary">Save Character Settings</button>
+                <button id="clear-character-settings-button" class="btn btn-warning">Clear Character</button>
+            </div>
+            <p id="character-settings-feedback" class="mt-2"></p>
+        </div>
+
+        <!-- Custom Instructions Card -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Custom Instructions</h3>
+            </div>
+            <div class="form-group">
+                <label for="ai-custom-instructions">Custom Instructions:</label>
+                <textarea id="ai-custom-instructions" rows="6" class="w-full" placeholder="Enter custom instructions for the AI..."></textarea>
+            </div>
+            <div class="btn-group">
+                <button id="save-custom-instructions-button" class="btn btn-primary">Save Custom Instructions</button>
+                <button id="clear-custom-instructions-button" class="btn btn-warning">Clear Instructions</button>
+            </div>
+            <p id="custom-instructions-feedback" class="mt-2"></p>
+        </div>
+    </div>
+</div>
