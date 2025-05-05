@@ -247,6 +247,47 @@ async def initialize_database():
                 );
             """)
 
+            # Starboard Settings table - Stores configuration for the starboard feature
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS starboard_settings (
+                    guild_id BIGINT PRIMARY KEY,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    star_emoji TEXT NOT NULL DEFAULT '⭐',
+                    threshold INTEGER NOT NULL DEFAULT 3,
+                    starboard_channel_id BIGINT,
+                    ignore_bots BOOLEAN NOT NULL DEFAULT TRUE,
+                    self_star BOOLEAN NOT NULL DEFAULT FALSE,
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+
+            # Starboard Entries table - Tracks which messages have been reposted to the starboard
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS starboard_entries (
+                    id SERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    original_message_id BIGINT NOT NULL,
+                    original_channel_id BIGINT NOT NULL,
+                    starboard_message_id BIGINT NOT NULL,
+                    author_id BIGINT NOT NULL,
+                    star_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    UNIQUE(guild_id, original_message_id),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+
+            # Starboard Reactions table - Tracks which users have starred which messages
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS starboard_reactions (
+                    guild_id BIGINT NOT NULL,
+                    message_id BIGINT NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    PRIMARY KEY (guild_id, message_id, user_id),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+
             # Consider adding indexes later for performance on large tables
             # await conn.execute("CREATE INDEX IF NOT EXISTS idx_guild_settings_guild ON guild_settings (guild_id);")
             # await conn.execute("CREATE INDEX IF NOT EXISTS idx_enabled_cogs_guild ON enabled_cogs (guild_id);")
@@ -254,8 +295,285 @@ async def initialize_database():
             # await conn.execute("CREATE INDEX IF NOT EXISTS idx_command_customization_guild ON command_customization (guild_id);")
             # await conn.execute("CREATE INDEX IF NOT EXISTS idx_command_group_customization_guild ON command_group_customization (guild_id);")
             # await conn.execute("CREATE INDEX IF NOT EXISTS idx_command_aliases_guild ON command_aliases (guild_id);")
+            # await conn.execute("CREATE INDEX IF NOT EXISTS idx_starboard_entries_guild ON starboard_entries (guild_id);")
+            # await conn.execute("CREATE INDEX IF NOT EXISTS idx_starboard_reactions_guild ON starboard_reactions (guild_id);")
 
     log.info("Database schema initialization complete.")
+
+
+# --- Starboard Functions ---
+
+async def get_starboard_settings(guild_id: int):
+    """Gets the starboard settings for a guild."""
+    if not pg_pool:
+        log.warning(f"PostgreSQL pool not initialized, returning None for starboard settings.")
+        return None
+
+    try:
+        async with pg_pool.acquire() as conn:
+            # Check if the guild exists in the starboard_settings table
+            settings = await conn.fetchrow(
+                """
+                SELECT * FROM starboard_settings WHERE guild_id = $1
+                """,
+                guild_id
+            )
+
+            if settings:
+                return dict(settings)
+
+            # If no settings exist, insert default settings
+            await conn.execute(
+                """
+                INSERT INTO starboard_settings (guild_id)
+                VALUES ($1)
+                ON CONFLICT (guild_id) DO NOTHING;
+                """,
+                guild_id
+            )
+
+            # Fetch the newly inserted default settings
+            settings = await conn.fetchrow(
+                """
+                SELECT * FROM starboard_settings WHERE guild_id = $1
+                """,
+                guild_id
+            )
+
+            return dict(settings) if settings else None
+    except Exception as e:
+        log.exception(f"Database error getting starboard settings for guild {guild_id}: {e}")
+        return None
+
+async def update_starboard_settings(guild_id: int, **kwargs):
+    """Updates starboard settings for a guild.
+
+    Args:
+        guild_id: The ID of the guild to update settings for
+        **kwargs: Key-value pairs of settings to update
+            Possible keys: enabled, star_emoji, threshold, starboard_channel_id, ignore_bots, self_star
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not pg_pool:
+        log.error(f"PostgreSQL pool not initialized, cannot update starboard settings.")
+        return False
+
+    valid_keys = {'enabled', 'star_emoji', 'threshold', 'starboard_channel_id', 'ignore_bots', 'self_star'}
+    update_dict = {k: v for k, v in kwargs.items() if k in valid_keys}
+
+    if not update_dict:
+        log.warning(f"No valid settings provided for starboard update for guild {guild_id}")
+        return False
+
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+
+            # Build the SET clause for the UPDATE statement
+            set_clause = ", ".join(f"{key} = ${i+2}" for i, key in enumerate(update_dict.keys()))
+            values = [guild_id] + list(update_dict.values())
+
+            # Update the settings
+            await conn.execute(
+                f"""
+                INSERT INTO starboard_settings (guild_id)
+                VALUES ($1)
+                ON CONFLICT (guild_id) DO UPDATE SET {set_clause};
+                """,
+                *values
+            )
+
+            log.info(f"Updated starboard settings for guild {guild_id}: {update_dict}")
+            return True
+    except Exception as e:
+        log.exception(f"Database error updating starboard settings for guild {guild_id}: {e}")
+        return False
+
+async def get_starboard_entry(guild_id: int, original_message_id: int):
+    """Gets a starboard entry for a specific message."""
+    if not pg_pool:
+        log.warning(f"PostgreSQL pool not initialized, returning None for starboard entry.")
+        return None
+
+    try:
+        async with pg_pool.acquire() as conn:
+            entry = await conn.fetchrow(
+                """
+                SELECT * FROM starboard_entries
+                WHERE guild_id = $1 AND original_message_id = $2
+                """,
+                guild_id, original_message_id
+            )
+
+            return dict(entry) if entry else None
+    except Exception as e:
+        log.exception(f"Database error getting starboard entry for message {original_message_id} in guild {guild_id}: {e}")
+        return None
+
+async def create_starboard_entry(guild_id: int, original_message_id: int, original_channel_id: int,
+                                starboard_message_id: int, author_id: int, star_count: int = 1):
+    """Creates a new starboard entry."""
+    if not pg_pool:
+        log.error(f"PostgreSQL pool not initialized, cannot create starboard entry.")
+        return False
+
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+
+            # Create the entry
+            await conn.execute(
+                """
+                INSERT INTO starboard_entries
+                (guild_id, original_message_id, original_channel_id, starboard_message_id, author_id, star_count)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (guild_id, original_message_id) DO NOTHING;
+                """,
+                guild_id, original_message_id, original_channel_id, starboard_message_id, author_id, star_count
+            )
+
+            log.info(f"Created starboard entry for message {original_message_id} in guild {guild_id}")
+            return True
+    except Exception as e:
+        log.exception(f"Database error creating starboard entry for message {original_message_id} in guild {guild_id}: {e}")
+        return False
+
+async def update_starboard_entry(guild_id: int, original_message_id: int, star_count: int):
+    """Updates the star count for an existing starboard entry."""
+    if not pg_pool:
+        log.error(f"PostgreSQL pool not initialized, cannot update starboard entry.")
+        return False
+
+    try:
+        async with pg_pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE starboard_entries
+                SET star_count = $3
+                WHERE guild_id = $1 AND original_message_id = $2
+                """,
+                guild_id, original_message_id, star_count
+            )
+
+            log.info(f"Updated star count to {star_count} for message {original_message_id} in guild {guild_id}")
+            return True
+    except Exception as e:
+        log.exception(f"Database error updating starboard entry for message {original_message_id} in guild {guild_id}: {e}")
+        return False
+
+async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
+    """Records a user's star reaction to a message."""
+    if not pg_pool:
+        log.error(f"PostgreSQL pool not initialized, cannot add starboard reaction.")
+        return False
+
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+
+            # Add the reaction record
+            await conn.execute(
+                """
+                INSERT INTO starboard_reactions (guild_id, message_id, user_id)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (guild_id, message_id, user_id) DO NOTHING;
+                """,
+                guild_id, message_id, user_id
+            )
+
+            # Count total reactions for this message
+            count = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM starboard_reactions
+                WHERE guild_id = $1 AND message_id = $2
+                """,
+                guild_id, message_id
+            )
+
+            return count
+    except Exception as e:
+        log.exception(f"Database error adding starboard reaction for message {message_id} in guild {guild_id}: {e}")
+        return False
+
+async def remove_starboard_reaction(guild_id: int, message_id: int, user_id: int):
+    """Removes a user's star reaction from a message."""
+    if not pg_pool:
+        log.error(f"PostgreSQL pool not initialized, cannot remove starboard reaction.")
+        return False
+
+    try:
+        async with pg_pool.acquire() as conn:
+            # Remove the reaction record
+            await conn.execute(
+                """
+                DELETE FROM starboard_reactions
+                WHERE guild_id = $1 AND message_id = $2 AND user_id = $3
+                """,
+                guild_id, message_id, user_id
+            )
+
+            # Count remaining reactions for this message
+            count = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM starboard_reactions
+                WHERE guild_id = $1 AND message_id = $2
+                """,
+                guild_id, message_id
+            )
+
+            return count
+    except Exception as e:
+        log.exception(f"Database error removing starboard reaction for message {message_id} in guild {guild_id}: {e}")
+        return False
+
+async def get_starboard_reaction_count(guild_id: int, message_id: int):
+    """Gets the count of star reactions for a message."""
+    if not pg_pool:
+        log.warning(f"PostgreSQL pool not initialized, returning 0 for starboard reaction count.")
+        return 0
+
+    try:
+        async with pg_pool.acquire() as conn:
+            count = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM starboard_reactions
+                WHERE guild_id = $1 AND message_id = $2
+                """,
+                guild_id, message_id
+            )
+
+            return count
+    except Exception as e:
+        log.exception(f"Database error getting starboard reaction count for message {message_id} in guild {guild_id}: {e}")
+        return 0
+
+async def has_user_reacted(guild_id: int, message_id: int, user_id: int):
+    """Checks if a user has already reacted to a message."""
+    if not pg_pool:
+        log.warning(f"PostgreSQL pool not initialized, returning False for user reaction check.")
+        return False
+
+    try:
+        async with pg_pool.acquire() as conn:
+            result = await conn.fetchval(
+                """
+                SELECT EXISTS(
+                    SELECT 1 FROM starboard_reactions
+                    WHERE guild_id = $1 AND message_id = $2 AND user_id = $3
+                )
+                """,
+                guild_id, message_id, user_id
+            )
+
+            return result
+    except Exception as e:
+        log.exception(f"Database error checking if user {user_id} reacted to message {message_id} in guild {guild_id}: {e}")
+        return False
 
 
 # --- Helper Functions ---
