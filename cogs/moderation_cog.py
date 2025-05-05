@@ -222,9 +222,19 @@ class FakeModerationCog(commands.Cog):
 
     @commands.command(name="mute")
     async def mute(self, ctx: commands.Context, member: discord.Member = None, duration: str = None, *, reason: str = None):
-        """Pretends to mute a member in the server."""
-        if not member:
-            await ctx.reply("Please specify a member to mute.")
+        """Pretends to mute a member in the server. Can be used by replying to a message."""
+        # Check if this is a reply to a message and no member was specified
+        if not member and ctx.message.reference:
+            # Get the message being replied to
+            replied_msg = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            member = replied_msg.author
+
+            # Don't allow muting the bot itself
+            if member.id == self.bot.user.id:
+                await ctx.reply("❌ I cannot mute myself.")
+                return
+        elif not member:
+            await ctx.reply("Please specify a member to mute or reply to their message.")
             return
 
         response = await self._fake_moderation_response("mute", member.mention, reason, duration)
@@ -232,10 +242,31 @@ class FakeModerationCog(commands.Cog):
 
     @commands.command(name="timeout")
     async def timeout(self, ctx: commands.Context, member: discord.Member = None, duration: str = None, *, reason: str = None):
-        """Pretends to timeout a member in the server."""
-        if not member:
-            await ctx.reply("Please specify a member to timeout.")
+        """Pretends to timeout a member in the server. Can be used by replying to a message."""
+        # Check if this is a reply to a message and no member was specified
+        if not member and ctx.message.reference:
+            # Get the message being replied to
+            replied_msg = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            member = replied_msg.author
+
+            # Don't allow timing out the bot itself
+            if member.id == self.bot.user.id:
+                await ctx.reply("❌ I cannot timeout myself.")
+                return
+        elif not member:
+            await ctx.reply("Please specify a member to timeout or reply to their message.")
             return
+
+        # If duration wasn't specified but we're in a reply, check if it's the first argument
+        if not duration and ctx.message.reference and len(ctx.message.content.split()) > 1:
+            # Try to extract duration from the first argument
+            potential_duration = ctx.message.content.split()[1]
+            # Simple check if it looks like a duration (contains numbers and letters)
+            if any(c.isdigit() for c in potential_duration) and any(c.isalpha() for c in potential_duration):
+                duration = potential_duration
+                # If there's more content, it's the reason
+                if len(ctx.message.content.split()) > 2:
+                    reason = ' '.join(ctx.message.content.split()[2:])
 
         response = await self._fake_moderation_response("timeout", member.mention, reason, duration)
         await ctx.reply(response)

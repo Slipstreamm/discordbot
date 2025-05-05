@@ -630,6 +630,185 @@ class ModerationCog(commands.Cog):
             logger.error(f"Error sending DM to banned user {banned_user} (ID: {banned_user.id}): {e}")
             await interaction.response.send_message(f"❌ An unexpected error occurred: {e}", ephemeral=True)
 
+    # --- Legacy Command Handlers (for prefix commands) ---
+
+    @commands.command(name="timeout")
+    async def timeout(self, ctx: commands.Context, member: discord.Member = None, duration: str = None, *, reason: str = None):
+        """Timeout a member in the server. Can be used by replying to a message."""
+        # Check if this is a reply to a message and no member was specified
+        if not member and ctx.message.reference:
+            # Get the message being replied to
+            replied_msg = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            member = replied_msg.author
+
+            # Don't allow timing out the bot itself
+            if member.id == self.bot.user.id:
+                await ctx.reply("❌ I cannot timeout myself.")
+                return
+        elif not member:
+            await ctx.reply("❌ Please specify a member to timeout or reply to their message.")
+            return
+
+        # If duration wasn't specified but we're in a reply, check if it's the first argument
+        if not duration and ctx.message.reference and len(ctx.message.content.split()) > 1:
+            # Try to extract duration from the first argument
+            potential_duration = ctx.message.content.split()[1]
+            # Simple check if it looks like a duration (contains numbers and letters)
+            if any(c.isdigit() for c in potential_duration) and any(c.isalpha() for c in potential_duration):
+                duration = potential_duration
+                # If there's more content, it's the reason
+                if len(ctx.message.content.split()) > 2:
+                    reason = ' '.join(ctx.message.content.split()[2:])
+
+        # Check if duration is specified
+        if not duration:
+            await ctx.reply("❌ Please specify a duration for the timeout (e.g., '1d', '2h', '30m', '60s').")
+            return
+
+        # Check if the user has permission to moderate members
+        if not ctx.author.guild_permissions.moderate_members:
+            await ctx.reply("❌ You don't have permission to timeout members.")
+            return
+
+        # Check if the bot has permission to moderate members
+        if not ctx.guild.me.guild_permissions.moderate_members:
+            await ctx.reply("❌ I don't have permission to timeout members.")
+            return
+
+        # Check if the user is trying to timeout themselves
+        if member.id == ctx.author.id:
+            await ctx.reply("❌ You cannot timeout yourself.")
+            return
+
+        # Check if the user is trying to timeout someone with a higher role
+        if ctx.author.top_role <= member.top_role and ctx.author.id != ctx.guild.owner_id:
+            await ctx.reply("❌ You cannot timeout someone with a higher or equal role.")
+            return
+
+        # Check if the bot can timeout the member (role hierarchy)
+        if ctx.guild.me.top_role <= member.top_role:
+            await ctx.reply("❌ I cannot timeout someone with a higher or equal role than me.")
+            return
+
+        # Parse the duration
+        delta = self._parse_duration(duration)
+        if not delta:
+            await ctx.reply("❌ Invalid duration format. Please use formats like '1d', '2h', '30m', or '60s'.")
+            return
+
+        # Check if the duration is within Discord's limits (max 28 days)
+        max_timeout = datetime.timedelta(days=28)
+        if delta > max_timeout:
+            await ctx.reply("❌ Timeout duration cannot exceed 28 days.")
+            return
+
+        # Calculate the end time
+        until = discord.utils.utcnow() + delta
+
+        # Try to send a DM to the user before timing them out
+        dm_sent = False
+        try:
+            embed = discord.Embed(
+                title="Timeout Notice",
+                description=f"You have been timed out in **{ctx.guild.name}** for {duration}",
+                color=discord.Color.gold()
+            )
+            embed.add_field(name="Reason", value=reason or "No reason provided", inline=False)
+            embed.add_field(name="Moderator", value=ctx.author.name, inline=False)
+            embed.add_field(name="Duration", value=duration, inline=False)
+            embed.add_field(name="Expires", value=f"<t:{int(until.timestamp())}:F>", inline=False)
+            embed.set_footer(text=f"Server ID: {ctx.guild.id} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+            await member.send(embed=embed)
+            dm_sent = True
+        except discord.Forbidden:
+            # User has DMs closed, ignore
+            pass
+        except Exception as e:
+            logger.error(f"Error sending timeout DM to {member} (ID: {member.id}): {e}")
+
+        # Perform the timeout
+        try:
+            await member.timeout(until, reason=reason)
+
+            # Log the action
+            logger.info(f"User {member} (ID: {member.id}) was timed out in {ctx.guild.name} (ID: {ctx.guild.id}) by {ctx.author} (ID: {ctx.author.id}) for {duration}. Reason: {reason}")
+
+            # Send confirmation message with DM status
+            dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
+            await ctx.reply(f"⏰ **Timed out {member.mention}** for {duration}! Reason: {reason or 'No reason provided'}\n{dm_status}")
+        except discord.Forbidden:
+            await ctx.reply("❌ I don't have permission to timeout this member.")
+        except discord.HTTPException as e:
+            await ctx.reply(f"❌ An error occurred while timing out the member: {e}")
+
+    @commands.command(name="removetimeout")
+    async def removetimeout(self, ctx: commands.Context, member: discord.Member = None, *, reason: str = None):
+        """Remove a timeout from a member. Can be used by replying to a message."""
+        # Check if this is a reply to a message and no member was specified
+        if not member and ctx.message.reference:
+            # Get the message being replied to
+            replied_msg = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            member = replied_msg.author
+
+            # Don't allow removing timeout from the bot itself
+            if member.id == self.bot.user.id:
+                await ctx.reply("❌ I cannot remove a timeout from myself.")
+                return
+        elif not member:
+            await ctx.reply("❌ Please specify a member to remove timeout from or reply to their message.")
+            return
+
+        # Check if the user has permission to moderate members
+        if not ctx.author.guild_permissions.moderate_members:
+            await ctx.reply("❌ You don't have permission to remove timeouts.")
+            return
+
+        # Check if the bot has permission to moderate members
+        if not ctx.guild.me.guild_permissions.moderate_members:
+            await ctx.reply("❌ I don't have permission to remove timeouts.")
+            return
+
+        # Check if the member is timed out
+        if not member.timed_out_until:
+            await ctx.reply("❌ This member is not timed out.")
+            return
+
+        # Try to send a DM to the user about the timeout removal
+        dm_sent = False
+        try:
+            embed = discord.Embed(
+                title="Timeout Removed",
+                description=f"Your timeout in **{ctx.guild.name}** has been removed",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Reason", value=reason or "No reason provided", inline=False)
+            embed.add_field(name="Moderator", value=ctx.author.name, inline=False)
+            embed.set_footer(text=f"Server ID: {ctx.guild.id} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+            await member.send(embed=embed)
+            dm_sent = True
+        except discord.Forbidden:
+            # User has DMs closed, ignore
+            pass
+        except Exception as e:
+            logger.error(f"Error sending timeout removal DM to {member} (ID: {member.id}): {e}")
+
+        # Perform the timeout removal
+        try:
+            await member.timeout(None, reason=reason)
+
+            # Log the action
+            logger.info(f"Timeout was removed from user {member} (ID: {member.id}) in {ctx.guild.name} (ID: {ctx.guild.id}) by {ctx.author} (ID: {ctx.author.id}). Reason: {reason}")
+
+            # Send confirmation message with DM status
+            dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
+            await ctx.reply(f"⏰ **Removed timeout from {member.mention}**! Reason: {reason or 'No reason provided'}\n{dm_status}")
+        except discord.Forbidden:
+            await ctx.reply("❌ I don't have permission to remove the timeout from this member.")
+        except discord.HTTPException as e:
+            await ctx.reply(f"❌ An error occurred while removing the timeout: {e}")
+
     @commands.Cog.listener()
     async def on_ready(self):
         print(f'{self.__class__.__name__} cog has been loaded.')
