@@ -12,8 +12,16 @@ async def load_all_cogs(bot: commands.Bot, skip_cogs: Optional[List[str]] = None
     loaded_cogs = []
     failed_cogs = []
 
+    print(f"Loading cogs from directory: {cogs_dir}")
+    print(f"Files in cogs directory: {os.listdir(cogs_dir)}")
+    print(f"Skipping cogs: {skip_cogs}")
+
     for filename in os.listdir(cogs_dir):
         if filename.endswith(".py") and not filename.startswith("__") and not filename.startswith("gurt") and not filename.startswith("profile_updater"):
+            # Special check for welcome_cog.py
+            if filename == "welcome_cog.py":
+                print(f"Found welcome_cog.py, attempting to load it...")
+
             cog_name = f"{cogs_dir}.{filename[:-3]}"
             if cog_name in skip_cogs:
                 print(f"Skipping AI cog: {cog_name}")

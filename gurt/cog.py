@@ -172,6 +172,12 @@ class GurtCog(commands.Cog, name="Gurt"): # Added explicit Cog name
 
         # Add listeners to the bot instance
         # We need to define the listener functions here to properly register them
+        # IMPORTANT: Don't override on_member_join or on_member_remove events
+
+        # Check if the bot already has event listeners for member join/leave
+        has_member_join = 'on_member_join' in self.bot.extra_events
+        has_member_remove = 'on_member_remove' in self.bot.extra_events
+        print(f"GurtCog: Bot already has event listeners - on_member_join: {has_member_join}, on_member_remove: {has_member_remove}")
 
         @self.bot.event
         async def on_ready():

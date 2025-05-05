@@ -1,7 +1,12 @@
 import discord
 from discord.ext import commands
 import logging
-from discordbot import settings_manager # Assuming settings_manager is accessible
+import sys
+import os
+
+# Add the parent directory to sys.path to ensure settings_manager is accessible
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import settings_manager
 
 log = logging.getLogger(__name__)
 
@@ -10,23 +15,40 @@ class WelcomeCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        print("WelcomeCog: Initializing and registering event listeners")
 
-    @commands.Cog.listener()
+        # Check existing event listeners
+        print(f"WelcomeCog: Bot event listeners before registration: {self.bot.extra_events}")
+
+        # Register event listeners
+        self.bot.add_listener(self.on_member_join, "on_member_join")
+        self.bot.add_listener(self.on_member_remove, "on_member_remove")
+
+        # Check if event listeners were registered
+        print(f"WelcomeCog: Bot event listeners after registration: {self.bot.extra_events}")
+        print("WelcomeCog: Event listeners registered")
+
     async def on_member_join(self, member: discord.Member):
         """Sends a welcome message when a new member joins."""
+        print(f"WelcomeCog: on_member_join event triggered for {member.name}")
         guild = member.guild
         if not guild:
+            print(f"WelcomeCog: Guild not found for member {member.name}")
             return
 
         log.debug(f"Member {member.name} joined guild {guild.name} ({guild.id})")
+        print(f"WelcomeCog: Member {member.name} joined guild {guild.name} ({guild.id})")
 
         # --- Fetch settings ---
+        print(f"WelcomeCog: Fetching welcome settings for guild {guild.id}")
         welcome_channel_id_str = await settings_manager.get_setting(guild.id, 'welcome_channel_id')
         welcome_message_template = await settings_manager.get_setting(guild.id, 'welcome_message', default="Welcome {user} to {server}!")
+        print(f"WelcomeCog: Retrieved settings - channel_id: {welcome_channel_id_str}, message: {welcome_message_template}")
 
         # Handle the "__NONE__" marker for potentially unset values
         if not welcome_channel_id_str or welcome_channel_id_str == "__NONE__":
             log.debug(f"Welcome channel not configured for guild {guild.id}")
+            print(f"WelcomeCog: Welcome channel not configured for guild {guild.id}")
             return
 
         try:
@@ -55,22 +77,27 @@ class WelcomeCog(commands.Cog):
         except Exception as e:
             log.exception(f"Error sending welcome message for guild {guild.id}: {e}")
 
-    @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         """Sends a goodbye message when a member leaves."""
+        print(f"WelcomeCog: on_member_remove event triggered for {member.name}")
         guild = member.guild
         if not guild:
+            print(f"WelcomeCog: Guild not found for member {member.name}")
             return
 
         log.debug(f"Member {member.name} left guild {guild.name} ({guild.id})")
+        print(f"WelcomeCog: Member {member.name} left guild {guild.name} ({guild.id})")
 
         # --- Fetch settings ---
+        print(f"WelcomeCog: Fetching goodbye settings for guild {guild.id}")
         goodbye_channel_id_str = await settings_manager.get_setting(guild.id, 'goodbye_channel_id')
         goodbye_message_template = await settings_manager.get_setting(guild.id, 'goodbye_message', default="{username} has left the server.")
+        print(f"WelcomeCog: Retrieved settings - channel_id: {goodbye_channel_id_str}, message: {goodbye_message_template}")
 
         # Handle the "__NONE__" marker
         if not goodbye_channel_id_str or goodbye_channel_id_str == "__NONE__":
             log.debug(f"Goodbye channel not configured for guild {guild.id}")
+            print(f"WelcomeCog: Goodbye channel not configured for guild {guild.id}")
             return
 
         try:
@@ -200,13 +227,19 @@ class WelcomeCog(commands.Cog):
 
 async def setup(bot: commands.Bot):
     # Ensure pools are initialized before adding the cog
+    print("WelcomeCog setup function called!")
     if settings_manager.pg_pool is None or settings_manager.redis_pool is None:
         log.warning("Settings Manager pools not initialized before loading WelcomeCog. Attempting initialization.")
+        print("WelcomeCog: Settings Manager pools not initialized, attempting initialization...")
         try:
             await settings_manager.initialize_pools()
+            print("WelcomeCog: Settings Manager pools initialized successfully.")
         except Exception as e:
             log.exception("Failed to initialize Settings Manager pools during WelcomeCog setup. Cog will not load.")
+            print(f"WelcomeCog: Failed to initialize Settings Manager pools: {e}")
             return # Prevent loading if pools fail
 
-    await bot.add_cog(WelcomeCog(bot))
+    welcome_cog = WelcomeCog(bot)
+    await bot.add_cog(welcome_cog)
+    print(f"WelcomeCog loaded! Event listeners registered: on_member_join, on_member_remove")
     log.info("WelcomeCog loaded.")

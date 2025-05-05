@@ -144,6 +144,13 @@ class WheatleyCog(commands.Cog, name="Wheatley"): # Renamed class and Cog name
              print("WARNING: Tavily API key not configured (TAVILY_API_KEY). Web search disabled.")
 
         # Add listeners to the bot instance
+        # IMPORTANT: Don't override on_member_join or on_member_remove events
+
+        # Check if the bot already has event listeners for member join/leave
+        has_member_join = 'on_member_join' in self.bot.extra_events
+        has_member_remove = 'on_member_remove' in self.bot.extra_events
+        print(f"WheatleyCog: Bot already has event listeners - on_member_join: {has_member_join}, on_member_remove: {has_member_remove}")
+
         @self.bot.event
         async def on_ready():
             await on_ready_listener(self)
