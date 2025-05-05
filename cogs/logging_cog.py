@@ -15,8 +15,35 @@ except ImportError:
 
 log = logging.getLogger(__name__) # Setup logger for this cog
 
+# Define all possible event keys for toggling
+# Keep this list updated if new loggable events are added
+ALL_EVENT_KEYS = sorted([
+    # Direct Events
+    "member_join", "member_remove", "member_ban_event", "member_unban", "member_update",
+    "role_create_event", "role_delete_event", "role_update_event",
+    "channel_create_event", "channel_delete_event", "channel_update_event",
+    "message_edit", "message_delete",
+    "reaction_add", "reaction_remove", "reaction_clear", "reaction_clear_emoji",
+    "voice_state_update",
+    "guild_update_event", "emoji_update_event",
+    "invite_create_event", "invite_delete_event",
+    "command_error", # Potentially noisy
+    "thread_create", "thread_delete", "thread_update", "thread_member_join", "thread_member_remove",
+    "webhook_update",
+    # Audit Log Actions (prefixed with 'audit_')
+    "audit_kick", "audit_prune", "audit_ban", "audit_unban",
+    "audit_member_role_update", "audit_member_update_timeout", # Specific member_update cases
+    "audit_message_delete", "audit_message_bulk_delete",
+    "audit_role_create", "audit_role_delete", "audit_role_update",
+    "audit_channel_create", "audit_channel_delete", "audit_channel_update",
+    "audit_emoji_create", "audit_emoji_delete", "audit_emoji_update",
+    "audit_invite_create", "audit_invite_delete",
+    "audit_guild_update",
+    # Add more audit keys if needed, e.g., "audit_stage_instance_create"
+])
+
 class LoggingCog(commands.Cog):
-    """Handles comprehensive server event logging via webhooks."""
+    """Handles comprehensive server event logging via webhooks with granular toggling."""
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.session: Optional[aiohttp.ClientSession] = None # Session for webhooks
@@ -120,18 +147,45 @@ class LoggingCog(commands.Cog):
         if footer:
             embed.set_footer(text=footer)
         else:
-            embed.set_footer(text=f"Bot ID: {self.bot.user.id}")
+            # Add User ID to footer if author is present and footer isn't custom
+            user_id_str = f" | User ID: {author.id}" if author else ""
+            embed.set_footer(text=f"Bot ID: {self.bot.user.id}{user_id_str}")
         return embed
 
-    # --- Setup Command ---
-    @commands.command(name="setup_logging")
-    @commands.has_permissions(administrator=True)
-    @commands.guild_only()
-    async def setup_logging(self, ctx: commands.Context, channel: discord.TextChannel):
-        """Sets up the logging webhook for the server. (Admin Only)
+    def _add_id_footer(self, embed: discord.Embed, obj: Union[discord.Member, discord.User, discord.Role, discord.abc.GuildChannel, discord.Message, discord.Invite, None] = None, obj_id: Optional[int] = None, id_name: str = "ID"):
+        """Adds an ID to the embed footer if possible."""
+        target_id = obj_id or (obj.id if obj else None)
+        if target_id:
+            existing_footer = embed.footer.text or ""
+            separator = " | " if existing_footer else ""
+            embed.set_footer(text=f"{existing_footer}{separator}{id_name}: {target_id}")
 
-        Usage: !setup_logging #your-log-channel
-        """
+    async def _check_log_enabled(self, guild_id: int, event_key: str) -> bool:
+        """Checks if logging is enabled for a specific event key in a guild."""
+        # First, check if the webhook is configured at all
+        webhook_url = await settings_manager.get_logging_webhook(guild_id)
+        if not webhook_url:
+            return False
+        # Then, check if the specific event is enabled (defaults to True if not set)
+        enabled = await settings_manager.is_log_event_enabled(guild_id, event_key, default_enabled=True)
+        # if not enabled:
+        #     log.debug(f"Logging disabled for event '{event_key}' in guild {guild_id}")
+        return enabled
+
+
+    # --- Log Command Group ---
+
+    @commands.group(name="log", invoke_without_command=True)
+    @commands.guild_only()
+    @commands.has_permissions(administrator=True)
+    async def log_group(self, ctx: commands.Context):
+        """Manages logging settings. Use subcommands like 'channel', 'toggle', 'status', 'list_keys'."""
+        await ctx.send_help(ctx.command)
+
+    @log_group.command(name="channel")
+    @commands.has_permissions(administrator=True)
+    async def log_channel(self, ctx: commands.Context, channel: discord.TextChannel):
+        """Sets the channel for logging and creates/updates the webhook. (Admin Only)"""
         guild = ctx.guild
         me = guild.me
 
@@ -202,7 +256,208 @@ class LoggingCog(commands.Cog):
                 await new_webhook.delete(reason="Failed to save URL to settings")
                 log.info(f"Deleted orphaned webhook '{new_webhook.name}' for guild {guild.id}")
             except Exception as del_e:
-                log.error(f"Failed to delete orphaned webhook '{new_webhook.name}' for guild {guild.id}: {del_e}")
+                 log.error(f"Failed to delete orphaned webhook '{new_webhook.name}' for guild {guild.id}: {del_e}")
+
+    @log_group.command(name="toggle")
+    @commands.has_permissions(administrator=True)
+    async def log_toggle(self, ctx: commands.Context, event_key: str, enabled_status: Optional[bool] = None):
+        """Toggles logging for a specific event type (on/off).
+
+        Use 'log list_keys' to see available event keys.
+        If [on|off] is not provided, the current status will be flipped.
+        Example: !log toggle message_edit off
+        Example: !log toggle audit_kick
+        """
+        guild_id = ctx.guild.id
+        event_key = event_key.lower() # Ensure case-insensitivity
+
+        if event_key not in ALL_EVENT_KEYS:
+            await ctx.send(f"❌ Invalid event key: `{event_key}`. Use `{ctx.prefix}log list_keys` to see valid keys.")
+            return
+
+        # Determine the new status
+        if enabled_status is None:
+            # Fetch current status (defaults to True if not explicitly set)
+            current_status = await settings_manager.is_log_event_enabled(guild_id, event_key, default_enabled=True)
+            new_status = not current_status
+        else:
+            new_status = enabled_status
+
+        # Save the new status
+        success = await settings_manager.set_log_event_enabled(guild_id, event_key, new_status)
+
+        if success:
+            status_str = "ENABLED" if new_status else "DISABLED"
+            await ctx.send(f"✅ Logging for event `{event_key}` is now **{status_str}**.")
+        else:
+            await ctx.send(f"❌ Failed to update setting for event `{event_key}`. Please check logs or try again.")
+
+    @log_group.command(name="status")
+    @commands.has_permissions(administrator=True)
+    async def log_status(self, ctx: commands.Context):
+        """Shows the current enabled/disabled status for all loggable events."""
+        guild_id = ctx.guild.id
+        toggles = await settings_manager.get_all_log_event_toggles(guild_id)
+
+        embed = discord.Embed(title=f"Logging Status for {ctx.guild.name}", color=discord.Color.blue())
+        lines = []
+        for key in ALL_EVENT_KEYS:
+            # Get status, defaulting to True if not explicitly in the DB/cache map
+            is_enabled = toggles.get(key, True)
+            status_emoji = "✅" if is_enabled else "❌"
+            lines.append(f"{status_emoji} `{key}`")
+
+        # Paginate if too long for one embed description
+        description = ""
+        for line in lines:
+            if len(description) + len(line) + 1 > 4000: # Embed description limit (approx)
+                embed.description = description
+                await ctx.send(embed=embed)
+                description = line + "\n" # Start new description
+                embed = discord.Embed(color=discord.Color.blue()) # New embed for continuation
+            else:
+                description += line + "\n"
+
+        if description: # Send the last embed page
+             embed.description = description.strip()
+             await ctx.send(embed=embed)
+
+
+    @log_group.command(name="list_keys")
+    async def log_list_keys(self, ctx: commands.Context):
+        """Lists all valid event keys for use with the 'log toggle' command."""
+        embed = discord.Embed(title="Available Logging Event Keys", color=discord.Color.purple())
+        keys_text = "\n".join(f"`{key}`" for key in ALL_EVENT_KEYS)
+
+        # Paginate if needed
+        if len(keys_text) > 4000:
+             parts = []
+             current_part = ""
+             for key in ALL_EVENT_KEYS:
+                 line = f"`{key}`\n"
+                 if len(current_part) + len(line) > 4000:
+                     parts.append(current_part)
+                     current_part = line
+                 else:
+                     current_part += line
+             if current_part:
+                 parts.append(current_part)
+
+             embed.description = parts[0]
+             await ctx.send(embed=embed)
+             for part in parts[1:]:
+                 await ctx.send(embed=discord.Embed(description=part, color=discord.Color.purple()))
+        else:
+             embed.description = keys_text
+             await ctx.send(embed=embed)
+
+
+    # --- Thread Events ---
+    @commands.Cog.listener()
+    async def on_thread_create(self, thread: discord.Thread):
+        guild = thread.guild
+        event_key = "thread_create"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
+        embed = self._create_log_embed(
+            title="🧵 Thread Created",
+            description=f"Thread {thread.mention} (`{thread.name}`) created in {thread.parent.mention}.",
+            color=discord.Color.dark_blue(),
+            # Creator might be available via thread.owner_id or audit log
+            footer=f"Thread ID: {thread.id} | Parent ID: {thread.parent_id}"
+        )
+        if thread.owner: # Sometimes owner isn't cached immediately
+             embed.set_author(name=str(thread.owner), icon_url=thread.owner.display_avatar.url)
+        await self._send_log_embed(guild, embed)
+
+    @commands.Cog.listener()
+    async def on_thread_delete(self, thread: discord.Thread):
+        guild = thread.guild
+        event_key = "thread_delete"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
+        embed = self._create_log_embed(
+            title="🗑️ Thread Deleted",
+            description=f"Thread `{thread.name}` deleted from {thread.parent.mention}.",
+            color=discord.Color.dark_grey(),
+            footer=f"Thread ID: {thread.id} | Parent ID: {thread.parent_id}"
+        )
+        # Audit log needed for deleter
+        await self._send_log_embed(guild, embed)
+
+    @commands.Cog.listener()
+    async def on_thread_update(self, before: discord.Thread, after: discord.Thread):
+        guild = after.guild
+        event_key = "thread_update"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
+        changes = []
+        if before.name != after.name: changes.append(f"**Name:** `{before.name}` → `{after.name}`")
+        if before.archived != after.archived: changes.append(f"**Archived:** `{before.archived}` → `{after.archived}`")
+        if before.locked != after.locked: changes.append(f"**Locked:** `{before.locked}` → `{after.locked}`")
+        if before.slowmode_delay != after.slowmode_delay: changes.append(f"**Slowmode:** `{before.slowmode_delay}s` → `{after.slowmode_delay}s`")
+        if before.auto_archive_duration != after.auto_archive_duration: changes.append(f"**Auto-Archive:** `{before.auto_archive_duration} mins` → `{after.auto_archive_duration} mins`")
+
+        if changes:
+            embed = self._create_log_embed(
+                title="📝 Thread Updated",
+                description=f"Thread {after.mention} in {after.parent.mention} updated:\n" + "\n".join(changes),
+                color=discord.Color.blue(),
+                footer=f"Thread ID: {after.id}"
+            )
+            # Audit log needed for updater
+            await self._send_log_embed(guild, embed)
+
+    @commands.Cog.listener()
+    async def on_thread_member_join(self, member: discord.ThreadMember):
+        thread = member.thread
+        guild = thread.guild
+        event_key = "thread_member_join"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
+        user = await self.bot.fetch_user(member.id) # Get user object
+        embed = self._create_log_embed(
+            title="➕ Member Joined Thread",
+            description=f"{user.mention} joined thread {thread.mention}.",
+            color=discord.Color.dark_green(),
+            author=user,
+            footer=f"Thread ID: {thread.id} | User ID: {user.id}"
+        )
+        await self._send_log_embed(guild, embed)
+
+    @commands.Cog.listener()
+    async def on_thread_member_remove(self, member: discord.ThreadMember):
+        thread = member.thread
+        guild = thread.guild
+        event_key = "thread_member_remove"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
+        user = await self.bot.fetch_user(member.id) # Get user object
+        embed = self._create_log_embed(
+            title="➖ Member Left Thread",
+            description=f"{user.mention} left thread {thread.mention}.",
+            color=discord.Color.dark_orange(),
+            author=user,
+            footer=f"Thread ID: {thread.id} | User ID: {user.id}"
+        )
+        await self._send_log_embed(guild, embed)
+
+
+    # --- Webhook Events ---
+    @commands.Cog.listener()
+    async def on_webhooks_update(self, channel: discord.abc.GuildChannel):
+        """Logs when webhooks are updated in a channel."""
+        guild = channel.guild
+        event_key = "webhook_update"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
+        embed = self._create_log_embed(
+            title="🎣 Webhooks Updated",
+            description=f"Webhooks were updated in channel {channel.mention}.\n*Audit log may contain specific details and updater.*",
+            color=discord.Color.greyple(),
+            footer=f"Channel ID: {channel.id}"
+        )
+        await self._send_log_embed(guild, embed)
 
 
     # --- Event Listeners ---
@@ -248,51 +503,72 @@ class LoggingCog(commands.Cog):
     # --- Member Events --- (Keep existing event handlers, they now use _send_log_embed)
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
+        guild = member.guild
+        event_key = "member_join"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         embed = self._create_log_embed(
             title="📥 Member Joined",
             description=f"{member.mention} ({member.id}) joined the server.",
             color=discord.Color.green(),
-            author=member,
-            footer=f"Account Created: {discord.utils.format_dt(member.created_at, style='R')}"
+            author=member
+            # Footer already includes User ID via _create_log_embed
         )
+        embed.add_field(name="Account Created", value=discord.utils.format_dt(member.created_at, style='F'), inline=False)
         await self._send_log_embed(member.guild, embed)
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
+        guild = member.guild
+        event_key = "member_remove"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         # This event doesn't tell us if it was a kick or leave. Audit log polling will handle kicks.
         # We log it as a generic "left" event here.
         embed = self._create_log_embed(
             title="📤 Member Left",
-            description=f"{member.mention} ({member.id}) left the server.",
+            description=f"{member.mention} left the server.",
             color=discord.Color.orange(),
             author=member
         )
+        self._add_id_footer(embed, member, id_name="User ID")
         await self._send_log_embed(member.guild, embed)
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: Union[discord.User, discord.Member]):
+        event_key = "member_ban_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         # Note: Ban reason isn't available directly in this event. Audit log might have it.
         embed = self._create_log_embed(
-            title="🔨 Member Banned",
-            description=f"{user.mention} ({user.id}) was banned.",
+            title="🔨 Member Banned (Event)", # Clarify this is the event, audit log has more details
+            description=f"{user.mention} was banned.\n*Audit log may contain moderator and reason.*",
             color=discord.Color.red(),
             author=user # User who was banned
         )
+        self._add_id_footer(embed, user, id_name="User ID")
         await self._send_log_embed(guild, embed)
 
     @commands.Cog.listener()
     async def on_member_unban(self, guild: discord.Guild, user: discord.User):
+        event_key = "member_unban"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         embed = self._create_log_embed(
             title="🔓 Member Unbanned",
-            description=f"{user.mention} ({user.id}) was unbanned.",
+            description=f"{user.mention} was unbanned.",
             color=discord.Color.blurple(),
             author=user # User who was unbanned
         )
+        self._add_id_footer(embed, user, id_name="User ID")
         await self._send_log_embed(guild, embed)
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         guild = after.guild
+        event_key = "member_update"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         changes = []
         # Nickname change
         if before.nick != after.nick:
@@ -315,40 +591,56 @@ class LoggingCog(commands.Cog):
 
         # TODO: Add other trackable changes like status if needed
 
+        # Add avatar change detection
+        if before.display_avatar != after.display_avatar:
+             changes.append(f"**Avatar Changed**") # URL is enough, no need to show old/new
+
         if changes:
             embed = self._create_log_embed(
                 title="👤 Member Updated",
-                description=f"{after.mention} ({after.id})\n" + "\n".join(changes),
+                description=f"{after.mention}\n" + "\n".join(changes),
                 color=discord.Color.yellow(),
                 author=after
             )
+            self._add_id_footer(embed, after, id_name="User ID")
             await self._send_log_embed(guild, embed)
 
 
     # --- Role Events ---
     @commands.Cog.listener()
     async def on_guild_role_create(self, role: discord.Role):
+        guild = role.guild
+        event_key = "role_create_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         embed = self._create_log_embed(
-            title="✨ Role Created",
-            description=f"Role {role.mention} (`{role.name}`, ID: {role.id}) was created.",
+            title="✨ Role Created (Event)",
+            description=f"Role {role.mention} (`{role.name}`) was created.\n*Audit log may contain creator.*",
             color=discord.Color.teal()
         )
-        # Audit log needed to see *who* created it
+        self._add_id_footer(embed, role, id_name="Role ID")
         await self._send_log_embed(role.guild, embed)
 
     @commands.Cog.listener()
     async def on_guild_role_delete(self, role: discord.Role):
+        guild = role.guild
+        event_key = "role_delete_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         embed = self._create_log_embed(
-            title="🗑️ Role Deleted",
-            description=f"Role `{role.name}` (ID: {role.id}) was deleted.",
+            title="🗑️ Role Deleted (Event)",
+            description=f"Role `{role.name}` was deleted.\n*Audit log may contain deleter.*",
             color=discord.Color.dark_teal()
         )
-        # Audit log needed to see *who* deleted it
+        self._add_id_footer(embed, role, id_name="Role ID")
         await self._send_log_embed(role.guild, embed)
 
     @commands.Cog.listener()
     async def on_guild_role_update(self, before: discord.Role, after: discord.Role):
         guild = after.guild
+        event_key = "role_update_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         changes = []
         if before.name != after.name:
             changes.append(f"**Name:** `{before.name}` → `{after.name}`")
@@ -365,42 +657,57 @@ class LoggingCog(commands.Cog):
             # You could compare p.name for p in before.permissions if p.value and not getattr(after.permissions, p.name) etc.
             # but it gets verbose quickly.
 
+        # Add position change
+        if before.position != after.position:
+             changes.append(f"**Position:** `{before.position}` → `{after.position}`")
+
         if changes:
             embed = self._create_log_embed(
-                title="🔧 Role Updated",
-                description=f"Role {after.mention} ({after.id})\n" + "\n".join(changes),
+                title="🔧 Role Updated (Event)",
+                description=f"Role {after.mention} updated.\n*Audit log may contain updater and specific permission changes.*\n" + "\n".join(changes),
                 color=discord.Color.blue()
             )
-            # Audit log needed to see *who* updated it
+            self._add_id_footer(embed, after, id_name="Role ID")
             await self._send_log_embed(guild, embed)
 
 
     # --- Channel Events ---
     @commands.Cog.listener()
     async def on_guild_channel_create(self, channel: discord.abc.GuildChannel):
+        guild = channel.guild
+        event_key = "channel_create_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         ch_type = str(channel.type).capitalize()
         embed = self._create_log_embed(
-            title=f"➕ {ch_type} Channel Created",
-            description=f"Channel {channel.mention} (`{channel.name}`, ID: {channel.id}) was created.",
+            title=f"➕ {ch_type} Channel Created (Event)",
+            description=f"Channel {channel.mention} (`{channel.name}`) was created.\n*Audit log may contain creator.*",
             color=discord.Color.green()
         )
-        # Audit log needed for creator
+        self._add_id_footer(embed, channel, id_name="Channel ID")
         await self._send_log_embed(channel.guild, embed)
 
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel):
+        guild = channel.guild
+        event_key = "channel_delete_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         ch_type = str(channel.type).capitalize()
         embed = self._create_log_embed(
-            title=f"➖ {ch_type} Channel Deleted",
-            description=f"Channel `{channel.name}` (ID: {channel.id}) was deleted.",
+            title=f"➖ {ch_type} Channel Deleted (Event)",
+            description=f"Channel `{channel.name}` was deleted.\n*Audit log may contain deleter.*",
             color=discord.Color.red()
         )
-        # Audit log needed for deleter
+        self._add_id_footer(embed, channel, id_name="Channel ID")
         await self._send_log_embed(channel.guild, embed)
 
     @commands.Cog.listener()
     async def on_guild_channel_update(self, before: discord.abc.GuildChannel, after: discord.abc.GuildChannel):
         guild = after.guild
+        event_key = "channel_update_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         changes = []
         ch_type = str(after.type).capitalize()
 
@@ -418,17 +725,47 @@ class LoggingCog(commands.Cog):
                  changes.append(f"**Bitrate:** `{before.bitrate}` → `{after.bitrate}`")
              if before.user_limit != after.user_limit:
                  changes.append(f"**User Limit:** `{before.user_limit}` → `{after.user_limit}`")
-        # Permission overwrites change (complex, audit log is better)
+        # Permission overwrites change
         if before.overwrites != after.overwrites:
-            changes.append("**Permissions Overwrites Updated**") # Audit log better for details
+            # Identify changes without detailing every permission bit
+            before_targets = set(before.overwrites.keys())
+            after_targets = set(after.overwrites.keys())
+            added_targets = after_targets - before_targets
+            removed_targets = before_targets - after_targets
+            updated_targets = before_targets.intersection(after_targets) # Targets present before and after
+
+            overwrite_changes = []
+            if added_targets:
+                overwrite_changes.append(f"Added overwrites for: {', '.join([f'<@{t.id}>' if isinstance(t, discord.Member) else f'<@&{t.id}>' for t in added_targets])}")
+            if removed_targets:
+                 overwrite_changes.append(f"Removed overwrites for: {', '.join([f'<@{t.id}>' if isinstance(t, discord.Member) else f'<@&{t.id}>' for t in removed_targets])}")
+            # Check if any *values* changed for targets present both before and after
+            if any(before.overwrites[t] != after.overwrites[t] for t in updated_targets):
+                 overwrite_changes.append(f"Modified overwrites for: {', '.join([f'<@{t.id}>' if isinstance(t, discord.Member) else f'<@&{t.id}>' for t in updated_targets if before.overwrites[t] != after.overwrites[t]])}")
+
+            if overwrite_changes:
+                 changes.append(f"**Permission Overwrites:**\n - " + '\n - '.join(overwrite_changes))
+            else:
+                 changes.append("**Permission Overwrites Updated** (No specific target changes detected by event)")
+
+
+        # Add position change
+        if before.position != after.position:
+             changes.append(f"**Position:** `{before.position}` → `{after.position}`")
+        # Add category change
+        if before.category != after.category:
+             before_cat = before.category.mention if before.category else 'None'
+             after_cat = after.category.mention if after.category else 'None'
+             changes.append(f"**Category:** {before_cat} → {after_cat}")
+
 
         if changes:
             embed = self._create_log_embed(
-                title=f"📝 {ch_type} Channel Updated",
-                description=f"Channel {after.mention} ({after.id})\n" + "\n".join(changes),
+                title=f"📝 {ch_type} Channel Updated (Event)",
+                description=f"Channel {after.mention} updated.\n*Audit log may contain updater and specific permission changes.*\n" + "\n".join(changes),
                 color=discord.Color.yellow()
             )
-            # Audit log needed for updater
+            self._add_id_footer(embed, after, id_name="Channel ID")
             await self._send_log_embed(guild, embed)
 
 
@@ -438,13 +775,12 @@ class LoggingCog(commands.Cog):
         # Ignore edits from bots or if content is the same (e.g., embed loading)
         if before.author.bot or before.content == after.content:
             return
-        # Ignore messages if webhook isn't configured for the guild
         guild = after.guild
-        if not guild or not await settings_manager.get_logging_webhook(guild.id):
-             return
-        # No need to check channel name anymore as we use webhooks
-
         if not guild: return # Ignore DMs
+
+        # Check if logging is enabled *after* initial checks
+        event_key = "message_edit"
+        if not await self._check_log_enabled(guild.id, event_key): return
 
         embed = self._create_log_embed(
             title="✏️ Message Edited",
@@ -453,8 +789,9 @@ class LoggingCog(commands.Cog):
             author=after.author
         )
         # Add fields for before and after, handling potential length limits
-        embed.add_field(name="Before", value=before.content[:1020] + ('...' if len(before.content) > 1020 else ''), inline=False)
-        embed.add_field(name="After", value=after.content[:1020] + ('...' if len(after.content) > 1020 else ''), inline=False)
+        embed.add_field(name="Before", value=before.content[:1020] + ('...' if len(before.content) > 1020 else '') or "`Empty Message`", inline=False)
+        embed.add_field(name="After", value=after.content[:1020] + ('...' if len(after.content) > 1020 else '') or "`Empty Message`", inline=False)
+        self._add_id_footer(embed, after, id_name="Message ID") # Add message ID
         await self._send_log_embed(guild, embed)
 
     @commands.Cog.listener()
@@ -465,13 +802,12 @@ class LoggingCog(commands.Cog):
              # Example: if message.author.id == self.bot.user.id: pass # Log bot's own deletions
              # else: return
              return
-        # Ignore messages if webhook isn't configured for the guild
         guild = message.guild
-        if not guild or not await settings_manager.get_logging_webhook(guild.id):
-             return
-        # No need to check channel name anymore
-
         if not guild: return # Ignore DMs
+
+        # Check if logging is enabled *after* initial checks
+        event_key = "message_delete"
+        if not await self._check_log_enabled(guild.id, event_key): return
 
         desc = f"Message deleted in {message.channel.mention}"
         # Audit log needed for *who* deleted it, if not the author themselves
@@ -479,15 +815,16 @@ class LoggingCog(commands.Cog):
 
         embed = self._create_log_embed(
             title="🗑️ Message Deleted",
-            description=desc,
+            description=f"{desc}\n*Audit log may contain deleter if not the author.*",
             color=discord.Color.dark_grey(),
             author=message.author
         )
         if message.content:
-            embed.add_field(name="Content", value=message.content[:1020] + ('...' if len(message.content) > 1020 else ''), inline=False)
+            embed.add_field(name="Content", value=message.content[:1020] + ('...' if len(message.content) > 1020 else '') or "`Empty Message`", inline=False)
         if message.attachments:
-            embed.add_field(name="Attachments", value=", ".join([att.filename for att in message.attachments]), inline=False)
-
+            atts = [f"[{att.filename}]({att.url})" for att in message.attachments]
+            embed.add_field(name="Attachments", value=", ".join(atts), inline=False)
+        self._add_id_footer(embed, message, id_name="Message ID") # Add message ID
         await self._send_log_embed(guild, embed)
 
 
@@ -496,68 +833,74 @@ class LoggingCog(commands.Cog):
     async def on_reaction_add(self, reaction: discord.Reaction, user: Union[discord.Member, discord.User]):
         if user.bot: return
         guild = reaction.message.guild
-        # Ignore reactions if webhook isn't configured for the guild
-        if not guild or not await settings_manager.get_logging_webhook(guild.id):
-             return
-        # No need to check channel name anymore
+        if not guild: return # Should not happen in guilds but safety check
+
+        # Check if logging is enabled *after* initial checks
+        event_key = "reaction_add"
+        if not await self._check_log_enabled(guild.id, event_key): return
 
         embed = self._create_log_embed(
             title="👍 Reaction Added",
-            description=f"{user.mention} added {reaction.emoji} to a message in {reaction.message.channel.mention} [Jump to Message]({reaction.message.jump_url})",
+            description=f"{user.mention} added {reaction.emoji} to a message by {reaction.message.author.mention} in {reaction.message.channel.mention} [Jump to Message]({reaction.message.jump_url})",
             color=discord.Color.gold(),
             author=user
         )
+        self._add_id_footer(embed, reaction.message, id_name="Message ID")
         await self._send_log_embed(guild, embed)
 
     @commands.Cog.listener()
     async def on_reaction_remove(self, reaction: discord.Reaction, user: Union[discord.Member, discord.User]):
         if user.bot: return
         guild = reaction.message.guild
-        # Ignore reactions if webhook isn't configured for the guild
-        if not guild or not await settings_manager.get_logging_webhook(guild.id):
-             return
-        # No need to check channel name anymore
+        if not guild: return # Should not happen in guilds but safety check
+
+        # Check if logging is enabled *after* initial checks
+        event_key = "reaction_remove"
+        if not await self._check_log_enabled(guild.id, event_key): return
 
         embed = self._create_log_embed(
             title="👎 Reaction Removed",
-            description=f"{user.mention} removed {reaction.emoji} from a message in {reaction.message.channel.mention} [Jump to Message]({reaction.message.jump_url})",
+            description=f"{user.mention} removed {reaction.emoji} from a message by {reaction.message.author.mention} in {reaction.message.channel.mention} [Jump to Message]({reaction.message.jump_url})",
             color=discord.Color.dark_gold(),
             author=user
         )
+        self._add_id_footer(embed, reaction.message, id_name="Message ID")
         await self._send_log_embed(guild, embed)
 
     @commands.Cog.listener()
     async def on_reaction_clear(self, message: discord.Message, reactions: list[discord.Reaction]):
         guild = message.guild
-        # Ignore reactions if webhook isn't configured for the guild
-        if not guild or not await settings_manager.get_logging_webhook(guild.id):
-             return
-        # No need to check channel name anymore
+        if not guild: return # Should not happen in guilds but safety check
+
+        # Check if logging is enabled *after* initial checks
+        event_key = "reaction_clear"
+        if not await self._check_log_enabled(guild.id, event_key): return
 
         embed = self._create_log_embed(
             title="💥 All Reactions Cleared",
-            description=f"All reactions were cleared from a message in {message.channel.mention} [Jump to Message]({message.jump_url})",
+            description=f"All reactions were cleared from a message by {message.author.mention} in {message.channel.mention} [Jump to Message]({message.jump_url})\n*Audit log may contain moderator.*",
             color=discord.Color.orange(),
             author=message.author # Usually the author or a mod clears reactions
         )
-        # Audit log needed for *who* cleared them
+        self._add_id_footer(embed, message, id_name="Message ID")
         await self._send_log_embed(guild, embed)
 
     @commands.Cog.listener()
     async def on_reaction_clear_emoji(self, reaction: discord.Reaction):
         guild = reaction.message.guild
-        # Ignore reactions if webhook isn't configured for the guild
-        if not guild or not await settings_manager.get_logging_webhook(guild.id):
-             return
-        # No need to check channel name anymore
+        if not guild: return # Should not happen in guilds but safety check
+
+        # Check if logging is enabled *after* initial checks
+        event_key = "reaction_clear_emoji"
+        if not await self._check_log_enabled(guild.id, event_key): return
 
         embed = self._create_log_embed(
             title="💥 Emoji Reactions Cleared",
-            description=f"All {reaction.emoji} reactions were cleared from a message in {reaction.message.channel.mention} [Jump to Message]({reaction.message.jump_url})",
+            description=f"All {reaction.emoji} reactions were cleared from a message by {reaction.message.author.mention} in {reaction.message.channel.mention} [Jump to Message]({reaction.message.jump_url})\n*Audit log may contain moderator.*",
             color=discord.Color.dark_orange(),
             author=reaction.message.author # Usually the author or a mod clears reactions
         )
-        # Audit log needed for *who* cleared them
+        self._add_id_footer(embed, reaction.message, id_name="Message ID")
         await self._send_log_embed(guild, embed)
 
 
@@ -565,6 +908,9 @@ class LoggingCog(commands.Cog):
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         guild = member.guild
+        event_key = "voice_state_update"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         action = ""
         details = ""
         color = discord.Color.purple()
@@ -613,16 +959,21 @@ class LoggingCog(commands.Cog):
 
         embed = self._create_log_embed(
             title=action,
-            description=f"{member.mention} ({member.id})\n{details}",
+            description=f"{member.mention}\n{details}",
             color=color,
             author=member
         )
+        self._add_id_footer(embed, member, id_name="User ID")
         await self._send_log_embed(guild, embed)
 
 
     # --- Guild/Server Events ---
     @commands.Cog.listener()
     async def on_guild_update(self, before: discord.Guild, after: discord.Guild):
+        guild = after # Use 'after' for guild ID check
+        event_key = "guild_update_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         changes = []
         if before.name != after.name:
             changes.append(f"**Name:** `{before.name}` → `{after.name}`")
@@ -646,14 +997,18 @@ class LoggingCog(commands.Cog):
         if changes:
             embed = self._create_log_embed(
                 title="⚙️ Guild Updated",
-                description="Server settings were updated:\n" + "\n".join(changes),
-                color=discord.Color.dark_purple()
-            )
-            # Audit log needed for *who* updated it
-            await self._send_log_embed(after, embed)
+            title="⚙️ Guild Updated (Event)",
+            description="Server settings were updated.\n*Audit log may contain updater.*\n" + "\n".join(changes),
+            color=discord.Color.dark_purple()
+        )
+        self._add_id_footer(embed, after, id_name="Guild ID")
+        await self._send_log_embed(after, embed)
 
     @commands.Cog.listener()
     async def on_guild_emojis_update(self, guild: discord.Guild, before: tuple[discord.Emoji, ...], after: tuple[discord.Emoji, ...]):
+        event_key = "emoji_update_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         added = [e for e in after if e not in before]
         removed = [e for e in before if e not in after]
         # Renamed detection is harder, requires comparing by ID
@@ -679,11 +1034,12 @@ class LoggingCog(commands.Cog):
         if desc:
             embed = self._create_log_embed(
                 title="😀 Emojis Updated",
-                description=desc.strip(),
-                color=discord.Color.magenta()
-            )
-            # Audit log needed for *who* updated them
-            await self._send_log_embed(guild, embed)
+            title="😀 Emojis Updated (Event)",
+            description=f"*Audit log may contain updater.*\n{desc.strip()}",
+            color=discord.Color.magenta()
+        )
+        self._add_id_footer(embed, guild, id_name="Guild ID")
+        await self._send_log_embed(guild, embed)
 
 
     # --- Invite Events ---
@@ -691,6 +1047,10 @@ class LoggingCog(commands.Cog):
     async def on_invite_create(self, invite: discord.Invite):
         guild = invite.guild
         if not guild: return
+
+        # Check if logging is enabled *after* initial checks
+        event_key = "invite_create_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
 
         inviter = invite.inviter
         channel = invite.channel
@@ -703,10 +1063,12 @@ class LoggingCog(commands.Cog):
 
         embed = self._create_log_embed(
             title="✉️ Invite Created",
-            description=desc,
+            title="✉️ Invite Created (Event)",
+            description=f"{desc}\n*Audit log may contain creator.*",
             color=discord.Color.dark_magenta(),
             author=inviter # Can be None if invite created through server settings/vanity URL
         )
+        self._add_id_footer(embed, invite, obj_id=invite.id, id_name="Invite ID") # Invite object doesn't have ID directly? Use code? No, ID exists.
         await self._send_log_embed(guild, embed)
 
     @commands.Cog.listener()
@@ -714,16 +1076,22 @@ class LoggingCog(commands.Cog):
         guild = invite.guild
         if not guild: return
 
+        # Check if logging is enabled *after* initial checks
+        event_key = "invite_delete_event"
+        if not await self._check_log_enabled(guild.id, event_key): return
+
         channel = invite.channel
         desc = f"Invite `{invite.code}` for {channel.mention if channel else 'Unknown Channel'} was deleted or expired."
 
         embed = self._create_log_embed(
             title="🗑️ Invite Deleted",
-            description=desc,
+            title="🗑️ Invite Deleted (Event)",
+            description=f"{desc}\n*Audit log may contain deleter.*",
             color=discord.Color.dark_grey()
             # Cannot reliably get inviter after deletion
         )
-        # Audit log might show who deleted it if done manually
+        # Invite object might not have ID after deletion, use code in footer?
+        embed.set_footer(text=f"Invite Code: {invite.code}")
         await self._send_log_embed(guild, embed)
 
 
@@ -748,6 +1116,10 @@ class LoggingCog(commands.Cog):
             return
         if not ctx.guild: return # Ignore DMs
 
+        # Check if logging is enabled *after* initial checks
+        event_key = "command_error"
+        if not await self._check_log_enabled(ctx.guild.id, event_key): return
+
         embed = self._create_log_embed(
             title="❌ Command Error",
             description=f"Error in command `{ctx.command.qualified_name if ctx.command else 'Unknown'}` used by {ctx.author.mention} in {ctx.channel.mention}",
@@ -770,8 +1142,11 @@ class LoggingCog(commands.Cog):
     #         color=discord.Color.dark_green(),
     #         author=ctx.author
     #     )
-    #     await self._send_log_embed(ctx.guild, embed)
+    #     if await self._check_log_enabled(ctx.guild.id, "command_completion"): # Add toggle check if uncommented
+    #         await self._send_log_embed(ctx.guild, embed)
 
+    # Note: Duplicate Thread/Webhook listeners removed below this line.
+    # The first set of definitions already includes the toggle checks.
 
     # --- Audit Log Polling Task ---
     @tasks.loop(seconds=30) # Poll every 30 seconds
@@ -813,12 +1188,25 @@ class LoggingCog(commands.Cog):
 
             relevant_actions = [
                 discord.AuditLogAction.kick,
-                discord.AuditLogAction.member_prune, # User removed via prune
-                discord.AuditLogAction.member_role_update, # Manual role changes
-                discord.AuditLogAction.message_delete, # Moderator message delete
-                discord.AuditLogAction.message_bulk_delete, # Moderator bulk delete
-                discord.AuditLogAction.member_update, # e.g. Timeout applied by mod
-                # Add other actions as needed: channel updates by mods, role updates by mods, etc.
+                discord.AuditLogAction.member_prune,
+                discord.AuditLogAction.member_role_update,
+                discord.AuditLogAction.message_delete,
+                discord.AuditLogAction.message_bulk_delete,
+                discord.AuditLogAction.member_update, # Includes timeout
+                discord.AuditLogAction.role_create,
+                discord.AuditLogAction.role_delete,
+                discord.AuditLogAction.role_update,
+                discord.AuditLogAction.channel_create,
+                discord.AuditLogAction.channel_delete,
+                discord.AuditLogAction.channel_update,
+                discord.AuditLogAction.emoji_create,
+                discord.AuditLogAction.emoji_delete,
+                discord.AuditLogAction.emoji_update,
+                discord.AuditLogAction.invite_create,
+                discord.AuditLogAction.invite_delete,
+                discord.AuditLogAction.guild_update,
+                discord.AuditLogAction.ban, # Add ban action for reason/moderator
+                discord.AuditLogAction.unban, # Add unban action for moderator
             ]
 
             latest_id_in_batch = last_id
@@ -867,19 +1255,42 @@ class LoggingCog(commands.Cog):
         if not user: # Should generally not happen for manual actions, but safeguard
             return
 
-        # --- Kick / Prune ---
-        if entry.action == discord.AuditLogAction.kick:
-            action_desc = f"{user.mention} kicked {target.mention} ({target.id})"
+        # --- Member Events (Ban, Unban, Kick, Prune) ---
+        if entry.action == discord.AuditLogAction.ban:
+            audit_event_key = "audit_ban"
+            if not await self._check_log_enabled(guild.id, audit_event_key): return
+            title = "🛡️ Audit Log: Member Banned"
+            action_desc = f"{user.mention} banned {target.mention}"
+            color = discord.Color.red()
+            # self._add_id_footer(embed, target, id_name="Target ID") # Footer set later
+        elif entry.action == discord.AuditLogAction.unban:
+            audit_event_key = "audit_unban"
+            if not await self._check_log_enabled(guild.id, audit_event_key): return
+            title = "🛡️ Audit Log: Member Unbanned"
+            action_desc = f"{user.mention} unbanned {target.mention}"
+            color = discord.Color.blurple()
+            # self._add_id_footer(embed, target, id_name="Target ID") # Footer set later
+        elif entry.action == discord.AuditLogAction.kick:
+            audit_event_key = "audit_kick"
+            if not await self._check_log_enabled(guild.id, audit_event_key): return
+            title = "🛡️ Audit Log: Member Kicked"
+            action_desc = f"{user.mention} kicked {target.mention}"
             color = discord.Color.brand_red()
+            # self._add_id_footer(embed, target, id_name="Target ID") # Footer set later
         elif entry.action == discord.AuditLogAction.member_prune:
-            # Target isn't available here, 'extra' has details
+            audit_event_key = "audit_prune"
+            if not await self._check_log_enabled(guild.id, audit_event_key): return
+            title = "🛡️ Audit Log: Member Prune"
             days = entry.extra.get('delete_member_days')
             count = entry.extra.get('members_removed')
             action_desc = f"{user.mention} pruned {count} members inactive for {days} days."
             color = discord.Color.dark_red()
+            # No specific target ID here
 
-        # --- Member Role Update ---
+        # --- Member Update (Roles, Timeout) ---
         elif entry.action == discord.AuditLogAction.member_role_update:
+            audit_event_key = "audit_member_role_update"
+            if not await self._check_log_enabled(guild.id, audit_event_key): return
             # entry.before.roles / entry.after.roles contains the role changes
             before_roles = entry.before.roles
             after_roles = entry.after.roles
@@ -892,12 +1303,14 @@ class LoggingCog(commands.Cog):
                 color = discord.Color.blue()
             else: return # Skip if no role change detected
 
-        # --- Member Update (e.g. Timeout) ---
         elif entry.action == discord.AuditLogAction.member_update:
-             # Check specifically for timeout changes
-             before_timed_out = entry.before.timed_out_until
-             after_timed_out = entry.after.timed_out_until
+             # Check for timeout changes
+             before_timed_out = getattr(entry.before, 'timed_out_until', None)
+             after_timed_out = getattr(entry.after, 'timed_out_until', None)
              if before_timed_out != after_timed_out:
+                 audit_event_key = "audit_member_update_timeout"
+                 if not await self._check_log_enabled(guild.id, audit_event_key): return
+                 title = "🛡️ Audit Log: Member Timeout Update"
                  if after_timed_out:
                      timeout_duration = discord.utils.format_dt(after_timed_out, style='R')
                      action_desc = f"{user.mention} timed out {target.mention} ({target.id}) until {timeout_duration}"
@@ -905,43 +1318,280 @@ class LoggingCog(commands.Cog):
                  else:
                      action_desc = f"{user.mention} removed timeout from {target.mention} ({target.id})"
                      color = discord.Color.green()
-             else: return # Skip other member updates for now unless needed
+                 # self._add_id_footer(embed, target, id_name="Target ID") # Footer set later
+             else:
+                 # Could log other member updates here if needed (e.g. nick changes by mods) - requires separate toggle key
+                 # log.debug(f"Unhandled member_update audit log entry by {user} on {target}")
+                 return # Skip other member updates for now
 
-        # --- Message Delete ---
+        # --- Role Events ---
+        elif entry.action == discord.AuditLogAction.role_create:
+             audit_event_key = "audit_role_create"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Role Created"
+             role = target # Target is the role
+             action_desc = f"{user.mention} created role {role.mention} (`{role.name}`)"
+             color = discord.Color.teal()
+             # self._add_id_footer(embed, role, id_name="Role ID") # Footer set later
+        elif entry.action == discord.AuditLogAction.role_delete:
+             audit_event_key = "audit_role_delete"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Role Deleted"
+             # Target is the role ID, before object has role details
+             role_name = entry.before.name
+             role_id = entry.target.id
+             action_desc = f"{user.mention} deleted role `{role_name}` ({role_id})"
+             color = discord.Color.dark_teal()
+             # self._add_id_footer(embed, obj_id=role_id, id_name="Role ID") # Footer set later
+        elif entry.action == discord.AuditLogAction.role_update:
+             audit_event_key = "audit_role_update"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Role Updated"
+             role = target
+             changes = []
+             # Simple diffing for common properties
+             if entry.before.name != entry.after.name: changes.append(f"Name: `{entry.before.name}` → `{entry.after.name}`")
+             if entry.before.color != entry.after.color: changes.append(f"Color: `{entry.before.color}` → `{entry.after.color}`")
+             if entry.before.hoist != entry.after.hoist: changes.append(f"Hoisted: `{entry.before.hoist}` → `{entry.after.hoist}`")
+             if entry.before.mentionable != entry.after.mentionable: changes.append(f"Mentionable: `{entry.before.mentionable}` → `{entry.after.mentionable}`")
+             if entry.before.permissions != entry.after.permissions: changes.append("Permissions Updated (See Audit Log for details)") # Permissions are complex
+             if changes:
+                 action_desc = f"{user.mention} updated role {role.mention} ({role.id}):\n" + "\n".join(f"- {c}" for c in changes)
+                 color = discord.Color.blue()
+                 # self._add_id_footer(embed, role, id_name="Role ID") # Footer set later
+             else:
+                 # log.debug(f"Role update detected for {role.id} but no tracked changes found.") # Might still want to log permission changes even if other props are same
+                 return # Skip if no changes we track were made
+
+        # --- Channel Events ---
+        elif entry.action == discord.AuditLogAction.channel_create:
+             audit_event_key = "audit_channel_create"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Channel Created"
+             channel = target
+             ch_type = str(channel.type).capitalize()
+             action_desc = f"{user.mention} created {ch_type} channel {channel.mention} (`{channel.name}`)"
+             color = discord.Color.green()
+             # self._add_id_footer(embed, channel, id_name="Channel ID") # Footer set later
+        elif entry.action == discord.AuditLogAction.channel_delete:
+             audit_event_key = "audit_channel_delete"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Channel Deleted"
+             # Target is channel ID, before object has details
+             channel_name = entry.before.name
+             channel_id = entry.target.id
+             ch_type = str(entry.before.type).capitalize()
+             action_desc = f"{user.mention} deleted {ch_type} channel `{channel_name}` ({channel_id})"
+             color = discord.Color.red()
+             # self._add_id_footer(embed, obj_id=channel_id, id_name="Channel ID") # Footer set later
+        elif entry.action == discord.AuditLogAction.channel_update:
+             audit_event_key = "audit_channel_update"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Channel Updated"
+             channel = target
+             ch_type = str(channel.type).capitalize()
+             changes = []
+             # Simple diffing
+             if entry.before.name != entry.after.name: changes.append(f"Name: `{entry.before.name}` → `{entry.after.name}`")
+             if hasattr(entry.before, 'topic') and entry.before.topic != entry.after.topic: changes.append(f"Topic Changed") # Keep it simple
+             if hasattr(entry.before, 'nsfw') and entry.before.nsfw != entry.after.nsfw: changes.append(f"NSFW: `{entry.before.nsfw}` → `{entry.after.nsfw}`")
+             if hasattr(entry.before, 'slowmode_delay') and entry.before.slowmode_delay != entry.after.slowmode_delay: changes.append(f"Slowmode: `{entry.before.slowmode_delay}s` → `{entry.after.slowmode_delay}s`")
+             if hasattr(entry.before, 'bitrate') and entry.before.bitrate != entry.after.bitrate: changes.append(f"Bitrate: `{entry.before.bitrate}` → `{entry.after.bitrate}`")
+             # Process detailed changes from entry.changes
+             detailed_changes = []
+             for change in entry.changes:
+                 attr = change.attribute
+                 before_val = change.before
+                 after_val = change.after
+                 if attr == 'name': detailed_changes.append(f"Name: `{before_val}` → `{after_val}`")
+                 elif attr == 'topic': detailed_changes.append(f"Topic: `{before_val or 'None'}` → `{after_val or 'None'}`")
+                 elif attr == 'nsfw': detailed_changes.append(f"NSFW: `{before_val}` → `{after_val}`")
+                 elif attr == 'slowmode_delay': detailed_changes.append(f"Slowmode: `{before_val}s` → `{after_val}s`")
+                 elif attr == 'bitrate': detailed_changes.append(f"Bitrate: `{before_val}` → `{after_val}`")
+                 elif attr == 'user_limit': detailed_changes.append(f"User Limit: `{before_val}` → `{after_val}`")
+                 elif attr == 'position': detailed_changes.append(f"Position: `{before_val}` → `{after_val}`")
+                 elif attr == 'category': detailed_changes.append(f"Category: {getattr(before_val, 'mention', 'None')} → {getattr(after_val, 'mention', 'None')}")
+                 elif attr == 'permission_overwrites':
+                     # Audit log gives overwrite target ID and type directly in the change object
+                     ow_target_id = getattr(change.target, 'id', None) # Target of the overwrite change
+                     ow_target_type = getattr(change.target, 'type', None) # 'role' or 'member'
+                     if ow_target_id and ow_target_type:
+                         target_mention = f"<@&{ow_target_id}>" if ow_target_type == 'role' else f"<@{ow_target_id}>"
+                         # Determine if added, removed, or updated (before/after values are PermissionOverwrite objects)
+                         if before_val is None and after_val is not None:
+                             detailed_changes.append(f"Added overwrite for {target_mention}")
+                         elif before_val is not None and after_val is None:
+                             detailed_changes.append(f"Removed overwrite for {target_mention}")
+                         else:
+                             detailed_changes.append(f"Updated overwrite for {target_mention}")
+                     else:
+                          detailed_changes.append("Permission Overwrites Updated (Target details unavailable)") # Fallback
+                 else:
+                     # Log other unhandled changes generically
+                     detailed_changes.append(f"{attr.replace('_', ' ').title()} changed: `{before_val}` → `{after_val}`")
+
+             if detailed_changes:
+                 action_desc = f"{user.mention} updated {ch_type} channel {channel.mention} ({channel.id}):\n" + "\n".join(f"- {c}" for c in detailed_changes)
+                 color = discord.Color.yellow()
+                 # self._add_id_footer(embed, channel, id_name="Channel ID") # Footer set later
+             else:
+                 # log.debug(f"Channel update detected for {channel.id} but no tracked changes found.") # Might still want to log permission changes
+                 return # Skip if no changes we track were made
+
+        # --- Message Events (Delete, Bulk Delete) ---
         elif entry.action == discord.AuditLogAction.message_delete:
+            audit_event_key = "audit_message_delete"
+            if not await self._check_log_enabled(guild.id, audit_event_key): return
+            title = "🛡️ Audit Log: Message Deleted" # Title adjusted for clarity
             channel = entry.extra.channel
             count = entry.extra.count
             action_desc = f"{user.mention} deleted {count} message(s) by {target.mention} ({target.id}) in {channel.mention}"
             color = discord.Color.dark_grey()
 
-        # --- Message Bulk Delete ---
         elif entry.action == discord.AuditLogAction.message_bulk_delete:
+             audit_event_key = "audit_message_bulk_delete"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Message Bulk Delete"
              channel = entry.target # Channel is the target here
              count = entry.extra.count
              action_desc = f"{user.mention} bulk deleted {count} messages in {channel.mention}"
              color = discord.Color.dark_grey()
+             # self._add_id_footer(embed, channel, id_name="Channel ID") # Footer set later
 
-        # --- Add other relevant actions here ---
-        # e.g., channel create/delete/update by mod, role create/delete/update by mod
+        # --- Emoji Events ---
+        elif entry.action == discord.AuditLogAction.emoji_create:
+             audit_event_key = "audit_emoji_create"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Emoji Created"
+             emoji = target
+             action_desc = f"{user.mention} created emoji {emoji} (`{emoji.name}`)"
+             color = discord.Color.magenta()
+             # self._add_id_footer(embed, emoji, id_name="Emoji ID") # Footer set later
+        elif entry.action == discord.AuditLogAction.emoji_delete:
+             audit_event_key = "audit_emoji_delete"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Emoji Deleted"
+             emoji_name = entry.before.name
+             emoji_id = entry.target.id
+             action_desc = f"{user.mention} deleted emoji `{emoji_name}` ({emoji_id})"
+             color = discord.Color.dark_magenta()
+             # self._add_id_footer(embed, obj_id=emoji_id, id_name="Emoji ID") # Footer set later
+        elif entry.action == discord.AuditLogAction.emoji_update:
+             audit_event_key = "audit_emoji_update"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Emoji Updated"
+             emoji = target
+             if entry.before.name != entry.after.name:
+                 action_desc = f"{user.mention} renamed emoji `{entry.before.name}` to {emoji} (`{emoji.name}`)"
+                 color = discord.Color.magenta()
+                 # self._add_id_footer(embed, emoji, id_name="Emoji ID") # Footer set later
+             else:
+                 # log.debug(f"Emoji update detected for {emoji.id} but no tracked changes found.") # Only log name changes for now
+                 return # Only log name changes for now
+
+        # --- Invite Events ---
+        elif entry.action == discord.AuditLogAction.invite_create:
+             audit_event_key = "audit_invite_create"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Invite Created"
+             invite = target # Target is the invite object
+             channel = invite.channel
+             desc = f"Invite `{invite.code}` created for {channel.mention if channel else 'Unknown Channel'}"
+             if invite.max_age:
+                 expires_at = invite.created_at + datetime.timedelta(seconds=invite.max_age)
+                 desc += f"\nExpires: {discord.utils.format_dt(expires_at, style='R')}"
+             if invite.max_uses: desc += f"\nMax Uses: {invite.max_uses}"
+             action_desc = f"{user.mention} created an invite:\n{desc}"
+             color = discord.Color.dark_green()
+             # self._add_id_footer(embed, invite, obj_id=invite.id, id_name="Invite ID") # Footer set later
+        elif entry.action == discord.AuditLogAction.invite_delete:
+             audit_event_key = "audit_invite_delete"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Invite Deleted"
+             # Target is invite ID, before object has details
+             invite_code = entry.before.code
+             channel_id = entry.before.channel_id
+             channel_mention = f"<#{channel_id}>" if channel_id else "Unknown Channel"
+             action_desc = f"{user.mention} deleted invite `{invite_code}` for channel {channel_mention}"
+             color = discord.Color.dark_red()
+             # Cannot get invite ID after deletion easily, use code in footer later
+
+        # --- Guild Update ---
+        elif entry.action == discord.AuditLogAction.guild_update:
+             audit_event_key = "audit_guild_update"
+             if not await self._check_log_enabled(guild.id, audit_event_key): return
+             title = "🛡️ Audit Log: Guild Updated"
+             changes = []
+             # Diffing guild properties
+             if entry.before.name != entry.after.name: changes.append(f"Name: `{entry.before.name}` → `{entry.after.name}`")
+             if entry.before.description != entry.after.description: changes.append(f"Description Changed")
+             if entry.before.icon != entry.after.icon: changes.append(f"Icon Changed")
+             if entry.before.banner != entry.after.banner: changes.append(f"Banner Changed")
+             if entry.before.owner != entry.after.owner: changes.append(f"Owner: {entry.before.owner.mention if entry.before.owner else 'None'} → {entry.after.owner.mention if entry.after.owner else 'None'}")
+             if entry.before.verification_level != entry.after.verification_level: changes.append(f"Verification Level: `{entry.before.verification_level}` → `{entry.after.verification_level}`")
+             if entry.before.explicit_content_filter != entry.after.explicit_content_filter: changes.append(f"Explicit Content Filter: `{entry.before.explicit_content_filter}` → `{entry.after.explicit_content_filter}`")
+             if entry.before.system_channel != entry.after.system_channel: changes.append(f"System Channel Changed")
+             # Add more properties as needed
+
+             if changes:
+                 action_desc = f"{user.mention} updated server settings:\n" + "\n".join(f"- {c}" for c in changes)
+                 color = discord.Color.dark_purple()
+                 # self._add_id_footer(embed, guild, id_name="Guild ID") # Footer set later
+             else:
+                 # log.debug(f"Guild update detected for {guild.id} but no tracked changes found.") # Might still want to log feature changes etc.
+                 return # Skip if no changes we track were made
 
         else:
-            # Action is relevant but not specifically handled yet
+            # Action is in relevant_actions but not specifically handled above
+            log.warning(f"Audit log action '{entry.action}' is relevant but not explicitly handled in _process_audit_log_entry.")
+            # Generic fallback log
+            title = f"🛡️ Audit Log: {str(entry.action).replace('_', ' ').title()}"
+            # Determine the generic audit key based on the action category if possible
+            generic_audit_key = f"audit_{str(entry.action).split('.')[0]}" # e.g., audit_member, audit_channel
+            if generic_audit_key in ALL_EVENT_KEYS:
+                 if not await self._check_log_enabled(guild.id, generic_audit_key): return
+            else:
+                 log.warning(f"No specific or generic toggle key found for unhandled audit action '{entry.action}'. Logging anyway.")
+                 # Or decide to return here if you only want explicitly toggled events logged
+
+            title = f"🛡️ Audit Log: {str(entry.action).replace('_', ' ').title()}"
             action_desc = f"{user.mention} performed action `{entry.action}`"
-            if target: action_desc += f" on {target.mention if hasattr(target, 'mention') else target}"
+            if target:
+                target_mention = getattr(target, 'mention', str(target))
+                action_desc += f" on {target_mention}"
+                # self._add_id_footer(embed, target, id_name="Target ID") # Footer set later
+            color = discord.Color.light_grey()
 
 
-        if not action_desc: # If no description was generated, skip logging
+        if not action_desc: # If no description was generated (e.g., skipped update), skip logging
+             # log.debug(f"Skipping audit log entry {entry.id} (action: {entry.action}) as no action description was generated.")
              return
 
+        # Create the embed (title is set within the if/elif blocks now)
         embed = self._create_log_embed(
             title=title,
-            description=action_desc,
+            description=action_desc.strip(),
             color=color,
-            author=user # The moderator/actor
+            author=user # The moderator/actor is the author of the log entry
         )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
-        embed.set_footer(text=f"Audit Log Entry ID: {entry.id}")
+            embed.add_field(name="Reason", value=reason[:1024], inline=False) # Limit reason length
+
+        # Add relevant IDs to footer (target ID if available, otherwise just mod/entry ID)
+        target_id_str = ""
+        if target:
+            target_id_str = f" | Target ID: {target.id}"
+        elif entry.action == discord.AuditLogAction.role_delete:
+             target_id_str = f" | Role ID: {entry.target.id}" # Get ID from target even if object deleted
+        elif entry.action == discord.AuditLogAction.channel_delete:
+             target_id_str = f" | Channel ID: {entry.target.id}"
+        elif entry.action == discord.AuditLogAction.emoji_delete:
+             target_id_str = f" | Emoji ID: {entry.target.id}"
+        elif entry.action == discord.AuditLogAction.invite_delete:
+             target_id_str = f" | Invite Code: {entry.before.code}" # Use code for deleted invites
+
+        embed.set_footer(text=f"Audit Log Entry ID: {entry.id} | Moderator ID: {user.id}{target_id_str}")
+
 
         await self._send_log_embed(guild, embed)
 

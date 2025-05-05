@@ -288,6 +288,17 @@ async def initialize_database():
                 );
             """)
 
+            # Logging Event Toggles table - Stores enabled/disabled state per event type
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS logging_event_toggles (
+                    guild_id BIGINT NOT NULL,
+                    event_key TEXT NOT NULL, -- e.g., 'member_join', 'audit_kick'
+                    enabled BOOLEAN NOT NULL,
+                    PRIMARY KEY (guild_id, event_key),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+
             # Consider adding indexes later for performance on large tables
             # await conn.execute("CREATE INDEX IF NOT EXISTS idx_guild_settings_guild ON guild_settings (guild_id);")
             # await conn.execute("CREATE INDEX IF NOT EXISTS idx_enabled_cogs_guild ON enabled_cogs (guild_id);")
@@ -1488,6 +1499,155 @@ async def set_logging_webhook(guild_id: int, webhook_url: str | None) -> bool:
     else:
         log.error(f"Failed to set logging webhook for guild {guild_id}")
     return success
+
+
+# --- Logging Event Toggle Functions ---
+
+def _get_log_toggle_cache_key(guild_id: int) -> str:
+    """Generates the Redis Hash key for logging toggles."""
+    return f"guild:{guild_id}:log_toggles"
+
+async def get_all_log_event_toggles(guild_id: int) -> Dict[str, bool]:
+    """Gets all logging event toggle settings for a guild, checking cache first."""
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, cannot get log toggles for guild {guild_id}.")
+        return {}
+
+    cache_key = _get_log_toggle_cache_key(guild_id)
+    toggles = {}
+
+    # Try cache first
+    try:
+        cached_toggles = await asyncio.wait_for(redis_pool.hgetall(cache_key), timeout=2.0)
+        if cached_toggles:
+            log.debug(f"Cache hit for log toggles (Guild: {guild_id})")
+            # Convert string bools back to boolean
+            return {key: value == 'True' for key, value in cached_toggles.items()}
+    except asyncio.TimeoutError:
+        log.warning(f"Redis timeout getting log toggles for guild {guild_id}, falling back to database")
+    except Exception as e:
+        log.exception(f"Redis error getting log toggles for guild {guild_id}: {e}")
+
+    # Cache miss or error, get from DB
+    log.debug(f"Cache miss for log toggles (Guild: {guild_id})")
+    try:
+        async with pg_pool.acquire() as conn:
+            records = await conn.fetch(
+                "SELECT event_key, enabled FROM logging_event_toggles WHERE guild_id = $1",
+                guild_id
+            )
+        toggles = {record['event_key']: record['enabled'] for record in records}
+
+        # Cache the result (even if empty)
+        try:
+            # Convert boolean values to strings for Redis Hash
+            toggles_to_cache = {key: str(value) for key, value in toggles.items()}
+            if toggles_to_cache: # Only set if there are toggles, otherwise cache remains empty
+                async with redis_pool.pipeline(transaction=True) as pipe:
+                    pipe.delete(cache_key) # Clear potentially stale data
+                    pipe.hset(cache_key, mapping=toggles_to_cache)
+                    pipe.expire(cache_key, 3600) # Cache for 1 hour
+                    await pipe.execute()
+            else:
+                # If DB is empty, ensure cache is also empty (or set a placeholder if needed)
+                 await redis_pool.delete(cache_key)
+
+        except Exception as e:
+            log.exception(f"Redis error setting cache for log toggles (Guild: {guild_id}): {e}")
+
+        return toggles
+    except Exception as e:
+        log.exception(f"Database error getting log toggles for guild {guild_id}: {e}")
+        return {} # Return empty on DB error
+
+async def is_log_event_enabled(guild_id: int, event_key: str, default_enabled: bool = True) -> bool:
+    """Checks if a specific logging event is enabled for a guild."""
+    if not pg_pool or not redis_pool:
+        log.warning(f"Pools not initialized, returning default for log event '{event_key}'.")
+        return default_enabled
+
+    cache_key = _get_log_toggle_cache_key(guild_id)
+
+    # Try cache first
+    try:
+        cached_value = await asyncio.wait_for(redis_pool.hget(cache_key, event_key), timeout=2.0)
+        if cached_value is not None:
+            # log.debug(f"Cache hit for log event '{event_key}' status (Guild: {guild_id})")
+            return cached_value == 'True'
+        else:
+            # Field doesn't exist in cache, check DB (might not be explicitly set)
+            pass # Fall through to DB check
+    except asyncio.TimeoutError:
+        log.warning(f"Redis timeout getting log event '{event_key}' for guild {guild_id}, falling back to database")
+    except Exception as e:
+        log.exception(f"Redis error getting log event '{event_key}' for guild {guild_id}: {e}")
+
+    # Cache miss or error, get from DB
+    # log.debug(f"Cache miss for log event '{event_key}' (Guild: {guild_id})")
+    db_enabled_status = None
+    try:
+        async with pg_pool.acquire() as conn:
+            db_enabled_status = await conn.fetchval(
+                "SELECT enabled FROM logging_event_toggles WHERE guild_id = $1 AND event_key = $2",
+                guild_id, event_key
+            )
+
+        final_status = db_enabled_status if db_enabled_status is not None else default_enabled
+
+        # Cache the specific result (only if fetched from DB)
+        if db_enabled_status is not None: # Only cache if it was explicitly set in DB
+            try:
+                await asyncio.wait_for(
+                    redis_pool.hset(cache_key, event_key, str(final_status)),
+                    timeout=2.0
+                )
+                # Ensure the hash key itself has an expiry
+                await redis_pool.expire(cache_key, 3600, nx=True) # Set expiry only if it doesn't exist
+            except asyncio.TimeoutError:
+                 log.warning(f"Redis timeout setting cache for log event '{event_key}' (Guild: {guild_id})")
+            except Exception as e:
+                log.exception(f"Redis error setting cache for log event '{event_key}' (Guild: {guild_id}): {e}")
+
+        return final_status
+    except Exception as e:
+        log.exception(f"Database error getting log event '{event_key}' for guild {guild_id}: {e}")
+        return default_enabled # Fallback on DB error
+
+async def set_log_event_enabled(guild_id: int, event_key: str, enabled: bool) -> bool:
+    """Sets the enabled status for a specific logging event type."""
+    if not pg_pool or not redis_pool:
+        log.error(f"Pools not initialized, cannot set log event '{event_key}'.")
+        return False
+
+    cache_key = _get_log_toggle_cache_key(guild_id)
+    try:
+        async with pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            # Upsert the toggle status
+            await conn.execute(
+                """
+                INSERT INTO logging_event_toggles (guild_id, event_key, enabled)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (guild_id, event_key) DO UPDATE SET enabled = $3;
+                """,
+                guild_id, event_key, enabled
+            )
+
+        # Update cache
+        await redis_pool.hset(cache_key, event_key, str(enabled))
+        # Ensure the hash key itself has an expiry
+        await redis_pool.expire(cache_key, 3600, nx=True) # Set expiry only if it doesn't exist
+        log.info(f"Set log event '{event_key}' enabled status to {enabled} for guild {guild_id}")
+        return True
+    except Exception as e:
+        log.exception(f"Database or Redis error setting log event '{event_key}' in guild {guild_id}: {e}")
+        # Attempt to invalidate cache field on error
+        try:
+            await redis_pool.hdel(cache_key, event_key)
+        except Exception as redis_err:
+             log.exception(f"Failed to invalidate Redis cache field for log event '{event_key}' (Guild: {guild_id}): {redis_err}")
+        return False
 
 
 # --- Bot Guild Information ---
