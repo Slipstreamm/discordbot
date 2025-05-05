@@ -25,6 +25,7 @@ class StarboardCog(commands.Cog):
         self.bot = bot
         self.emoji_pattern = re.compile(r'<a?:.+?:\d+>|[\U00010000-\U0010ffff]')
         self.pending_updates = {}  # Store message IDs that are being processed to prevent race conditions
+        self.lock = asyncio.Lock()  # Global lock for database operations
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload):
@@ -94,46 +95,97 @@ class StarboardCog(commands.Cog):
         # Acquire lock for this message to prevent race conditions
         message_key = f"{payload.guild_id}:{payload.message_id}"
         if message_key in self.pending_updates:
+            log.debug(f"Skipping concurrent update for message {payload.message_id} in guild {payload.guild_id}")
             return
 
         self.pending_updates[message_key] = True
         try:
-            # Get the message
-            try:
-                message = await source_channel.fetch_message(payload.message_id)
-            except discord.NotFound:
-                return
-            except discord.HTTPException as e:
-                log.error(f"Error fetching message {payload.message_id}: {e}")
+            # Get the message with retry logic
+            message = None
+            retry_attempts = 3
+            for attempt in range(retry_attempts):
+                try:
+                    message = await source_channel.fetch_message(payload.message_id)
+                    break
+                except discord.NotFound:
+                    log.warning(f"Message {payload.message_id} not found in channel {source_channel.id}")
+                    return
+                except discord.HTTPException as e:
+                    if attempt < retry_attempts - 1:
+                        log.warning(f"Error fetching message {payload.message_id}, attempt {attempt+1}/{retry_attempts}: {e}")
+                        await asyncio.sleep(1)  # Wait before retrying
+                    else:
+                        log.error(f"Failed to fetch message {payload.message_id} after {retry_attempts} attempts: {e}")
+                        return
+
+            if not message:
+                log.error(f"Could not retrieve message {payload.message_id} after multiple attempts")
                 return
 
             # Check if message is from a bot and if we should ignore bot messages
             if message.author.bot and settings.get('ignore_bots', True):
+                log.debug(f"Ignoring bot message {message.id} from {message.author.name}")
                 return
 
             # Check if the user is starring their own message and if that's allowed
             if is_add and payload.user_id == message.author.id and not settings.get('self_star', False):
+                log.debug(f"User {payload.user_id} attempted to star their own message {message.id}, but self-starring is disabled")
                 return
 
-            # Update the reaction in the database
-            if is_add:
-                star_count = await settings_manager.add_starboard_reaction(
-                    guild.id, message.id, payload.user_id
-                )
-            else:
-                star_count = await settings_manager.remove_starboard_reaction(
-                    guild.id, message.id, payload.user_id
-                )
+            # Update the reaction in the database with retry logic
+            star_count = None
+            retry_attempts = 3
+            for attempt in range(retry_attempts):
+                try:
+                    if is_add:
+                        star_count = await settings_manager.add_starboard_reaction(
+                            guild.id, message.id, payload.user_id
+                        )
+                    else:
+                        star_count = await settings_manager.remove_starboard_reaction(
+                            guild.id, message.id, payload.user_id
+                        )
 
-            # If we couldn't get a valid count, fetch it directly
+                    # If we got a valid count, break out of the retry loop
+                    if isinstance(star_count, int):
+                        break
+
+                    # If we couldn't get a valid count, try to fetch it directly
+                    star_count = await settings_manager.get_starboard_reaction_count(guild.id, message.id)
+                    if isinstance(star_count, int):
+                        break
+
+                except Exception as e:
+                    if attempt < retry_attempts - 1:
+                        log.warning(f"Error updating reaction for message {message.id}, attempt {attempt+1}/{retry_attempts}: {e}")
+                        await asyncio.sleep(1)  # Wait before retrying
+                    else:
+                        log.error(f"Failed to update reaction for message {message.id} after {retry_attempts} attempts: {e}")
+                        return
+
             if not isinstance(star_count, int):
-                star_count = await settings_manager.get_starboard_reaction_count(guild.id, message.id)
+                log.error(f"Could not get valid star count for message {message.id}")
+                return
+
+            log.info(f"Message {message.id} in guild {guild.id} now has {star_count} stars (action: {'add' if is_add else 'remove'})")
 
             # Get the threshold from settings
             threshold = settings.get('threshold', 3)
 
             # Check if this message is already in the starboard
-            entry = await settings_manager.get_starboard_entry(guild.id, message.id)
+            entry = None
+            retry_attempts = 3
+            for attempt in range(retry_attempts):
+                try:
+                    entry = await settings_manager.get_starboard_entry(guild.id, message.id)
+                    break
+                except Exception as e:
+                    if attempt < retry_attempts - 1:
+                        log.warning(f"Error getting starboard entry for message {message.id}, attempt {attempt+1}/{retry_attempts}: {e}")
+                        await asyncio.sleep(1)  # Wait before retrying
+                    else:
+                        log.error(f"Failed to get starboard entry for message {message.id} after {retry_attempts} attempts: {e}")
+                        # Continue with entry=None, which will create a new entry if needed
 
             if star_count >= threshold:
                 # Message should be in starboard
@@ -143,40 +195,50 @@ class StarboardCog(commands.Cog):
                         starboard_message = await starboard_channel.fetch_message(entry.get('starboard_message_id'))
                         await self._update_starboard_message(starboard_message, message, star_count)
                         await settings_manager.update_starboard_entry(guild.id, message.id, star_count)
+                        log.info(f"Updated starboard message {starboard_message.id} for original message {message.id}")
                     except discord.NotFound:
                         # Starboard message was deleted, create a new one
+                        log.warning(f"Starboard message {entry.get('starboard_message_id')} was deleted, creating a new one")
                         starboard_message = await self._create_starboard_message(starboard_channel, message, star_count)
                         if starboard_message:
                             await settings_manager.create_starboard_entry(
                                 guild.id, message.id, source_channel.id,
                                 starboard_message.id, message.author.id, star_count
                             )
+                            log.info(f"Created new starboard message {starboard_message.id} for original message {message.id}")
                     except discord.HTTPException as e:
-                        log.error(f"Error updating starboard message: {e}")
+                        log.error(f"Error updating starboard message for {message.id}: {e}")
                 else:
                     # Create new entry
+                    log.info(f"Creating new starboard entry for message {message.id} with {star_count} stars")
                     starboard_message = await self._create_starboard_message(starboard_channel, message, star_count)
                     if starboard_message:
                         await settings_manager.create_starboard_entry(
                             guild.id, message.id, source_channel.id,
                             starboard_message.id, message.author.id, star_count
                         )
+                        log.info(f"Created starboard message {starboard_message.id} for original message {message.id}")
             elif entry:
                 # Message is below threshold but exists in starboard
+                log.info(f"Message {message.id} now has {star_count} stars, below threshold of {threshold}. Removing from starboard.")
                 try:
                     # Delete the starboard message if it exists
                     starboard_message = await starboard_channel.fetch_message(entry.get('starboard_message_id'))
                     await starboard_message.delete()
-                except (discord.NotFound, discord.HTTPException):
-                    pass  # Message already deleted or couldn't be deleted
+                    log.info(f"Deleted starboard message {entry.get('starboard_message_id')}")
+                except discord.NotFound:
+                    log.warning(f"Starboard message {entry.get('starboard_message_id')} already deleted")
+                except discord.HTTPException as e:
+                    log.error(f"Error deleting starboard message {entry.get('starboard_message_id')}: {e}")
 
                 # Delete the entry from the database
-                # Note: We don't have a dedicated function for this yet, but we could add one
-                # For now, we'll just update the star count
-                await settings_manager.update_starboard_entry(guild.id, message.id, star_count)
+                await settings_manager.delete_starboard_entry(guild.id, message.id)
+        except Exception as e:
+            log.exception(f"Unexpected error processing star reaction for message {payload.message_id}: {e}")
         finally:
             # Release the lock
             self.pending_updates.pop(message_key, None)
+            log.debug(f"Released lock for message {payload.message_id} in guild {payload.guild_id}")
 
     async def _create_starboard_message(self, starboard_channel, message, star_count):
         """Create a new message in the starboard channel."""
@@ -209,6 +271,8 @@ class StarboardCog(commands.Cog):
 
     def _create_starboard_embed(self, message, star_count):
         """Create an embed for the starboard message."""
+        # We're not using star_count in the embed directly, but it's passed for potential future use
+        # such as changing embed color based on star count
         embed = discord.Embed(
             description=message.content,
             color=0xFFAC33,  # Gold color for stars
@@ -367,6 +431,145 @@ class StarboardCog(commands.Cog):
         embed.add_field(name="Self-starring", value="Allowed" if settings.get('self_star', False) else "Not allowed", inline=True)
 
         await ctx.send(embed=embed)
+
+    @starboard_group.command(name="clear", description="Clear all starboard entries")
+    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(administrator=True)
+    async def starboard_clear(self, ctx):
+        """Clear all entries from the starboard."""
+        # Ask for confirmation
+        await ctx.send("⚠️ **Warning**: This will delete all starboard entries for this server. Are you sure? (yes/no)")
+
+        def check(m):
+            return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() in ["yes", "no"]
+
+        try:
+            # Wait for confirmation
+            response = await self.bot.wait_for("message", check=check, timeout=30.0)
+
+            if response.content.lower() != "yes":
+                await ctx.send("❌ Operation cancelled.")
+                return
+
+            # Get the starboard channel
+            settings = await settings_manager.get_starboard_settings(ctx.guild.id)
+            if not settings or not settings.get('starboard_channel_id'):
+                await ctx.send("❌ Starboard channel not set.")
+                return
+
+            starboard_channel = ctx.guild.get_channel(settings.get('starboard_channel_id'))
+            if not starboard_channel:
+                await ctx.send("❌ Starboard channel not found.")
+                return
+
+            # Get all entries
+            entries = await settings_manager.clear_starboard_entries(ctx.guild.id)
+
+            if not entries:
+                await ctx.send("✅ Starboard cleared. No entries were found.")
+                return
+
+            # Delete all messages from the starboard channel
+            status_message = await ctx.send(f"🔄 Clearing {len(entries)} entries from the starboard...")
+
+            deleted_count = 0
+            failed_count = 0
+
+            # Convert entries to a list of dictionaries
+            entries_list = [dict(entry) for entry in entries]
+
+            # Delete messages in batches to avoid rate limits
+            for entry in entries_list:
+                try:
+                    try:
+                        message = await starboard_channel.fetch_message(entry['starboard_message_id'])
+                        await message.delete()
+                        deleted_count += 1
+                    except discord.NotFound:
+                        # Message already deleted
+                        deleted_count += 1
+                    except discord.HTTPException as e:
+                        log.error(f"Error deleting starboard message {entry['starboard_message_id']}: {e}")
+                        failed_count += 1
+                except Exception as e:
+                    log.error(f"Unexpected error deleting starboard message: {e}")
+                    failed_count += 1
+
+            await status_message.edit(content=f"✅ Starboard cleared. Deleted {deleted_count} messages. Failed to delete {failed_count} messages.")
+
+        except asyncio.TimeoutError:
+            await ctx.send("❌ Confirmation timed out. Operation cancelled.")
+        except Exception as e:
+            log.exception(f"Error clearing starboard: {e}")
+            await ctx.send(f"❌ An error occurred while clearing the starboard: {str(e)}")
+
+    @starboard_group.command(name="stats", description="Show starboard statistics")
+    async def starboard_stats(self, ctx):
+        """Display statistics about the starboard."""
+        try:
+            # Get the starboard settings
+            settings = await settings_manager.get_starboard_settings(ctx.guild.id)
+            if not settings:
+                await ctx.send("❌ Failed to retrieve starboard settings.")
+                return
+
+            # Get a connection to the database
+            conn = await asyncio.wait_for(settings_manager.pg_pool.acquire(), timeout=5.0)
+            try:
+                # Get the total number of entries
+                total_entries = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM starboard_entries
+                    WHERE guild_id = $1
+                    """,
+                    ctx.guild.id
+                )
+
+                # Get the total number of reactions
+                total_reactions = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM starboard_reactions
+                    WHERE guild_id = $1
+                    """,
+                    ctx.guild.id
+                )
+
+                # Get the most starred message
+                most_starred = await conn.fetchrow(
+                    """
+                    SELECT * FROM starboard_entries
+                    WHERE guild_id = $1
+                    ORDER BY star_count DESC
+                    LIMIT 1
+                    """,
+                    ctx.guild.id
+                )
+
+                # Create an embed to display the statistics
+                embed = discord.Embed(
+                    title="Starboard Statistics",
+                    color=discord.Color.gold(),
+                    timestamp=datetime.datetime.now()
+                )
+
+                embed.add_field(name="Total Entries", value=str(total_entries), inline=True)
+                embed.add_field(name="Total Reactions", value=str(total_reactions), inline=True)
+
+                if most_starred:
+                    most_starred_dict = dict(most_starred)
+                    embed.add_field(
+                        name="Most Starred Message",
+                        value=f"[Jump to Message](https://discord.com/channels/{ctx.guild.id}/{most_starred_dict['original_channel_id']}/{most_starred_dict['original_message_id']})\n{most_starred_dict['star_count']} stars",
+                        inline=False
+                    )
+
+                await ctx.send(embed=embed)
+            finally:
+                # Release the connection
+                await settings_manager.pg_pool.release(conn)
+        except Exception as e:
+            log.exception(f"Error getting starboard statistics: {e}")
+            await ctx.send(f"❌ An error occurred while getting starboard statistics: {str(e)}")
 
 async def setup(bot):
     """Add the cog to the bot."""

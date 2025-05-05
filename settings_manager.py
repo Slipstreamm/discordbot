@@ -367,27 +367,67 @@ async def update_starboard_settings(guild_id: int, **kwargs):
         log.warning(f"No valid settings provided for starboard update for guild {guild_id}")
         return False
 
+    # Use a timeout to prevent hanging on database operations
     try:
-        async with pg_pool.acquire() as conn:
+        # Acquire a connection with a timeout
+        conn = None
+        try:
+            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+
             # Ensure guild exists
-            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            try:
+                await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            except Exception as e:
+                if "another operation is in progress" in str(e) or "attached to a different loop" in str(e):
+                    log.warning(f"Connection issue when inserting guild {guild_id}: {e}")
+                    # Try to reset the connection
+                    await conn.close()
+                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+                else:
+                    raise
 
             # Build the SET clause for the UPDATE statement
             set_clause = ", ".join(f"{key} = ${i+2}" for i, key in enumerate(update_dict.keys()))
             values = [guild_id] + list(update_dict.values())
 
             # Update the settings
-            await conn.execute(
-                f"""
-                INSERT INTO starboard_settings (guild_id)
-                VALUES ($1)
-                ON CONFLICT (guild_id) DO UPDATE SET {set_clause};
-                """,
-                *values
-            )
+            try:
+                await conn.execute(
+                    f"""
+                    INSERT INTO starboard_settings (guild_id)
+                    VALUES ($1)
+                    ON CONFLICT (guild_id) DO UPDATE SET {set_clause};
+                    """,
+                    *values
+                )
+            except Exception as e:
+                if "another operation is in progress" in str(e) or "attached to a different loop" in str(e):
+                    log.warning(f"Connection issue when updating starboard settings for guild {guild_id}: {e}")
+                    # Try to reset the connection
+                    await conn.close()
+                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+
+                    # Try again with the new connection
+                    await conn.execute(
+                        f"""
+                        INSERT INTO starboard_settings (guild_id)
+                        VALUES ($1)
+                        ON CONFLICT (guild_id) DO UPDATE SET {set_clause};
+                        """,
+                        *values
+                    )
+                else:
+                    raise
 
             log.info(f"Updated starboard settings for guild {guild_id}: {update_dict}")
             return True
+        finally:
+            # Always release the connection back to the pool
+            if conn:
+                await pg_pool.release(conn)
+    except asyncio.TimeoutError:
+        log.error(f"Timeout acquiring database connection for starboard settings update (Guild: {guild_id})")
+        return False
     except Exception as e:
         log.exception(f"Database error updating starboard settings for guild {guild_id}: {e}")
         return False
@@ -449,7 +489,11 @@ async def update_starboard_entry(guild_id: int, original_message_id: int, star_c
         return False
 
     try:
-        async with pg_pool.acquire() as conn:
+        # Acquire a connection with a timeout
+        conn = None
+        try:
+            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+
             await conn.execute(
                 """
                 UPDATE starboard_entries
@@ -461,8 +505,110 @@ async def update_starboard_entry(guild_id: int, original_message_id: int, star_c
 
             log.info(f"Updated star count to {star_count} for message {original_message_id} in guild {guild_id}")
             return True
+        finally:
+            # Always release the connection back to the pool
+            if conn:
+                await pg_pool.release(conn)
+    except asyncio.TimeoutError:
+        log.error(f"Timeout acquiring database connection for starboard entry update (Guild: {guild_id}, Message: {original_message_id})")
+        return False
     except Exception as e:
         log.exception(f"Database error updating starboard entry for message {original_message_id} in guild {guild_id}: {e}")
+        return False
+
+async def delete_starboard_entry(guild_id: int, original_message_id: int):
+    """Deletes a starboard entry."""
+    if not pg_pool:
+        log.error(f"PostgreSQL pool not initialized, cannot delete starboard entry.")
+        return False
+
+    try:
+        # Acquire a connection with a timeout
+        conn = None
+        try:
+            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+
+            # Delete the entry
+            await conn.execute(
+                """
+                DELETE FROM starboard_entries
+                WHERE guild_id = $1 AND original_message_id = $2
+                """,
+                guild_id, original_message_id
+            )
+
+            # Also delete any reactions associated with this message
+            await conn.execute(
+                """
+                DELETE FROM starboard_reactions
+                WHERE guild_id = $1 AND message_id = $2
+                """,
+                guild_id, original_message_id
+            )
+
+            log.info(f"Deleted starboard entry for message {original_message_id} in guild {guild_id}")
+            return True
+        finally:
+            # Always release the connection back to the pool
+            if conn:
+                await pg_pool.release(conn)
+    except asyncio.TimeoutError:
+        log.error(f"Timeout acquiring database connection for starboard entry deletion (Guild: {guild_id}, Message: {original_message_id})")
+        return False
+    except Exception as e:
+        log.exception(f"Database error deleting starboard entry for message {original_message_id} in guild {guild_id}: {e}")
+        return False
+
+async def clear_starboard_entries(guild_id: int):
+    """Clears all starboard entries for a guild."""
+    if not pg_pool:
+        log.error(f"PostgreSQL pool not initialized, cannot clear starboard entries.")
+        return False
+
+    try:
+        # Acquire a connection with a timeout
+        conn = None
+        try:
+            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+
+            # Get all starboard entries for this guild
+            entries = await conn.fetch(
+                """
+                SELECT * FROM starboard_entries
+                WHERE guild_id = $1
+                """,
+                guild_id
+            )
+
+            # Delete all entries
+            await conn.execute(
+                """
+                DELETE FROM starboard_entries
+                WHERE guild_id = $1
+                """,
+                guild_id
+            )
+
+            # Delete all reactions
+            await conn.execute(
+                """
+                DELETE FROM starboard_reactions
+                WHERE guild_id = $1
+                """,
+                guild_id
+            )
+
+            log.info(f"Cleared {len(entries)} starboard entries for guild {guild_id}")
+            return entries
+        finally:
+            # Always release the connection back to the pool
+            if conn:
+                await pg_pool.release(conn)
+    except asyncio.TimeoutError:
+        log.error(f"Timeout acquiring database connection for clearing starboard entries (Guild: {guild_id})")
+        return False
+    except Exception as e:
+        log.exception(f"Database error clearing starboard entries for guild {guild_id}: {e}")
         return False
 
 async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
@@ -471,31 +617,92 @@ async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
         log.error(f"PostgreSQL pool not initialized, cannot add starboard reaction.")
         return False
 
+    # Use a timeout to prevent hanging on database operations
     try:
-        async with pg_pool.acquire() as conn:
+        # Acquire a connection with a timeout
+        conn = None
+        try:
+            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+
             # Ensure guild exists
-            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            try:
+                await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+            except Exception as e:
+                if "another operation is in progress" in str(e) or "attached to a different loop" in str(e):
+                    log.warning(f"Connection issue when inserting guild {guild_id}: {e}")
+                    # Try to reset the connection
+                    await conn.close()
+                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+                else:
+                    raise
 
             # Add the reaction record
-            await conn.execute(
-                """
-                INSERT INTO starboard_reactions (guild_id, message_id, user_id)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (guild_id, message_id, user_id) DO NOTHING;
-                """,
-                guild_id, message_id, user_id
-            )
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO starboard_reactions (guild_id, message_id, user_id)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (guild_id, message_id, user_id) DO NOTHING;
+                    """,
+                    guild_id, message_id, user_id
+                )
+            except Exception as e:
+                if "another operation is in progress" in str(e) or "attached to a different loop" in str(e):
+                    log.warning(f"Connection issue when adding reaction for message {message_id} in guild {guild_id}: {e}")
+                    # Try to reset the connection
+                    await conn.close()
+                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+
+                    # Try again with the new connection
+                    await conn.execute(
+                        """
+                        INSERT INTO starboard_reactions (guild_id, message_id, user_id)
+                        VALUES ($1, $2, $3)
+                        ON CONFLICT (guild_id, message_id, user_id) DO NOTHING;
+                        """,
+                        guild_id, message_id, user_id
+                    )
+                else:
+                    raise
 
             # Count total reactions for this message
-            count = await conn.fetchval(
-                """
-                SELECT COUNT(*) FROM starboard_reactions
-                WHERE guild_id = $1 AND message_id = $2
-                """,
-                guild_id, message_id
-            )
+            try:
+                count = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM starboard_reactions
+                    WHERE guild_id = $1 AND message_id = $2
+                    """,
+                    guild_id, message_id
+                )
+                return count
+            except Exception as e:
+                if "another operation is in progress" in str(e) or "attached to a different loop" in str(e):
+                    log.warning(f"Connection issue when counting reactions for message {message_id} in guild {guild_id}: {e}")
+                    # Try to reset the connection
+                    await conn.close()
+                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
 
-            return count
+                    # Try again with the new connection
+                    count = await conn.fetchval(
+                        """
+                        SELECT COUNT(*) FROM starboard_reactions
+                        WHERE guild_id = $1 AND message_id = $2
+                        """,
+                        guild_id, message_id
+                    )
+                    return count
+                else:
+                    raise
+        finally:
+            # Always release the connection back to the pool
+            if conn:
+                try:
+                    await pg_pool.release(conn)
+                except Exception as e:
+                    log.warning(f"Error releasing connection: {e}")
+    except asyncio.TimeoutError:
+        log.error(f"Timeout acquiring database connection for adding starboard reaction (Guild: {guild_id}, Message: {message_id})")
+        return False
     except Exception as e:
         log.exception(f"Database error adding starboard reaction for message {message_id} in guild {guild_id}: {e}")
         return False
@@ -506,27 +713,78 @@ async def remove_starboard_reaction(guild_id: int, message_id: int, user_id: int
         log.error(f"PostgreSQL pool not initialized, cannot remove starboard reaction.")
         return False
 
+    # Use a timeout to prevent hanging on database operations
     try:
-        async with pg_pool.acquire() as conn:
+        # Acquire a connection with a timeout
+        conn = None
+        try:
+            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+
             # Remove the reaction record
-            await conn.execute(
-                """
-                DELETE FROM starboard_reactions
-                WHERE guild_id = $1 AND message_id = $2 AND user_id = $3
-                """,
-                guild_id, message_id, user_id
-            )
+            try:
+                await conn.execute(
+                    """
+                    DELETE FROM starboard_reactions
+                    WHERE guild_id = $1 AND message_id = $2 AND user_id = $3
+                    """,
+                    guild_id, message_id, user_id
+                )
+            except Exception as e:
+                if "another operation is in progress" in str(e) or "attached to a different loop" in str(e):
+                    log.warning(f"Connection issue when removing reaction for message {message_id} in guild {guild_id}: {e}")
+                    # Try to reset the connection
+                    await conn.close()
+                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+
+                    # Try again with the new connection
+                    await conn.execute(
+                        """
+                        DELETE FROM starboard_reactions
+                        WHERE guild_id = $1 AND message_id = $2 AND user_id = $3
+                        """,
+                        guild_id, message_id, user_id
+                    )
+                else:
+                    raise
 
             # Count remaining reactions for this message
-            count = await conn.fetchval(
-                """
-                SELECT COUNT(*) FROM starboard_reactions
-                WHERE guild_id = $1 AND message_id = $2
-                """,
-                guild_id, message_id
-            )
+            try:
+                count = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM starboard_reactions
+                    WHERE guild_id = $1 AND message_id = $2
+                    """,
+                    guild_id, message_id
+                )
+                return count
+            except Exception as e:
+                if "another operation is in progress" in str(e) or "attached to a different loop" in str(e):
+                    log.warning(f"Connection issue when counting reactions for message {message_id} in guild {guild_id}: {e}")
+                    # Try to reset the connection
+                    await conn.close()
+                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
 
-            return count
+                    # Try again with the new connection
+                    count = await conn.fetchval(
+                        """
+                        SELECT COUNT(*) FROM starboard_reactions
+                        WHERE guild_id = $1 AND message_id = $2
+                        """,
+                        guild_id, message_id
+                    )
+                    return count
+                else:
+                    raise
+        finally:
+            # Always release the connection back to the pool
+            if conn:
+                try:
+                    await pg_pool.release(conn)
+                except Exception as e:
+                    log.warning(f"Error releasing connection: {e}")
+    except asyncio.TimeoutError:
+        log.error(f"Timeout acquiring database connection for removing starboard reaction (Guild: {guild_id}, Message: {message_id})")
+        return False
     except Exception as e:
         log.exception(f"Database error removing starboard reaction for message {message_id} in guild {guild_id}: {e}")
         return False
