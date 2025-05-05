@@ -125,11 +125,10 @@ async def on_ready():
         commands_before = [cmd.name for cmd in bot.tree.get_commands()]
         print(f"Commands before sync: {commands_before}")
 
-        # Sync global commands first
-        synced_global = await bot.tree.sync()
-        print(f"Synced {len(synced_global)} global command(s)")
+        # Skip global command sync to avoid duplication
+        print("Skipping global command sync to avoid command duplication...")
 
-        # Now sync guild-specific commands with customizations
+        # Only sync guild-specific commands with customizations
         print("Syncing guild-specific command customizations...")
         guild_syncs = await command_customization.register_all_guild_commands(bot)
 
@@ -138,7 +137,7 @@ async def on_ready():
 
         # List commands after sync
         commands_after = [cmd.name for cmd in bot.tree.get_commands()]
-        print(f"Global commands after sync: {commands_after}")
+        print(f"Commands registered in command tree: {commands_after}")
 
     except Exception as e:
         print(f"Failed to sync commands: {e}")

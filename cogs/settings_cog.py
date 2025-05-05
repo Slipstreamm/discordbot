@@ -394,10 +394,9 @@ class SettingsCog(commands.Cog, name="Settings"):
                 log.info(f"Commands synced with customizations for guild {guild.id} by {ctx.author.name}")
             except Exception as e:
                 log.error(f"Failed to sync commands with customizations: {e}")
-                # Fall back to regular sync if customization sync fails
-                synced = await self.bot.tree.sync(guild=guild)
-                await ctx.send(f"Failed to apply customizations, but synced {len(synced)} commands for this server.")
-                log.info(f"Commands synced (without customizations) for guild {guild.id} by {ctx.author.name}")
+                # Don't fall back to regular sync to avoid command duplication
+                await ctx.send(f"Failed to apply customizations. Please check the logs and try again.")
+                log.info(f"Command sync with customizations failed for guild {guild.id}")
         except Exception as e:
             await ctx.send(f"Failed to sync commands: {str(e)}")
             log.error(f"Failed to sync commands for guild {ctx.guild.id}: {e}")
