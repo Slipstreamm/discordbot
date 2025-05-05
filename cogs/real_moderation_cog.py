@@ -122,6 +122,19 @@ class ModerationCog(commands.Cog):
         )(warn_command)
         self.moderate_group.add_command(warn_command)
 
+        # --- DM Banned User Command ---
+        dm_banned_command = app_commands.Command(
+            name="dmbanned",
+            description="Send a DM to a banned user",
+            callback=self.moderate_dm_banned_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            user_id="The ID of the banned user to DM",
+            message="The message to send to the banned user"
+        )(dm_banned_command)
+        self.moderate_group.add_command(dm_banned_command)
+
     # Helper method for parsing duration strings
     def _parse_duration(self, duration_str: str) -> Optional[datetime.timedelta]:
         """Parse a duration string like '1d', '2h', '30m' into a timedelta."""
@@ -183,6 +196,26 @@ class ModerationCog(commands.Cog):
         # Ensure delete_days is within valid range (0-7)
         delete_days = max(0, min(7, delete_days))
 
+        # Try to send a DM to the user before banning them
+        dm_sent = False
+        try:
+            embed = discord.Embed(
+                title="Ban Notice",
+                description=f"You have been banned from **{interaction.guild.name}**",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Reason", value=reason or "No reason provided", inline=False)
+            embed.add_field(name="Moderator", value=interaction.user.name, inline=False)
+            embed.set_footer(text=f"Server ID: {interaction.guild.id} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+            await member.send(embed=embed)
+            dm_sent = True
+        except discord.Forbidden:
+            # User has DMs closed, ignore
+            pass
+        except Exception as e:
+            logger.error(f"Error sending ban DM to {member} (ID: {member.id}): {e}")
+
         # Perform the ban
         try:
             await member.ban(reason=reason, delete_message_days=delete_days)
@@ -190,8 +223,9 @@ class ModerationCog(commands.Cog):
             # Log the action
             logger.info(f"User {member} (ID: {member.id}) was banned from {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
 
-            # Send confirmation message
-            await interaction.response.send_message(f"🔨 **Banned {member.mention}**! Reason: {reason or 'No reason provided'}")
+            # Send confirmation message with DM status
+            dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
+            await interaction.response.send_message(f"🔨 **Banned {member.mention}**! Reason: {reason or 'No reason provided'}\n{dm_status}")
         except discord.Forbidden:
             await interaction.response.send_message("❌ I don't have permission to ban this member.", ephemeral=True)
         except discord.HTTPException as e:
@@ -276,6 +310,26 @@ class ModerationCog(commands.Cog):
             await interaction.response.send_message("❌ I cannot kick someone with a higher or equal role than me.", ephemeral=True)
             return
 
+        # Try to send a DM to the user before kicking them
+        dm_sent = False
+        try:
+            embed = discord.Embed(
+                title="Kick Notice",
+                description=f"You have been kicked from **{interaction.guild.name}**",
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="Reason", value=reason or "No reason provided", inline=False)
+            embed.add_field(name="Moderator", value=interaction.user.name, inline=False)
+            embed.set_footer(text=f"Server ID: {interaction.guild.id} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+            await member.send(embed=embed)
+            dm_sent = True
+        except discord.Forbidden:
+            # User has DMs closed, ignore
+            pass
+        except Exception as e:
+            logger.error(f"Error sending kick DM to {member} (ID: {member.id}): {e}")
+
         # Perform the kick
         try:
             await member.kick(reason=reason)
@@ -283,8 +337,9 @@ class ModerationCog(commands.Cog):
             # Log the action
             logger.info(f"User {member} (ID: {member.id}) was kicked from {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
 
-            # Send confirmation message
-            await interaction.response.send_message(f"👢 **Kicked {member.mention}**! Reason: {reason or 'No reason provided'}")
+            # Send confirmation message with DM status
+            dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
+            await interaction.response.send_message(f"👢 **Kicked {member.mention}**! Reason: {reason or 'No reason provided'}\n{dm_status}")
         except discord.Forbidden:
             await interaction.response.send_message("❌ I don't have permission to kick this member.", ephemeral=True)
         except discord.HTTPException as e:
@@ -337,6 +392,28 @@ class ModerationCog(commands.Cog):
         # Calculate the end time
         until = discord.utils.utcnow() + delta
 
+        # Try to send a DM to the user before timing them out
+        dm_sent = False
+        try:
+            embed = discord.Embed(
+                title="Timeout Notice",
+                description=f"You have been timed out in **{interaction.guild.name}** for {duration}",
+                color=discord.Color.gold()
+            )
+            embed.add_field(name="Reason", value=reason or "No reason provided", inline=False)
+            embed.add_field(name="Moderator", value=interaction.user.name, inline=False)
+            embed.add_field(name="Duration", value=duration, inline=False)
+            embed.add_field(name="Expires", value=f"<t:{int(until.timestamp())}:F>", inline=False)
+            embed.set_footer(text=f"Server ID: {interaction.guild.id} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+            await member.send(embed=embed)
+            dm_sent = True
+        except discord.Forbidden:
+            # User has DMs closed, ignore
+            pass
+        except Exception as e:
+            logger.error(f"Error sending timeout DM to {member} (ID: {member.id}): {e}")
+
         # Perform the timeout
         try:
             await member.timeout(until, reason=reason)
@@ -344,8 +421,9 @@ class ModerationCog(commands.Cog):
             # Log the action
             logger.info(f"User {member} (ID: {member.id}) was timed out in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}) for {duration}. Reason: {reason}")
 
-            # Send confirmation message
-            await interaction.response.send_message(f"⏰ **Timed out {member.mention}** for {duration}! Reason: {reason or 'No reason provided'}")
+            # Send confirmation message with DM status
+            dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
+            await interaction.response.send_message(f"⏰ **Timed out {member.mention}** for {duration}! Reason: {reason or 'No reason provided'}\n{dm_status}")
         except discord.Forbidden:
             await interaction.response.send_message("❌ I don't have permission to timeout this member.", ephemeral=True)
         except discord.HTTPException as e:
@@ -368,6 +446,26 @@ class ModerationCog(commands.Cog):
             await interaction.response.send_message("❌ This member is not timed out.", ephemeral=True)
             return
 
+        # Try to send a DM to the user about the timeout removal
+        dm_sent = False
+        try:
+            embed = discord.Embed(
+                title="Timeout Removed",
+                description=f"Your timeout in **{interaction.guild.name}** has been removed",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Reason", value=reason or "No reason provided", inline=False)
+            embed.add_field(name="Moderator", value=interaction.user.name, inline=False)
+            embed.set_footer(text=f"Server ID: {interaction.guild.id} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+            await member.send(embed=embed)
+            dm_sent = True
+        except discord.Forbidden:
+            # User has DMs closed, ignore
+            pass
+        except Exception as e:
+            logger.error(f"Error sending timeout removal DM to {member} (ID: {member.id}): {e}")
+
         # Perform the timeout removal
         try:
             await member.timeout(None, reason=reason)
@@ -375,8 +473,9 @@ class ModerationCog(commands.Cog):
             # Log the action
             logger.info(f"Timeout was removed from user {member} (ID: {member.id}) in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
 
-            # Send confirmation message
-            await interaction.response.send_message(f"⏰ **Removed timeout from {member.mention}**! Reason: {reason or 'No reason provided'}")
+            # Send confirmation message with DM status
+            dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
+            await interaction.response.send_message(f"⏰ **Removed timeout from {member.mention}**! Reason: {reason or 'No reason provided'}\n{dm_status}")
         except discord.Forbidden:
             await interaction.response.send_message("❌ I don't have permission to remove the timeout from this member.", ephemeral=True)
         except discord.HTTPException as e:
@@ -475,6 +574,61 @@ class ModerationCog(commands.Cog):
             pass
         except Exception as e:
             logger.error(f"Error sending warning DM to {member} (ID: {member.id}): {e}")
+
+    async def moderate_dm_banned_callback(self, interaction: discord.Interaction, user_id: str, message: str):
+        """Send a DM to a banned user."""
+        # Check if the user has permission to ban members
+        if not interaction.user.guild_permissions.ban_members:
+            await interaction.response.send_message("❌ You don't have permission to DM banned users.", ephemeral=True)
+            return
+
+        # Validate user ID
+        try:
+            user_id_int = int(user_id)
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid user ID. Please provide a valid user ID.", ephemeral=True)
+            return
+
+        # Check if the user is banned
+        try:
+            ban_entry = await interaction.guild.fetch_ban(discord.Object(id=user_id_int))
+            banned_user = ban_entry.user
+        except discord.NotFound:
+            await interaction.response.send_message("❌ This user is not banned.", ephemeral=True)
+            return
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I don't have permission to view the ban list.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ An error occurred while checking the ban list: {e}", ephemeral=True)
+            return
+
+        # Try to send a DM to the banned user
+        try:
+            # Create an embed with the message
+            embed = discord.Embed(
+                title=f"Message from {interaction.guild.name}",
+                description=message,
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Sent by", value=interaction.user.name, inline=False)
+            embed.set_footer(text=f"Server ID: {interaction.guild.id} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+            # Send the DM
+            await banned_user.send(embed=embed)
+
+            # Log the action
+            logger.info(f"DM sent to banned user {banned_user} (ID: {banned_user.id}) in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}).")
+
+            # Send confirmation message
+            await interaction.response.send_message(f"✅ **DM sent to banned user {banned_user}**!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I couldn't send a DM to this user. They may have DMs disabled or have blocked the bot.", ephemeral=True)
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ An error occurred while sending the DM: {e}", ephemeral=True)
+        except Exception as e:
+            logger.error(f"Error sending DM to banned user {banned_user} (ID: {banned_user.id}): {e}")
+            await interaction.response.send_message(f"❌ An unexpected error occurred: {e}", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_ready(self):
