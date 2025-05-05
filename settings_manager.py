@@ -1470,6 +1470,26 @@ async def get_command_permissions(guild_id: int, command_name: str) -> set[int] 
         return None # Indicate error
 
 
+# --- Logging Webhook Functions ---
+
+async def get_logging_webhook(guild_id: int) -> str | None:
+    """Gets the logging webhook URL for a guild. Returns None if not set or on error."""
+    log.debug(f"Attempting to get logging webhook for guild {guild_id}")
+    webhook_url = await get_setting(guild_id, 'logging_webhook_url', default=None)
+    log.debug(f"Retrieved logging webhook URL for guild {guild_id}: {'Set' if webhook_url else 'Not Set'}")
+    return webhook_url
+
+async def set_logging_webhook(guild_id: int, webhook_url: str | None) -> bool:
+    """Sets or removes the logging webhook URL for a guild."""
+    log.info(f"Setting logging webhook URL for guild {guild_id} to: {'None (removing)' if webhook_url is None else 'Provided URL'}")
+    success = await set_setting(guild_id, 'logging_webhook_url', webhook_url)
+    if success:
+        log.info(f"Successfully {'set' if webhook_url else 'removed'} logging webhook for guild {guild_id}")
+    else:
+        log.error(f"Failed to set logging webhook for guild {guild_id}")
+    return success
+
+
 # --- Bot Guild Information ---
 
 async def get_bot_guild_ids() -> set[int] | None:
