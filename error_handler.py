@@ -237,6 +237,14 @@ def patch_discord_methods():
 
 async def handle_error(ctx_or_interaction, error):
     user_id = 452666956353503252  # Replace with the specific user ID
+
+    # Special handling for interaction timeout errors (10062: Unknown interaction)
+    if isinstance(error, commands.CommandInvokeError) and isinstance(error.original, discord.NotFound) and error.original.code == 10062:
+        print(f"Interaction timeout error (10062): {error}")
+        # This error occurs when Discord's interaction token expires (after 3 seconds)
+        # We can't respond to the interaction anymore, so we'll just log it
+        return
+
     error_message = f"An error occurred: {error}"
 
     # Check if this is an AI command error

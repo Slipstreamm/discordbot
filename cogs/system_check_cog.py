@@ -5,9 +5,7 @@ import time
 import psutil
 import platform
 import GPUtil
-from cpuinfo import get_cpu_info
 import distro # Ensure this is installed
-import subprocess
 
 # Import wmi for Windows motherboard info
 try:
@@ -25,20 +23,18 @@ class SystemCheckCog(commands.Cog):
         # Bot information
         bot_user = self.bot.user
         guild_count = len(self.bot.guilds)
-        # Efficiently count unique non-bot members across guilds
+
+        # More efficient member counting - use cached members when available
+        # This avoids API calls that can cause timeouts
         user_ids = set()
         for guild in self.bot.guilds:
             try:
-                # Fetch members if needed, handle potential exceptions
-                async for member in guild.fetch_members(limit=None): # Fetch all members
-                     if not member.bot:
-                         user_ids.add(member.id)
-            except discord.Forbidden:
-                print(f"Missing permissions to fetch members in guild: {guild.name} ({guild.id})")
-            except discord.HTTPException as e:
-                print(f"HTTP error fetching members in guild {guild.name}: {e}")
+                # Use members that are already cached
+                for member in guild.members:
+                    if not member.bot:
+                        user_ids.add(member.id)
             except Exception as e:
-                 print(f"Unexpected error fetching members in guild {guild.name}: {e}")
+                print(f"Error counting members in guild {guild.name}: {e}")
 
         user_count = len(user_ids)
 
@@ -77,11 +73,27 @@ class SystemCheckCog(commands.Cog):
         uptime_str += f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
         uptime = uptime_str.strip()
 
-        # Hardware information
-        cpu_usage = psutil.cpu_percent(interval=0.5) # Shorter interval might be okay
+        # Hardware information - use a shorter interval for CPU usage
+        cpu_usage = psutil.cpu_percent(interval=0.1)
+
+        # Get CPU info with a timeout to prevent hanging
         try:
-            cpu_info_dict = get_cpu_info() # Renamed variable
-            cpu_name = cpu_info_dict.get('brand_raw', 'N/A')
+            # Use a simpler approach for CPU name to avoid potential slowdowns
+            if platform.system() == "Windows":
+                cpu_name = platform.processor()
+            elif platform.system() == "Linux":
+                try:
+                    with open("/proc/cpuinfo", "r") as f:
+                        for line in f:
+                            if line.startswith("model name"):
+                                cpu_name = line.split(":")[1].strip()
+                                break
+                        else:
+                            cpu_name = "Unknown CPU"
+                except:
+                    cpu_name = platform.processor() or "Unknown CPU"
+            else:
+                cpu_name = platform.processor() or "Unknown CPU"
         except Exception as e:
             print(f"Error getting CPU info: {e}")
             cpu_name = "N/A"
@@ -180,8 +192,16 @@ class SystemCheckCog(commands.Cog):
     @app_commands.command(name="systemcheck", description="Check the bot and system status")
     async def system_check_slash(self, interaction: discord.Interaction):
         """Slash command version of system check."""
-        embed = await self._system_check_logic(interaction) # Pass interaction
-        await interaction.response.send_message(embed=embed)
+        # Defer the response to prevent interaction timeout
+        await interaction.response.defer(thinking=True)
+        try:
+            embed = await self._system_check_logic(interaction) # Pass interaction
+            # Use followup since we've already deferred
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            # Handle any errors that might occur during processing
+            print(f"Error in system_check_slash: {e}")
+            await interaction.followup.send(f"An error occurred while checking system status: {e}")
 
     def _get_motherboard_info(self):
         """Get motherboard information based on the operating system."""
