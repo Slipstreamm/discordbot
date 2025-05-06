@@ -18,7 +18,7 @@ from discordbot import settings_manager
 log = logging.getLogger(__name__)
 
 # Import models from the new dashboard_models module (use absolute path)
-from discordbot.api_service.dashboard_models import CogInfo, CommandInfo # Import necessary models
+from discordbot.api_service.dashboard_models import CogInfo # Import necessary models
 
 # Create a router for the cog management API endpoints
 router = APIRouter(tags=["Cog Management"])
