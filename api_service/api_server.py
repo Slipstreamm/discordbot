@@ -1984,6 +1984,7 @@ async def ai_moderation_action(
     # Security check
     auth_header = request.headers.get("Authorization")
     if not settings.MOD_LOG_API_SECRET or not auth_header or auth_header != f"Bearer {settings.MOD_LOG_API_SECRET}":
+        log.info(request.get())
         log.warning("Unauthorized attempt to use AI moderation endpoint.")
         raise HTTPException(status_code=403, detail="Forbidden")
 
