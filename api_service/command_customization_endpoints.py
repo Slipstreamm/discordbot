@@ -8,43 +8,21 @@ from typing import List, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-# Import dependencies from the new dependencies module
-try:
-    # Try relative import first
-    from .dependencies import get_dashboard_user, verify_dashboard_guild_admin
-except ImportError:
-    # Fall back to absolute import
-    from dependencies import get_dashboard_user, verify_dashboard_guild_admin
+# Import dependencies from the new dependencies module (use absolute path)
+from discordbot.api_service.dependencies import get_dashboard_user, verify_dashboard_guild_admin
 
-# Import models from the new dashboard_models module
-try:
-    # Try relative import first
-    from .dashboard_models import (
-        CommandCustomizationResponse,
-        CommandCustomizationUpdate,
+# Import models from the new dashboard_models module (use absolute path)
+from discordbot.api_service.dashboard_models import (
+    CommandCustomizationResponse,
+    CommandCustomizationUpdate,
         GroupCustomizationUpdate,
-        CommandAliasAdd,
-        CommandAliasRemove
-    )
-except ImportError:
-    # Fall back to absolute import
-    from dashboard_models import (
-        CommandCustomizationResponse,
-        CommandCustomizationUpdate,
-        GroupCustomizationUpdate,
-        CommandAliasAdd,
-        CommandAliasRemove
-    )
+    GroupCustomizationUpdate,
+    CommandAliasAdd,
+    CommandAliasRemove
+)
 
-# Import settings_manager for database access
-try:
-    from discordbot import settings_manager
-except ImportError:
-    # Try relative import
-    import sys
-    import os
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-    from discordbot import settings_manager
+# Import settings_manager for database access (use absolute path)
+from discordbot import settings_manager
 
 log = logging.getLogger(__name__)
 

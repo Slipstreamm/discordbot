@@ -11,39 +11,24 @@ from pydantic import BaseModel, Field
 # Default prefix for commands
 DEFAULT_PREFIX = "!"
 
-# Import the dependencies from api_server.py
-try:
-    # Try relative import first
-    from .api_server import (
-        get_dashboard_user,
-        verify_dashboard_guild_admin,
-        CommandCustomizationResponse,
-        CommandCustomizationUpdate,
-        GroupCustomizationUpdate,
-        CommandAliasAdd,
-        CommandAliasRemove
-    )
-except ImportError:
-    # Fall back to absolute import
-    from api_server import (
-        get_dashboard_user,
-        verify_dashboard_guild_admin,
-        CommandCustomizationResponse,
-        CommandCustomizationUpdate,
-        GroupCustomizationUpdate,
-        CommandAliasAdd,
-        CommandAliasRemove
-    )
+# Import dependencies using absolute paths
+from discordbot.api_service.dependencies import get_dashboard_user, verify_dashboard_guild_admin
 
-# Import settings_manager for database access
-try:
-    from discordbot import settings_manager
-except ImportError:
-    # Try relative import
-    import sys
-    import os
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-    from discordbot import settings_manager
+# Import models using absolute paths
+from discordbot.api_service.dashboard_models import (
+    CommandCustomizationResponse,
+    CommandCustomizationUpdate,
+    GroupCustomizationUpdate,
+    CommandAliasAdd,
+    CommandAliasRemove,
+    # Add other models used in this file if they were previously imported from api_server
+    # GuildSettingsResponse, GuildSettingsUpdate, CommandPermission, CommandPermissionsResponse,
+    # CogInfo, CommandInfo # Assuming these might be needed based on context below
+)
+
+
+# Import settings_manager for database access (use absolute path)
+from discordbot import settings_manager
 
 # Set up logging
 log = logging.getLogger(__name__)
@@ -99,11 +84,11 @@ class GlobalSettings(BaseModel):
     max_tokens: Optional[int] = None
     theme: Optional[ThemeSettings] = None
 
-# CogInfo model moved to cog_management_endpoints.py
+# CogInfo and CommandInfo models are now imported from dashboard_models
 
-class CommandInfo(BaseModel):
-    name: str
-    description: Optional[str] = None
+# class CommandInfo(BaseModel): # Removed - Imported from dashboard_models
+#     name: str
+#     description: Optional[str] = None
     enabled: bool = True
     cog_name: Optional[str] = None
 

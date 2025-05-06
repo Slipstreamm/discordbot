@@ -8,34 +8,17 @@ from typing import List, Dict, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from pydantic import BaseModel, Field
 
-# Import dependencies from the new dependencies module
-try:
-    # Try relative import first
-    from .dependencies import get_dashboard_user, verify_dashboard_guild_admin
-except ImportError:
-    # Fall back to absolute import
-    from dependencies import get_dashboard_user, verify_dashboard_guild_admin
+# Import dependencies from the new dependencies module (use absolute path)
+from discordbot.api_service.dependencies import get_dashboard_user, verify_dashboard_guild_admin
 
-# Import settings_manager for database access
-try:
-    from discordbot import settings_manager
-except ImportError:
-    # Try relative import
-    import sys
-    import os
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-    from discordbot import settings_manager
+# Import settings_manager for database access (use absolute path)
+from discordbot import settings_manager
 
 # Set up logging
 log = logging.getLogger(__name__)
 
-# Import models from the new dashboard_models module
-try:
-    # Try relative import first
-    from .dashboard_models import CogInfo, CommandInfo # Import necessary models
-except ImportError:
-    # Fall back to absolute import
-    from dashboard_models import CogInfo, CommandInfo # Import necessary models
+# Import models from the new dashboard_models module (use absolute path)
+from discordbot.api_service.dashboard_models import CogInfo, CommandInfo # Import necessary models
 
 # Create a router for the cog management API endpoints
 router = APIRouter(tags=["Cog Management"])

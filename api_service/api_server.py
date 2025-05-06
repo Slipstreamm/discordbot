@@ -260,7 +260,8 @@ async def send_discord_message_via_api(channel_id: int, content: str, timeout: f
 # ---------------------------------
 
 # Import dependencies after defining settings and constants
-from . import dependencies
+# Use absolute imports to avoid issues when running the server directly
+from discordbot.api_service import dependencies
 from api_models import (
     Conversation,
     UserSettings,
@@ -398,13 +399,8 @@ dashboard_api_app = FastAPI(
 
 # Import dashboard API endpoints
 try:
-    # Try relative import first
-    try:
-        from .dashboard_api_endpoints import router as dashboard_router
-    except ImportError:
-        # Fall back to absolute import
-        from dashboard_api_endpoints import router as dashboard_router
-
+    # Use absolute import
+    from discordbot.api_service.dashboard_api_endpoints import router as dashboard_router
     # Add the dashboard router to the dashboard API app
     dashboard_api_app.include_router(dashboard_router)
     log.info("Dashboard API endpoints loaded successfully")
@@ -418,13 +414,8 @@ except ImportError as e:
 
 # Import command customization models and endpoints
 try:
-    # Try relative import first
-    try:
-        from .command_customization_endpoints import router as customization_router
-    except ImportError:
-        # Fall back to absolute import
-        from command_customization_endpoints import router as customization_router
-
+    # Use absolute import
+    from discordbot.api_service.command_customization_endpoints import router as customization_router
     # Add the command customization router to the dashboard API app
     dashboard_api_app.include_router(customization_router, prefix="/commands", tags=["Command Customization"])
     log.info("Command customization endpoints loaded successfully")
@@ -434,45 +425,31 @@ except ImportError as e:
 
 # Import cog management endpoints
 try:
-    # Try relative import first
-    try:
-        from .cog_management_endpoints import router as cog_management_router
-        log.info("Successfully imported cog_management_endpoints via relative import")
-    except ImportError as e:
-        log.warning(f"Relative import of cog_management_endpoints failed: {e}")
-        # Fall back to absolute import
-        try:
-            from cog_management_endpoints import router as cog_management_router
-            log.info("Successfully imported cog_management_endpoints via absolute import")
-        except ImportError as e2:
-            log.error(f"Both import attempts for cog_management_endpoints failed: {e2}")
-            # Try to import the module directly to see what's available
-            try:
-                import sys
-                log.info(f"Python path: {sys.path}")
-                # Try to find the module in the current directory
-                import os
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                log.info(f"Current directory: {current_dir}")
-                files = os.listdir(current_dir)
-                log.info(f"Files in current directory: {files}")
-
-                # Try to import the module with a full path
-                sys.path.append(current_dir)
-                import cog_management_endpoints
-                log.info(f"Successfully imported cog_management_endpoints module")
-                router = cog_management_endpoints.router
-                log.info(f"Successfully got router from cog_management_endpoints")
-                cog_management_router = router
-            except Exception as e3:
-                log.error(f"Failed to import cog_management_endpoints module: {e3}")
-                raise e2
-
+    # Use absolute import
+    from discordbot.api_service.cog_management_endpoints import router as cog_management_router
+    log.info("Successfully imported cog_management_endpoints")
     # Add the cog management router to the dashboard API app
     dashboard_api_app.include_router(cog_management_router, tags=["Cog Management"])
     log.info("Cog management endpoints loaded successfully")
-except Exception as e:
+except ImportError as e:
     log.error(f"Could not import cog management endpoints: {e}")
+    # Try to import the module directly to see what's available (for debugging)
+    try:
+        import sys
+        log.info(f"Python path: {sys.path}")
+        # Try to find the module in the current directory
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        log.info(f"Current directory: {current_dir}")
+        files = os.listdir(current_dir)
+        log.info(f"Files in current directory: {files}")
+        # Try to import the module with a full path
+        sys.path.append(current_dir)
+        import cog_management_endpoints # type: ignore
+        log.info(f"Successfully imported cog_management_endpoints module directly")
+    except Exception as e_debug:
+        log.error(f"Debug import failed: {e_debug}")
+
     log.error("Cog management endpoints will not be available")
 
 # Mount the API apps at their respective paths
@@ -802,7 +779,7 @@ async def auth(code: str, state: str = None, code_verifier: str = None, request:
 # Models are now in dashboard_models.py
 # Dependencies are now in dependencies.py
 
-from .dashboard_models import (
+from discordbot.api_service.dashboard_models import (
     GuildSettingsResponse,
     GuildSettingsUpdate,
     CommandPermission,

@@ -1,4 +1,5 @@
 import os
+import sys
 import uvicorn
 from dotenv import load_dotenv
 
@@ -13,7 +14,18 @@ data_dir = os.getenv("DATA_DIR", "data")
 # Create data directory if it doesn't exist
 os.makedirs(data_dir, exist_ok=True)
 
+# Ensure the project root directory (containing the 'discordbot' package) is in sys.path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    print(f"Adding project root to sys.path: {project_root}")
+    sys.path.insert(0, project_root)
+else:
+    print(f"Project root already in sys.path: {project_root}")
+
+
 if __name__ == "__main__":
     print(f"Starting API server on {host}:{port}")
     print(f"Data directory: {data_dir}")
-    uvicorn.run("api_server:app", host=host, port=port, reload=True)
+    # Use the full module path to ensure correct package context
+    # Removed reload=True to potentially fix import issues with the reloader
+    uvicorn.run("discordbot.api_service.api_server:app", host=host, port=port)
