@@ -3,11 +3,11 @@
  * Handles cog and command enabling/disabling functionality
  */
 
-// Global variables
-let cogsData = [];
-let commandsData = {};
-let selectedGuildId = null;
-let cogManagementLoaded = false;
+// Global variables for this specific module's state
+let cogsData = []; // Holds the raw data fetched from the API for the current guild
+let commandsData = {}; // Holds processed command data for the current guild
+// let selectedGuildId = null; // This is now managed globally in main.js as window.selectedGuildId
+let cogManagementLoadedGuild = null; // Track which guild's data is loaded for this module
 
 // Initialize cog management when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
@@ -17,11 +17,11 @@ document.addEventListener('DOMContentLoaded', () => {
 /**
  * Initialize cog management functionality
  */
-function initCogManagement() {
-    // Get DOM elements
-    const cogGuildSelect = document.getElementById('cog-guild-select');
-    const cogFilter = document.getElementById('cog-filter');
-    const saveCogsButton = document.getElementById('save-cogs-button');
+ function initCogManagement() {
+     // Get DOM elements
+     // const cogGuildSelect = document.getElementById('cog-guild-select'); // Dropdown removed
+     const cogFilter = document.getElementById('cog-filter');
+     const saveCogsButton = document.getElementById('save-cogs-button');
     const saveCommandsButton = document.getElementById('save-commands-button');
     const navCogManagement = document.getElementById('nav-cog-management');
 
@@ -31,95 +31,64 @@ function initCogManagement() {
             // Show cog management section
             showSection('cog-management');
 
-            // Load guilds if not already loaded
-            if (!cogManagementLoaded) {
-                loadGuildsForCogManagement();
-                cogManagementLoaded = true;
-            }
-        });
+             // Data loading is now handled by showSection in main.js when the section becomes visible
+         });
     }
 
-    // Add event listener for guild select
-    if (cogGuildSelect) {
-        cogGuildSelect.addEventListener('change', () => {
-            selectedGuildId = cogGuildSelect.value;
-            if (selectedGuildId) {
-                loadCogsAndCommands(selectedGuildId);
-            } else {
-                // Hide content if no guild selected
-                document.getElementById('cog-management-content').style.display = 'none';
-            }
-        });
-    }
+     // Remove event listener for the old guild select dropdown
+     // if (cogGuildSelect) {
+     //     cogGuildSelect.addEventListener('change', () => {
+     //         // This logic is now handled by the main server selection flow in main.js
+     //         // selectedGuildId = cogGuildSelect.value; // Use window.selectedGuildId from main.js
+     //         // loadCogsAndCommands(window.selectedGuildId);
+     //     });
+     // }
 
-    // Add event listener for cog filter
+     // Add event listener for cog filter
     if (cogFilter) {
         cogFilter.addEventListener('change', () => {
             filterCommands(cogFilter.value);
         });
     }
 
-    // Add event listener for save cogs button
-    if (saveCogsButton) {
-        saveCogsButton.addEventListener('click', () => {
-            saveCogsSettings();
-        });
+     // Add event listener for save cogs button
+     if (saveCogsButton) {
+         saveCogsButton.addEventListener('click', () => {
+             saveCogsSettings(); // Will use window.selectedGuildId from main.js
+         });
     }
 
-    // Add event listener for save commands button
-    if (saveCommandsButton) {
-        saveCommandsButton.addEventListener('click', () => {
-            saveCommandsSettings();
-        });
+     // Add event listener for save commands button
+     if (saveCommandsButton) {
+         saveCommandsButton.addEventListener('click', () => {
+              saveCommandsSettings(); // Will use window.selectedGuildId from main.js
+          });
+     }
+ }
+
+
+ /**
+  * Load cogs and commands for a guild. This function is now intended to be called
+  * by the main logic in main.js (via showSection) when the cog management section
+  * becomes visible and needs its data loaded for the currently selected guild.
+  * @param {string} guildId - The guild ID (passed from main.js, expected to be window.selectedGuildId)
+  */
+function loadCogManagementData(guildId) { // Renamed function
+    // Check if data for this guild is already loaded
+    if (cogManagementLoadedGuild === guildId) {
+        console.log(`Cog management data for guild ${guildId} already loaded.`);
+        // Ensure content is visible if navigating back
+        document.getElementById('cog-management-loading').style.display = 'none';
+        document.getElementById('cog-management-content').style.display = 'block';
+        return;
     }
-}
+    console.log(`Loading cog management data for guild: ${guildId}`);
 
-/**
- * Load guilds for cog management
- */
-function loadGuildsForCogManagement() {
-    const cogGuildSelect = document.getElementById('cog-guild-select');
-
-    // Show loading state
-    cogGuildSelect.disabled = true;
-    cogGuildSelect.innerHTML = '<option value="">Loading servers...</option>';
-
-    // Fetch guilds from API
-    API.get('/dashboard/api/guilds')
-        .then(guilds => {
-            // Clear loading state
-            cogGuildSelect.innerHTML = '<option value="">--Please choose a server--</option>';
-
-            // Add guilds to select
-            guilds.forEach(guild => {
-                const option = document.createElement('option');
-                option.value = guild.id;
-                option.textContent = guild.name;
-                cogGuildSelect.appendChild(option);
-            });
-
-            // Enable select
-            cogGuildSelect.disabled = false;
-        })
-        .catch(error => {
-            console.error('Error loading guilds:', error);
-            cogGuildSelect.innerHTML = '<option value="">Error loading servers</option>';
-            cogGuildSelect.disabled = false;
-            Toast.error('Failed to load servers. Please try again.');
-        });
-}
-
-/**
- * Load cogs and commands for a guild
- * @param {string} guildId - The guild ID
- */
-function loadCogsAndCommands(guildId) {
     // Show loading state
     document.getElementById('cog-management-loading').style.display = 'flex';
     document.getElementById('cog-management-content').style.display = 'none';
 
     // Fetch cogs and commands from API
-    console.log(`Loading cogs and commands for guild ${guildId}...`);
     API.get(`/dashboard/api/guilds/${guildId}/cogs`)
         .then(data => {
             console.log('Cogs and commands loaded successfully:', data);
@@ -135,9 +104,14 @@ function loadCogsAndCommands(guildId) {
             // Hide loading state
             document.getElementById('cog-management-loading').style.display = 'none';
             document.getElementById('cog-management-content').style.display = 'block';
+
+            // Mark data as loaded for this guild
+            cogManagementLoadedGuild = guildId;
         })
         .catch(error => {
             console.error('Error loading cogs and commands:', error);
+            document.getElementById('cog-management-loading').style.display = 'none';
+            Toast.error('Failed to load cogs and commands. Please try again.');
             document.getElementById('cog-management-loading').style.display = 'none';
             Toast.error('Failed to load cogs and commands. Please try again.');
         });
@@ -322,10 +296,13 @@ function filterCommands(cogName) {
 }
 
 /**
- * Save cogs settings
+ * Save cogs settings. Uses the globally stored window.selectedGuildId.
  */
 function saveCogsSettings() {
-    if (!selectedGuildId) return;
+    if (!window.selectedGuildId) { // Use global guild ID from main.js
+        Toast.error("No server selected.");
+        return;
+    }
 
     // Show loading state
     const saveButton = document.getElementById('save-cogs-button');
@@ -343,7 +320,7 @@ function saveCogsSettings() {
     });
 
     // Send request to API
-    API.patch(`/dashboard/api/guilds/${selectedGuildId}/settings`, {
+    API.patch(`/dashboard/api/guilds/${window.selectedGuildId}/settings`, {
         cogs: cogsPayload
     })
         .then(() => {
@@ -379,10 +356,13 @@ function saveCogsSettings() {
 }
 
 /**
- * Save commands settings
+ * Save commands settings. Uses the globally stored window.selectedGuildId.
  */
 function saveCommandsSettings() {
-    if (!selectedGuildId) return;
+    if (!window.selectedGuildId) { // Use global guild ID from main.js
+        Toast.error("No server selected.");
+        return;
+    }
 
     // Show loading state
     const saveButton = document.getElementById('save-commands-button');
@@ -398,7 +378,7 @@ function saveCommandsSettings() {
     });
 
     // Send request to API
-    API.patch(`/dashboard/api/guilds/${selectedGuildId}/settings`, {
+    API.patch(`/dashboard/api/guilds/${window.selectedGuildId}/settings`, {
         commands: commandsPayload
     })
         .then(() => {
