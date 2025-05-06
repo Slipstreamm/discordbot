@@ -259,6 +259,8 @@ async def send_discord_message_via_api(channel_id: int, content: str, timeout: f
         }
 # ---------------------------------
 
+# Import dependencies after defining settings and constants
+from . import dependencies
 from api_models import (
     Conversation,
     UserSettings,
@@ -300,6 +302,8 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
     # Start aiohttp session
     http_session = aiohttp.ClientSession()
     log.info("aiohttp session started.")
+    dependencies.set_http_session(http_session) # Pass session to dependencies module
+    log.info("aiohttp session passed to dependencies module.")
 
     # Initialize settings_manager pools for the API server
     # This is necessary because the API server runs in a different thread/event loop
@@ -794,175 +798,22 @@ async def auth(code: str, state: str = None, code_verifier: str = None, request:
         return {"message": "Authentication failed", "error": str(e)}
 
 
-# ============= Dashboard API Models & Dependencies =============
-# (Copied from previous dashboard_api/main.py logic)
+# ============= Dashboard API Models =============
+# Models are now in dashboard_models.py
+# Dependencies are now in dependencies.py
 
-from pydantic import BaseModel, Field # Ensure BaseModel/Field are imported if not already
-
-class GuildSettingsResponse(BaseModel):
-    guild_id: str
-    prefix: Optional[str] = None
-    welcome_channel_id: Optional[str] = None
-    welcome_message: Optional[str] = None
-    goodbye_channel_id: Optional[str] = None
-    goodbye_message: Optional[str] = None
-    enabled_cogs: Dict[str, bool] = {} # Cog name -> enabled status
-    command_permissions: Dict[str, List[str]] = {} # Command name -> List of allowed role IDs (as strings)
-    # channels: List[dict] = [] # TODO: Need bot interaction to get this reliably
-    # roles: List[dict] = [] # TODO: Need bot interaction to get this reliably
-
-class GuildSettingsUpdate(BaseModel):
-    # Use Optional fields for PATCH, only provided fields will be updated
-    prefix: Optional[str] = Field(None, min_length=1, max_length=10)
-    welcome_channel_id: Optional[str] = Field(None) # Allow empty string or null to disable
-    welcome_message: Optional[str] = Field(None)
-    goodbye_channel_id: Optional[str] = Field(None) # Allow empty string or null to disable
-    goodbye_message: Optional[str] = Field(None)
-    cogs: Optional[Dict[str, bool]] = Field(None) # Dict of {cog_name: enabled_status}
-    # command_permissions: Optional[dict] = None # TODO: How to represent updates? Simpler to use dedicated endpoints.
-
-class CommandPermission(BaseModel):
-    command_name: str
-    role_id: str # Keep as string for consistency
-
-class CommandPermissionsResponse(BaseModel):
-    permissions: Dict[str, List[str]] # Command name -> List of allowed role IDs
-
-class CommandCustomizationDetail(BaseModel):
-    name: str
-    description: Optional[str] = None
-
-class CommandCustomizationResponse(BaseModel):
-    command_customizations: Dict[str, Dict[str, Optional[str]]] = {} # Original command name -> {name, description}
-    group_customizations: Dict[str, str] = {} # Original group name -> Custom group name
-    command_aliases: Dict[str, List[str]] = {} # Original command name -> List of aliases
-
-class CommandCustomizationUpdate(BaseModel):
-    command_name: str
-    custom_name: Optional[str] = None # If None, removes customization
-    custom_description: Optional[str] = None # If None, keeps existing or no description
-
-class GroupCustomizationUpdate(BaseModel):
-    group_name: str
-    custom_name: Optional[str] = None # If None, removes customization
-
-class CommandAliasAdd(BaseModel):
-    command_name: str
-    alias_name: str
-
-class CommandAliasRemove(BaseModel):
-    command_name: str
-    alias_name: str
-
-# --- Authentication Dependency (Dashboard Specific) ---
-# Note: This uses session cookies set by the dashboard auth flow
-async def get_dashboard_user(request: Request) -> dict:
-    """Dependency to check if user is authenticated via dashboard session and return user data."""
-    user_id = request.session.get('user_id')
-    username = request.session.get('username')
-    access_token = request.session.get('access_token') # Needed for subsequent Discord API calls
-
-    if not user_id or not username or not access_token:
-        logging.warning("Dashboard: Attempted access by unauthenticated user.")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated for dashboard",
-            headers={"WWW-Authenticate": "Bearer"}, # Standard header for 401
-        )
-    # Return essential user info and token for potential use in endpoints
-    return {
-        "user_id": user_id,
-        "username": username,
-        "avatar": request.session.get('avatar'),
-        "access_token": access_token
-        }
-
-# --- Guild Admin Verification Dependency (Dashboard Specific) ---
-async def verify_dashboard_guild_admin(guild_id: int, current_user: dict = Depends(get_dashboard_user)) -> bool:
-    """Dependency to verify the dashboard session user is an admin of the specified guild."""
-    global http_session # Use the global aiohttp session
-    if not http_session:
-         raise HTTPException(status_code=500, detail="Internal server error: HTTP session not ready.")
-
-    user_headers = {'Authorization': f'Bearer {current_user["access_token"]}'}
-    try:
-        log.debug(f"Dashboard: Verifying admin status for user {current_user['user_id']} in guild {guild_id}")
-
-        # Add rate limit handling
-        max_retries = 3
-        retry_count = 0
-        retry_after = 0
-
-        while retry_count < max_retries:
-            if retry_after > 0:
-                log.warning(f"Dashboard: Rate limited by Discord API, waiting {retry_after} seconds before retry")
-                await asyncio.sleep(retry_after)
-
-            async with http_session.get(DISCORD_USER_GUILDS_URL, headers=user_headers) as resp:
-                if resp.status == 429:  # Rate limited
-                    retry_count += 1
-
-                    # Get the most accurate retry time from headers
-                    retry_after = float(resp.headers.get('X-RateLimit-Reset-After',
-                                      resp.headers.get('Retry-After', 1)))
-
-                    # Check if this is a global rate limit
-                    is_global = resp.headers.get('X-RateLimit-Global') is not None
-
-                    # Get the rate limit scope if available
-                    scope = resp.headers.get('X-RateLimit-Scope', 'unknown')
-
-                    log.warning(
-                        f"Dashboard: Discord API rate limit hit. "
-                        f"Global: {is_global}, Scope: {scope}, "
-                        f"Reset after: {retry_after}s, "
-                        f"Retry: {retry_count}/{max_retries}"
-                    )
-
-                    # For global rate limits, we might want to wait longer
-                    if is_global:
-                        retry_after = max(retry_after, 5)  # At least 5 seconds for global limits
-
-                    continue
-
-                if resp.status == 401:
-                    # Clear session if token is invalid
-                    # request.session.clear() # Cannot access request here directly
-                    raise HTTPException(status_code=401, detail="Discord token invalid or expired. Please re-login.")
-
-                resp.raise_for_status()
-                user_guilds = await resp.json()
-
-                ADMINISTRATOR_PERMISSION = 0x8
-                is_admin = False
-                for guild in user_guilds:
-                    if int(guild['id']) == guild_id:
-                        permissions = int(guild['permissions'])
-                        if (permissions & ADMINISTRATOR_PERMISSION) == ADMINISTRATOR_PERMISSION:
-                            is_admin = True
-                            break # Found the guild and user is admin
-
-                if not is_admin:
-                    log.warning(f"Dashboard: User {current_user['user_id']} is not admin or not in guild {guild_id}.")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is not an administrator of this guild.")
-
-                log.debug(f"Dashboard: User {current_user['user_id']} verified as admin for guild {guild_id}.")
-                return True # Indicate verification success
-
-        # If we get here, we've exceeded our retry limit
-        raise HTTPException(status_code=429, detail="Rate limited by Discord API. Please try again later.")
-    except aiohttp.ClientResponseError as e:
-        log.exception(f"Dashboard: HTTP error verifying guild admin status: {e.status} {e.message}")
-        if e.status == 429:
-            raise HTTPException(status_code=429, detail="Rate limited by Discord API. Please try again later.")
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Error communicating with Discord API.")
-    except Exception as e:
-        log.exception(f"Dashboard: Generic error verifying guild admin status: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred during permission verification.")
-
+from .dashboard_models import (
+    GuildSettingsResponse,
+    GuildSettingsUpdate,
+    CommandPermission,
+    CommandPermissionsResponse,
+    CogInfo, # Needed for direct cog endpoint
+    # Other models used by imported routers are not needed here directly
+)
 
 # ============= Dashboard API Routes =============
 # (Mounted under /dashboard/api)
+# Dependencies are imported from dependencies.py
 
 # --- Direct Cog Management Endpoints ---
 # These are direct implementations in case the imported endpoints don't work
@@ -981,8 +832,8 @@ class CogInfo(BaseModel):
 @dashboard_api_app.get("/guilds/{guild_id}/cogs", response_model=List[CogInfo], tags=["Cog Management"])
 async def get_guild_cogs_direct(
     guild_id: int,
-    _user: dict = Depends(get_dashboard_user),
-    _admin: bool = Depends(verify_dashboard_guild_admin)
+    _user: dict = Depends(dependencies.get_dashboard_user),
+    _admin: bool = Depends(dependencies.verify_dashboard_guild_admin)
 ):
     """Get all cogs and their commands for a guild."""
     try:
@@ -1143,8 +994,8 @@ async def update_cog_status_direct(
     guild_id: int,
     cog_name: str,
     enabled: bool = Body(..., embed=True),
-    _user: dict = Depends(get_dashboard_user),
-    _admin: bool = Depends(verify_dashboard_guild_admin)
+    _user: dict = Depends(dependencies.get_dashboard_user),
+    _admin: bool = Depends(dependencies.verify_dashboard_guild_admin)
 ):
     """Enable or disable a cog for a guild."""
     try:
@@ -1208,8 +1059,8 @@ async def update_command_status_direct(
     guild_id: int,
     command_name: str,
     enabled: bool = Body(..., embed=True),
-    _user: dict = Depends(get_dashboard_user),
-    _admin: bool = Depends(verify_dashboard_guild_admin)
+    _user: dict = Depends(dependencies.get_dashboard_user),
+    _admin: bool = Depends(dependencies.verify_dashboard_guild_admin)
 ):
     """Enable or disable a command for a guild."""
     try:
@@ -1437,7 +1288,7 @@ async def dashboard_auth_status(request: Request):
 
 # --- Dashboard User Endpoints ---
 @dashboard_api_app.get("/user/me", tags=["Dashboard User"])
-async def dashboard_get_user_me(current_user: dict = Depends(get_dashboard_user)):
+async def dashboard_get_user_me(current_user: dict = Depends(dependencies.get_dashboard_user)):
     """Returns information about the currently logged-in dashboard user."""
     user_info = current_user.copy()
     # del user_info['access_token'] # Optional: Don't expose token to frontend
@@ -1465,7 +1316,7 @@ async def dashboard_get_auth_user(request: Request):
 
 @dashboard_api_app.get("/user/guilds", tags=["Dashboard User"])
 @dashboard_api_app.get("/guilds", tags=["Dashboard Guild Settings"])
-async def dashboard_get_user_guilds(current_user: dict = Depends(get_dashboard_user)):
+async def dashboard_get_user_guilds(current_user: dict = Depends(dependencies.get_dashboard_user)):
     """Returns a list of guilds the user is an administrator in AND the bot is also in."""
     global http_session # Use the global aiohttp session
     if not http_session:
@@ -1545,8 +1396,8 @@ async def dashboard_get_user_guilds(current_user: dict = Depends(get_dashboard_u
 @dashboard_api_app.get("/guilds/{guild_id}/channels", tags=["Dashboard Guild Settings"])
 async def dashboard_get_guild_channels(
     guild_id: int,
-    current_user: dict = Depends(get_dashboard_user),
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    current_user: dict = Depends(dependencies.get_dashboard_user),
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Fetches the channels for a specific guild for the dashboard."""
     global http_session # Use the global aiohttp session
@@ -1656,8 +1507,8 @@ async def dashboard_get_guild_channels(
 @dashboard_api_app.get("/guilds/{guild_id}/roles", tags=["Dashboard Guild Settings"])
 async def dashboard_get_guild_roles(
     guild_id: int,
-    current_user: dict = Depends(get_dashboard_user),
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    current_user: dict = Depends(dependencies.get_dashboard_user),
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Fetches the roles for a specific guild for the dashboard."""
     global http_session # Use the global aiohttp session
@@ -1751,8 +1602,8 @@ async def dashboard_get_guild_roles(
 @dashboard_api_app.get("/guilds/{guild_id}/commands", tags=["Dashboard Guild Settings"])
 async def dashboard_get_guild_commands(
     guild_id: int,
-    current_user: dict = Depends(get_dashboard_user),
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    current_user: dict = Depends(dependencies.get_dashboard_user),
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Fetches the commands for a specific guild for the dashboard."""
     global http_session # Use the global aiohttp session
@@ -1845,7 +1696,7 @@ async def dashboard_get_guild_commands(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred while fetching commands.")
 
 @dashboard_api_app.get("/settings", tags=["Dashboard Settings"])
-async def dashboard_get_settings(current_user: dict = Depends(get_dashboard_user)):
+async def dashboard_get_settings(current_user: dict = Depends(dependencies.get_dashboard_user)):
     """Fetches the global AI settings for the dashboard."""
     log.info(f"Dashboard: Fetching global settings requested by user {current_user['user_id']}")
 
@@ -1872,7 +1723,7 @@ async def dashboard_get_settings(current_user: dict = Depends(get_dashboard_user
 
 @dashboard_api_app.post("/settings", tags=["Dashboard Settings"])
 @dashboard_api_app.put("/settings", tags=["Dashboard Settings"])
-async def dashboard_update_settings(request: Request, current_user: dict = Depends(get_dashboard_user)):
+async def dashboard_update_settings(request: Request, current_user: dict = Depends(dependencies.get_dashboard_user)):
     """Updates the global AI settings for the dashboard."""
     log.info(f"Dashboard: Updating global settings requested by user {current_user['user_id']}")
 
@@ -1918,8 +1769,8 @@ async def dashboard_update_settings(request: Request, current_user: dict = Depen
 @dashboard_api_app.get("/guilds/{guild_id}/settings", response_model=GuildSettingsResponse, tags=["Dashboard Guild Settings"])
 async def dashboard_get_guild_settings(
     guild_id: int,
-    current_user: dict = Depends(get_dashboard_user),
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    current_user: dict = Depends(dependencies.get_dashboard_user),
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Fetches the current settings for a specific guild for the dashboard."""
     if not settings_manager:
@@ -1982,8 +1833,8 @@ async def dashboard_get_guild_settings(
 async def dashboard_update_guild_settings(
     guild_id: int,
     settings_update: GuildSettingsUpdate,
-    current_user: dict = Depends(get_dashboard_user),
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    current_user: dict = Depends(dependencies.get_dashboard_user),
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Updates specific settings for a guild via the dashboard."""
     if not settings_manager:
@@ -2036,8 +1887,8 @@ async def dashboard_update_guild_settings(
 @dashboard_api_app.get("/guilds/{guild_id}/permissions", response_model=CommandPermissionsResponse, tags=["Dashboard Guild Settings"])
 async def dashboard_get_all_guild_command_permissions_map(
     guild_id: int,
-    current_user: dict = Depends(get_dashboard_user),
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    current_user: dict = Depends(dependencies.get_dashboard_user),
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Fetches all command permissions currently set for the guild for the dashboard as a map."""
     if not settings_manager:
@@ -2070,8 +1921,8 @@ async def dashboard_get_all_guild_command_permissions_map(
 @dashboard_api_app.get("/guilds/{guild_id}/command-permissions", tags=["Dashboard Guild Settings"])
 async def dashboard_get_all_guild_command_permissions(
     guild_id: int,
-    current_user: dict = Depends(get_dashboard_user),
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    current_user: dict = Depends(dependencies.get_dashboard_user),
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Fetches all command permissions currently set for the guild for the dashboard as an array of objects."""
     if not settings_manager:
@@ -2122,8 +1973,8 @@ async def dashboard_get_all_guild_command_permissions(
 @dashboard_api_app.post("/guilds/{guild_id}/test-welcome", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
 async def dashboard_test_welcome_message(
     guild_id: int,
-    _user: dict = Depends(get_dashboard_user),  # Underscore prefix to indicate unused parameter
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    _user: dict = Depends(dependencies.get_dashboard_user),  # Underscore prefix to indicate unused parameter
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Test the welcome message for a guild."""
     try:
@@ -2200,8 +2051,8 @@ async def dashboard_test_welcome_message(
 @dashboard_api_app.post("/guilds/{guild_id}/test-goodbye", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
 async def dashboard_test_goodbye_message(
     guild_id: int,
-    _user: dict = Depends(get_dashboard_user),  # Underscore prefix to indicate unused parameter
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    _user: dict = Depends(dependencies.get_dashboard_user),  # Underscore prefix to indicate unused parameter
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Test the goodbye message for a guild."""
     try:
@@ -2279,8 +2130,8 @@ async def dashboard_test_goodbye_message(
 async def dashboard_add_guild_command_permission(
     guild_id: int,
     permission: CommandPermission,
-    current_user: dict = Depends(get_dashboard_user),
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    current_user: dict = Depends(dependencies.get_dashboard_user),
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Adds a role permission for a specific command via the dashboard."""
     if not settings_manager:
@@ -2305,8 +2156,8 @@ async def dashboard_add_guild_command_permission(
 async def dashboard_remove_guild_command_permission(
     guild_id: int,
     permission: CommandPermission,
-    current_user: dict = Depends(get_dashboard_user),
-    _: bool = Depends(verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    current_user: dict = Depends(dependencies.get_dashboard_user),
+    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
 ):
     """Removes a role permission for a specific command via the dashboard."""
     if not settings_manager:

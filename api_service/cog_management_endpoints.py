@@ -8,19 +8,13 @@ from typing import List, Dict, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from pydantic import BaseModel, Field
 
-# Import the dependencies from api_server.py
+# Import dependencies from the new dependencies module
 try:
     # Try relative import first
-    from .api_server import (
-        get_dashboard_user,
-        verify_dashboard_guild_admin
-    )
+    from .dependencies import get_dashboard_user, verify_dashboard_guild_admin
 except ImportError:
     # Fall back to absolute import
-    from api_server import (
-        get_dashboard_user,
-        verify_dashboard_guild_admin
-    )
+    from dependencies import get_dashboard_user, verify_dashboard_guild_admin
 
 # Import settings_manager for database access
 try:
@@ -35,22 +29,19 @@ except ImportError:
 # Set up logging
 log = logging.getLogger(__name__)
 
+# Import models from the new dashboard_models module
+try:
+    # Try relative import first
+    from .dashboard_models import CogInfo, CommandInfo # Import necessary models
+except ImportError:
+    # Fall back to absolute import
+    from dashboard_models import CogInfo, CommandInfo # Import necessary models
+
 # Create a router for the cog management API endpoints
 router = APIRouter(tags=["Cog Management"])
 
-# --- Models ---
-class CommandInfo(BaseModel):
-    name: str
-    description: Optional[str] = None
-    enabled: bool = True
-
-class CogInfo(BaseModel):
-    name: str
-    description: Optional[str] = None
-    enabled: bool = True
-    commands: List[Dict[str, Any]] = []
-
 # --- Endpoints ---
+# Models CogInfo and CommandInfo are now imported from dashboard_models.py
 @router.get("/guilds/{guild_id}/cogs", response_model=List[CogInfo])
 async def get_guild_cogs(
     guild_id: int,

@@ -6,10 +6,9 @@ import logging
 from typing import Optional, Union, Dict, Any
 import datetime
 
-# Assuming db functions are in discordbot.db.mod_log_db
-from ..db import mod_log_db
-# Assuming settings manager module is available
-from .. import settings_manager as sm # Use module functions directly
+# Use absolute imports from the discordbot package root
+from discordbot.db import mod_log_db
+from discordbot import settings_manager as sm # Use module functions directly
 
 log = logging.getLogger(__name__)
 

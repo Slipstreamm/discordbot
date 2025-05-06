@@ -5,8 +5,8 @@ import datetime
 import logging
 from typing import Optional, Union, List
 
-# Import the new ModLogCog
-from .mod_log_cog import ModLogCog
+# Use absolute import for ModLogCog
+from discordbot.cogs.mod_log_cog import ModLogCog
 
 # Configure logging
 logger = logging.getLogger(__name__)

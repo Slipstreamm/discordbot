@@ -8,12 +8,18 @@ from typing import List, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-# Import the dependencies from api_server.py
+# Import dependencies from the new dependencies module
 try:
     # Try relative import first
-    from .api_server import (
-        get_dashboard_user,
-        verify_dashboard_guild_admin,
+    from .dependencies import get_dashboard_user, verify_dashboard_guild_admin
+except ImportError:
+    # Fall back to absolute import
+    from dependencies import get_dashboard_user, verify_dashboard_guild_admin
+
+# Import models from the new dashboard_models module
+try:
+    # Try relative import first
+    from .dashboard_models import (
         CommandCustomizationResponse,
         CommandCustomizationUpdate,
         GroupCustomizationUpdate,
@@ -22,9 +28,7 @@ try:
     )
 except ImportError:
     # Fall back to absolute import
-    from api_server import (
-        get_dashboard_user,
-        verify_dashboard_guild_admin,
+    from dashboard_models import (
         CommandCustomizationResponse,
         CommandCustomizationUpdate,
         GroupCustomizationUpdate,

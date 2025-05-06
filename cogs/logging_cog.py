@@ -1214,7 +1214,8 @@ class LoggingCog(commands.Cog):
 
             try:
                 # Fetch entries after the last known ID for this guild
-                async for entry in guild.audit_logs(limit=50, after=discord.Object(id=last_id) if last_id else None, actions=relevant_actions):
+                # The 'actions' parameter is deprecated; filter manually after fetching.
+                async for entry in guild.audit_logs(limit=50, after=discord.Object(id=last_id) if last_id else None):
                     # log.debug(f"Processing audit entry {entry.id} for guild {guild_id}") # Debug print
                     # Double check ID comparison just in case the 'after' parameter isn't perfectly reliable across different calls/times
                     if last_id is None or entry.id > last_id:
@@ -1224,7 +1225,9 @@ class LoggingCog(commands.Cog):
 
                 # Process entries oldest to newest to maintain order
                 for entry in reversed(entries_to_log):
-                    await self._process_audit_log_entry(guild, entry)
+                    # Filter by action *after* fetching
+                    if entry.action in relevant_actions:
+                        await self._process_audit_log_entry(guild, entry)
 
                 # Update the last seen ID for this guild *after* processing the batch
                 if latest_id_in_batch is not None and latest_id_in_batch != last_id:
