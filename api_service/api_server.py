@@ -788,6 +788,26 @@ from discordbot.api_service.dashboard_models import (
     # Other models used by imported routers are not needed here directly
 )
 
+# --- AI Moderation Action Model ---
+class AIModerationAction(BaseModel):
+    timestamp: str
+    guild_id: int
+    guild_name: str
+    channel_id: int
+    channel_name: str
+    message_id: int
+    message_link: str
+    user_id: int
+    user_name: str
+    action: str
+    rule_violated: str
+    reasoning: str
+    violation: bool
+    message_content: str
+    attachments: list[str] = []
+    ai_model: str
+    result: str
+
 # ============= Dashboard API Routes =============
 # (Mounted under /dashboard/api)
 # Dependencies are imported from dependencies.py
@@ -1947,83 +1967,67 @@ async def dashboard_get_all_guild_command_permissions(
         log.exception(f"Dashboard: Database error fetching all command permissions for guild {guild_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch command permissions.")
 
-@dashboard_api_app.post("/guilds/{guild_id}/test-welcome", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
-async def dashboard_test_welcome_message(
+@dashboard_api_app.post(
+    "/guilds/{guild_id}/ai-moderation-action",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Moderation", "AI Integration"]
+)
+async def ai_moderation_action(
     guild_id: int,
-    _user: dict = Depends(dependencies.get_dashboard_user),  # Underscore prefix to indicate unused parameter
-    _: bool = Depends(dependencies.verify_dashboard_guild_admin)  # Underscore indicates unused but required dependency
+    action: AIModerationAction,
+    request: Request
 ):
-    """Test the welcome message for a guild."""
+    """
+    Endpoint for external AI moderator to log moderation actions and add them to cases.
+    Requires header: Authorization: Bearer <MOD_LOG_API_SECRET>
+    """
+    # Security check
+    auth_header = request.headers.get("Authorization")
+    if not settings.MOD_LOG_API_SECRET or not auth_header or auth_header != f"Bearer {settings.MOD_LOG_API_SECRET}":
+        log.warning("Unauthorized attempt to use AI moderation endpoint.")
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Validate guild_id in path matches payload
+    if guild_id != action.guild_id:
+        raise HTTPException(status_code=400, detail="guild_id in path does not match payload")
+
+    # Insert into moderation log
+    if not settings_manager or not settings_manager.pg_pool:
+        log.error("settings_manager or pg_pool not available for AI moderation logging.")
+        raise HTTPException(status_code=503, detail="Moderation logging unavailable")
+
+    # Use bot ID 0 for AI actions (or a reserved ID)
+    AI_MODERATOR_ID = 0
+
+    # Map action type to internal action_type if needed
+    action_type = action.action.upper()
+    reason = f"[AI:{action.ai_model}] Rule {action.rule_violated}: {action.reasoning}"
+
+    # Add to moderation log
     try:
-        # Get welcome settings
-        welcome_channel_id_str = await settings_manager.get_setting(guild_id, 'welcome_channel_id')
-        welcome_message_template = await settings_manager.get_setting(guild_id, 'welcome_message', default="Welcome {user} to {server}!")
-
-        # Check if welcome channel is set
-        if not welcome_channel_id_str or welcome_channel_id_str == "__NONE__":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Welcome channel not configured"
+        from discordbot.db import mod_log_db
+        case_id = await mod_log_db.add_mod_log(
+            settings_manager.pg_pool,
+            guild_id=action.guild_id,
+            moderator_id=AI_MODERATOR_ID,
+            target_user_id=action.user_id,
+            action_type=action_type,
+            reason=reason,
+            duration_seconds=None
+        )
+        # Optionally update with message/channel info
+        if case_id and action.message_id and action.channel_id:
+            await mod_log_db.update_mod_log_message_details(
+                settings_manager.pg_pool,
+                case_id=case_id,
+                message_id=action.message_id,
+                channel_id=action.channel_id
             )
-
-        # Get the guild name from Discord API
-        guild_name = await get_guild_name_from_api(guild_id)
-
-        # Format the message
-        formatted_message = welcome_message_template.format(
-            user="@TestUser",
-            username="TestUser",
-            server=guild_name
-        )
-
-        # No need to import bot_instance anymore since we're using the direct API approach
-
-        # Send the message directly via Discord API
-        try:
-            welcome_channel_id = int(welcome_channel_id_str)
-
-            # Send the message using our direct API approach
-            result = await send_discord_message_via_api(welcome_channel_id, formatted_message)
-
-            if result["success"]:
-                log.info(f"Sent test welcome message to channel {welcome_channel_id} in guild {guild_id}")
-                return {
-                    "message": "Test welcome message sent successfully",
-                    "channel_id": welcome_channel_id_str,
-                    "formatted_message": formatted_message,
-                    "message_id": result.get("message_id")
-                }
-            else:
-                log.error(f"Error sending test welcome message to channel {welcome_channel_id} in guild {guild_id}: {result['message']}")
-                return {
-                    "message": f"Test welcome message could not be sent: {result['message']}",
-                    "channel_id": welcome_channel_id_str,
-                    "formatted_message": formatted_message,
-                    "error": result.get("error")
-                }
-        except ValueError:
-            log.error(f"Invalid welcome channel ID '{welcome_channel_id_str}' for guild {guild_id}")
-            return {
-                "message": "Test welcome message could not be sent (invalid channel ID)",
-                "channel_id": welcome_channel_id_str,
-                "formatted_message": formatted_message
-            }
-        except Exception as e:
-            log.error(f"Error sending test welcome message to channel {welcome_channel_id_str} in guild {guild_id}: {e}")
-            return {
-                "message": f"Test welcome message could not be sent: {str(e)}",
-                "channel_id": welcome_channel_id_str,
-                "formatted_message": formatted_message
-            }
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
+        log.info(f"AI moderation action logged for guild {guild_id}, user {action.user_id}, action {action_type}, case {case_id}")
+        return {"success": True, "case_id": case_id}
     except Exception as e:
-        log.error(f"Error testing welcome message for guild {guild_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error testing welcome message: {str(e)}"
-        )
+        log.exception(f"Error logging AI moderation action: {e}")
+        raise HTTPException(status_code=500, detail=f"Error logging moderation action: {str(e)}")
 
 @dashboard_api_app.post("/guilds/{guild_id}/test-goodbye", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
 async def dashboard_test_goodbye_message(

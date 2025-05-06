@@ -237,8 +237,12 @@ class ModLogCog(commands.Cog):
             "AI_ALERT": Color.purple(),
             "AI_DELETE_REQUESTED": Color.dark_grey(),
         }
-        embed_color = color_map.get(action_type.upper(), Color.greyple())
-        action_title_prefix = "AI Moderation Action" if source == "AI_API" else action_type.replace("_", " ").title()
+        # Use a distinct color for AI actions
+        if source == "AI_API":
+            embed_color = Color.blurple()
+        else:
+            embed_color = color_map.get(action_type.upper(), Color.greyple())
+        action_title_prefix = "🤖 AI Moderation Action" if source == "AI_API" else action_type.replace("_", " ").title()
         action_title = f"{action_title_prefix} | Case #{case_id}"
 
         embed = Embed(
@@ -296,7 +300,14 @@ class ModLogCog(commands.Cog):
                  embed.add_field(name="Expires", value=f"<t:{int(expires_at.timestamp())}:R>", inline=True)
 
 
-        embed.set_footer(text=f"Guild: {guild.name} ({guild.id})")
+        if source == "AI_API":
+            ai_model = ai_details.get("ai_model") if ai_details else None
+            embed.set_footer(
+                text=f"AI Moderation Action • {guild.name} ({guild.id})" + (f" • Model: {ai_model}" if ai_model else ""),
+                icon_url="https://cdn-icons-png.flaticon.com/512/4712/4712035.png"
+            )
+        else:
+            embed.set_footer(text=f"Guild: {guild.name} ({guild.id})")
 
         return embed
 
