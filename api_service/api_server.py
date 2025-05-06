@@ -5,7 +5,7 @@ import asyncio
 from typing import Dict, List, Optional, Any
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response, status, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -375,11 +375,27 @@ app = FastAPI(title="Unified API Service", lifespan=lifespan)
 @app.exception_handler(StarletteHTTPException)
 async def teapot_override(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 404:
-        return JSONResponse(
-            status_code=418,
-            content={"detail": "I'm a teapot"}
-        )
-    raise exc  # let other errors propagate normally
+        html_content = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>418 I'm a teapot</title>
+            <style>
+                body { font-family: Arial, sans-serif; background-color: #fef6e4; text-align: center; padding: 50px; }
+                h1 { font-size: 48px; color: #d62828; }
+                p { font-size: 24px; color: #2b2d42; }
+                .teapot { font-size: 100px; }
+            </style>
+        </head>
+        <body>
+            <div class="teapot">🫖</div>
+            <h1>418 I'm a teapot</h1>
+            <p>You asked for something I can't brew. Try a different path.</p>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content, status_code=418)
+    raise exc
 
 # Add Session Middleware for Dashboard Auth
 # Uses DASHBOARD_SECRET_KEY from settings
