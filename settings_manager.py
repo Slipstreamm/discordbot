@@ -50,16 +50,15 @@ async def initialize_pools():
         current_loop = asyncio.get_event_loop() # Get the currently running event loop
 
         # Create PostgreSQL pool with more conservative settings
-        # Increase max_inactive_connection_lifetime to avoid connections being closed too quickly
         pg_pool = await asyncpg.create_pool(
             DATABASE_URL,
             min_size=1,
             max_size=10,
-            max_inactive_connection_lifetime=60.0,  # 60 seconds (default is 10 minutes)
+            # max_inactive_connection_lifetime=300.0,  # Using asyncpg default (600s)
             command_timeout=30.0,  # 30 seconds timeout for commands
             loop=current_loop # Explicitly pass the loop
         )
-        log.info(f"PostgreSQL pool connected to {POSTGRES_HOST}/{POSTGRES_DB} on loop {current_loop}")
+        log.info(f"PostgreSQL pool connected to {POSTGRES_HOST}/{POSTGRES_DB} on loop {current_loop} (using default inactive connection lifetime)")
 
         # Create Redis pool with connection_cls=None to avoid event loop issues
         # This creates a connection pool that doesn't bind to a specific event loop
@@ -983,13 +982,37 @@ async def get_setting(guild_id: int, key: str, default=None):
     # Cache miss or Redis error, get from database
     log.debug(f"Cache miss for setting '{key}' (Guild: {guild_id})")
     try:
-        async with pg_pool.acquire() as conn:
+        async with pg_pool.acquire() as conn: # Reverted to using pg_pool
             value = await conn.fetchval(
                 "SELECT setting_value FROM guild_settings WHERE guild_id = $1 AND setting_key = $2",
                 guild_id, key
             )
-
         final_value = value if value is not None else default
+    except Exception as e:
+        log.exception(f"Database error getting setting '{key}' for guild {guild_id}: {e}")
+        return default  # Fall back to default on database error
+    # finally block for db_conn removed as we are using pool context manager
+
+        # Cache the result (even if None or default, cache the absence or default value)
+        # Store None as a special marker, e.g., "None" string, or handle appropriately
+        value_to_cache = final_value if final_value is not None else "__NONE__" # Marker for None
+
+        # Try to cache the result with timeout and error handling
+        try:
+            # Use a timeout to prevent hanging on Redis operations
+            await asyncio.wait_for(
+                redis_pool.set(cache_key, value_to_cache, ex=3600),  # Cache for 1 hour
+                timeout=2.0
+            )
+        except asyncio.TimeoutError:
+            log.warning(f"Redis timeout setting cache for setting '{key}' for guild {guild_id}")
+        except RuntimeError as e:
+            if "got Future" in str(e) and "attached to a different loop" in str(e):
+                log.warning(f"Redis event loop error setting cache for setting '{key}' for guild {guild_id}: {e}")
+            else:
+                log.exception(f"Redis error setting cache for setting '{key}' for guild {guild_id}: {e}")
+        except Exception as e:
+            log.exception(f"Redis error setting cache for setting '{key}' for guild {guild_id}: {e}")
 
         # Cache the result (even if None or default, cache the absence or default value)
         # Store None as a special marker, e.g., "None" string, or handle appropriately
@@ -1013,21 +1036,18 @@ async def get_setting(guild_id: int, key: str, default=None):
             log.exception(f"Redis error setting cache for setting '{key}' for guild {guild_id}: {e}")
 
         return final_value
-    except Exception as e:
-        log.exception(f"Database error getting setting '{key}' for guild {guild_id}: {e}")
-        return default  # Fall back to default on database error
 
 
 async def set_setting(guild_id: int, key: str, value: str | None):
     """Sets a specific setting for a guild and updates/invalidates the cache.
        Setting value to None effectively deletes the setting."""
-    if not pg_pool or not redis_pool:
-        log.error(f"Pools not initialized, cannot set setting '{key}'.")
-        return False
+    if not redis_pool: # Only redis_pool is strictly necessary for cache part now
+        log.error(f"Redis pool not initialized, cannot set setting '{key}' (cache part will fail).")
+        # DB part might still work if DATABASE_URL is valid
 
     cache_key = _get_redis_key(guild_id, "setting", key)
     try:
-        async with pg_pool.acquire() as conn:
+        async with pg_pool.acquire() as conn: # Reverted to using pg_pool
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
 
@@ -1041,8 +1061,9 @@ async def set_setting(guild_id: int, key: str, value: str | None):
                     """,
                     guild_id, key, str(value) # Ensure value is string
                 )
-                # Update cache
-                await redis_pool.set(cache_key, str(value), ex=3600)
+                # Update cache if redis_pool is available
+                if redis_pool:
+                    await redis_pool.set(cache_key, str(value), ex=3600)
                 log.info(f"Set setting '{key}' for guild {guild_id}")
             else:
                 # Delete the setting if value is None
@@ -1050,19 +1071,21 @@ async def set_setting(guild_id: int, key: str, value: str | None):
                     "DELETE FROM guild_settings WHERE guild_id = $1 AND setting_key = $2",
                     guild_id, key
                 )
-                # Invalidate cache
-                await redis_pool.delete(cache_key)
+                # Invalidate cache if redis_pool is available
+                if redis_pool:
+                    await redis_pool.delete(cache_key)
                 log.info(f"Deleted setting '{key}' for guild {guild_id}")
-
         return True
     except Exception as e:
         log.exception(f"Database or Redis error setting setting '{key}' for guild {guild_id}: {e}")
-        # Attempt to invalidate cache on error
-        try:
-            await redis_pool.delete(cache_key)
-        except Exception as redis_err:
-            log.exception(f"Failed to invalidate Redis cache for setting '{key}' (Guild: {guild_id}): {redis_err}")
+        # Attempt to invalidate cache on error if redis_pool is available
+        if redis_pool:
+            try:
+                await redis_pool.delete(cache_key)
+            except Exception as redis_err:
+                log.exception(f"Failed to invalidate Redis cache for setting '{key}' (Guild: {guild_id}): {redis_err}")
         return False
+    # finally block for db_conn removed as we are using pool context manager
 
 # --- Cog Enablement Functions ---
 
