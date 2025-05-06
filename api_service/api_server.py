@@ -546,7 +546,7 @@ async def verify_discord_token(authorization: str = Header(None)) -> str:
 
 @app.get("/")
 async def root():
-    return {"message": "Unified API Service is running"}
+    return RedirectResponse(url="https://www.youtube.com/watch?v=dQw4w9WgXcQ", status_code=301)
 
 # Add root for dashboard API for clarity
 @dashboard_api_app.get("/")
