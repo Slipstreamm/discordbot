@@ -2027,8 +2027,10 @@ async def ai_moderation_action(
         log.info(f"AI moderation action logged for guild {guild_id}, user {action.user_id}, action {action_type}, case {case_id}")
         return {"success": True, "case_id": case_id}
     except Exception as e:
-        log.exception(f"Error logging AI moderation action: {e}")
-        raise HTTPException(status_code=500, detail=f"Error logging moderation action: {str(e)}")
+        import traceback
+        tb = traceback.format_exc()
+        log.error(f"Error logging AI moderation action: {e}\n{tb}")
+        return {"success": False, "error": str(e), "traceback": tb}
 
 @dashboard_api_app.post("/guilds/{guild_id}/test-goodbye", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
 async def dashboard_test_goodbye_message(
