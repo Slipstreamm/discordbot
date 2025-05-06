@@ -59,19 +59,23 @@ async def initialize_pools(event_loop=None): # Add event_loop parameter
 
     # Initialize new pools
     try:
-        # Use the provided event_loop for asyncpg, or let asyncpg decide if None
-        pg_loop_to_use = event_loop or asyncio.get_event_loop()
-        log.info(f"Attempting to create PostgreSQL pool on loop: {pg_loop_to_use}")
+        # asyncpg will automatically use the event loop it's called from.
+        # The event_loop parameter is now primarily for logging/confirmation.
+        current_executing_loop = asyncio.get_event_loop()
+        if event_loop:
+            log.info(f"initialize_pools called with event_loop: {event_loop}. Current executing loop: {current_executing_loop}.")
+        else:
+            log.info(f"initialize_pools called without event_loop. Current executing loop: {current_executing_loop}.")
 
         pg_pool = await asyncpg.create_pool(
             DATABASE_URL,
             min_size=1,
             max_size=10,
             command_timeout=30.0,  # 30 seconds timeout for commands
-            loop=pg_loop_to_use # Explicitly pass the loop
+            max_inactive_connection_lifetime=300  # Refresh idle connections after 5 minutes
+            # No loop parameter, asyncpg uses the current running loop
         )
-        # asyncpg's pool object doesn't directly expose its loop, but we log the one we intended to use.
-        log.info(f"PostgreSQL pool created for {POSTGRES_HOST}/{POSTGRES_DB} on intended loop: {pg_loop_to_use}. Actual loop during creation: {asyncio.get_event_loop()}")
+        log.info(f"PostgreSQL pool created for {POSTGRES_HOST}/{POSTGRES_DB}. Loop during creation: {asyncio.get_event_loop()}")
 
         # Create Redis pool
         # This creates a connection pool that doesn't bind to a specific event loop
