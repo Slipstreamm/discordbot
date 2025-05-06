@@ -7,9 +7,9 @@ from typing import Optional, Union, Dict, Any
 import datetime
 
 # Assuming db functions are in discordbot.db.mod_log_db
-from ..db import mod_log_db
+from db import mod_log_db
 # Assuming settings manager is available
-from ..settings_manager import SettingsManager # Adjust import path if necessary
+from settings_manager import SettingsManager # Adjust import path if necessary
 
 log = logging.getLogger(__name__)
 
