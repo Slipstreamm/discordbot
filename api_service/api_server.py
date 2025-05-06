@@ -370,7 +370,7 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
         log.info("aiohttp session closed.")
 
 # Create the FastAPI app with lifespan
-app = FastAPI(title="Unified API Service", lifespan=lifespan)
+app = FastAPI(title="Unified API Service", lifespan=lifespan, debug=True)
 
 @app.exception_handler(StarletteHTTPException)
 async def teapot_override(request: Request, exc: StarletteHTTPException):
@@ -2016,12 +2016,12 @@ async def ai_moderation_action(
     # Security check
     auth_header = request.headers.get("Authorization")
     if not settings.MOD_LOG_API_SECRET or not auth_header or auth_header != f"Bearer {settings.MOD_LOG_API_SECRET}":
-        log.info(request.get())
-        log.warning("Unauthorized attempt to use AI moderation endpoint.")
+        log.warning(f"Unauthorized attempt to use AI moderation endpoint. Headers: {request.headers}")
         raise HTTPException(status_code=403, detail="Forbidden")
 
     # Validate guild_id in path matches payload
     if guild_id != action.guild_id:
+        log.error(f"Mismatch between guild_id in path ({guild_id}) and payload ({action.guild_id}).")
         raise HTTPException(status_code=400, detail="guild_id in path does not match payload")
 
     # Insert into moderation log
@@ -2056,12 +2056,15 @@ async def ai_moderation_action(
                 message_id=action.message_id,
                 channel_id=action.channel_id
             )
-        log.info(f"AI moderation action logged for guild {guild_id}, user {action.user_id}, action {action_type}, case {case_id}")
+        log.info(f"AI moderation action logged successfully for guild {guild_id}, user {action.user_id}, action {action_type}, case {case_id}")
         return {"success": True, "case_id": case_id}
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
-        log.error(f"Error logging AI moderation action: {e}\n{tb}")
+        log.error(
+            f"Error logging AI moderation action for guild {guild_id}, user {action.user_id}, "
+            f"action {action_type}, reason: {reason}. Exception: {e}\nTraceback: {tb}"
+        )
         return {"success": False, "error": str(e), "traceback": tb}
 
 @dashboard_api_app.post("/guilds/{guild_id}/test-goodbye", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
