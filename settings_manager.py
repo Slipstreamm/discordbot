@@ -58,17 +58,20 @@ async def initialize_pools():
         current_loop = asyncio.get_event_loop() # Get the currently running event loop
 
         # Create PostgreSQL pool with more conservative settings
+        # Let asyncpg automatically use the event loop it's created in.
+        # Since initialize_pools is called from setup_hook, this will be the bot's loop.
         pg_pool = await asyncpg.create_pool(
             DATABASE_URL,
             min_size=1,
             max_size=10,
-            # max_inactive_connection_lifetime=300.0,  # Using asyncpg default (600s)
             command_timeout=30.0,  # 30 seconds timeout for commands
-            loop=current_loop # Explicitly pass the loop
+            # loop=None, # Explicitly None, or omit to let asyncpg use asyncio.get_event_loop()
         )
-        log.info(f"PostgreSQL pool connected to {POSTGRES_HOST}/{POSTGRES_DB} on loop {current_loop} (using default inactive connection lifetime)")
+        # Log the loop the pool is associated with, if possible (asyncpg doesn't directly expose this on the pool object)
+        # We rely on it being created in the loop from which initialize_pools is awaited (i.e., the bot's loop via setup_hook)
+        log.info(f"PostgreSQL pool created for {POSTGRES_HOST}/{POSTGRES_DB}. Current event loop during pool creation: {asyncio.get_event_loop()}")
 
-        # Create Redis pool with connection_cls=None to avoid event loop issues
+        # Create Redis pool
         # This creates a connection pool that doesn't bind to a specific event loop
         redis_pool = redis.from_url(
             REDIS_URL,
