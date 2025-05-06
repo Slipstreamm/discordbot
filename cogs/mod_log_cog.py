@@ -7,9 +7,9 @@ from typing import Optional, Union, Dict, Any
 import datetime
 
 # Assuming db functions are in discordbot.db.mod_log_db
-from db import mod_log_db
-# Assuming settings manager is available
-from settings_manager import SettingsManager # Adjust import path if necessary
+from ..db import mod_log_db
+# Assuming settings manager module is available
+from .. import settings_manager as sm # Use module functions directly
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class ModLogCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.settings_manager: SettingsManager = bot.settings_manager # Assuming settings_manager is attached to bot
+        # Settings manager functions are used directly from the imported module
         self.pool: asyncpg.Pool = bot.pool # Assuming pool is attached to bot
 
         # Create the main command group for this cog
@@ -110,9 +110,9 @@ class ModLogCog(commands.Cog):
 
         # 2. Check settings and send log message
         try:
-            settings = await self.settings_manager.get_guild_settings(guild_id)
-            log_enabled = settings.get('mod_log_enabled', False)
-            log_channel_id = settings.get('mod_log_channel_id')
+            # Use functions from settings_manager module
+            log_enabled = await sm.is_mod_log_enabled(guild_id, default=False)
+            log_channel_id = await sm.get_mod_log_channel_id(guild_id)
 
             if not log_enabled or not log_channel_id:
                 log.debug(f"Mod logging disabled or channel not set for guild {guild_id}. Skipping Discord log message.")
@@ -380,16 +380,15 @@ class ModLogCog(commands.Cog):
         if not hasattr(self.bot, 'pool') or not self.bot.pool:
             log.error("Database pool not found on bot object. ModLogCog requires bot.pool.")
             # Consider preventing the cog from loading fully or raising an error
-        if not hasattr(self.bot, 'settings_manager') or not self.bot.settings_manager:
-            log.error("SettingsManager not found on bot object. ModLogCog requires bot.settings_manager.")
-            # Consider preventing the cog from loading fully or raising an error
+        # Settings manager is imported directly, no need to check on bot object
 
         print(f'{self.__class__.__name__} cog has been loaded.')
 
 
 async def setup(bot: commands.Bot):
-    # Ensure dependencies (pool, settings_manager) are ready before adding cog
-    if hasattr(bot, 'pool') and hasattr(bot, 'settings_manager'):
+    # Ensure dependencies (pool) are ready before adding cog
+    # Settings manager is imported directly within the cog
+    if hasattr(bot, 'pool'):
         await bot.add_cog(ModLogCog(bot))
     else:
-        log.error("Failed to load ModLogCog: bot.pool or bot.settings_manager not initialized.")
+        log.error("Failed to load ModLogCog: bot.pool not initialized.")
