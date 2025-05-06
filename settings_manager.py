@@ -30,7 +30,15 @@ log = logging.getLogger(__name__)
 
 # --- Connection Management ---
 async def initialize_pools():
-    """Initializes the PostgreSQL and Redis connection pools."""
+    """
+    Initializes the PostgreSQL and Redis connection pools.
+
+    IMPORTANT: This function MUST be awaited from an asynchronous context
+    that runs on the SAME event loop as your Discord bot's operations.
+    For a discord.py bot, this typically means calling it from within the
+    bot's `setup_hook()` method or early in an `async def on_ready()` event.
+    This ensures that the connection pools are bound to the correct event loop.
+    """
     global pg_pool, redis_pool
     log.info("Initializing database and cache connection pools...")
 
@@ -1679,27 +1687,26 @@ async def set_log_event_enabled(guild_id: int, event_key: str, enabled: bool) ->
 # --- Bot Guild Information ---
 
 async def get_bot_guild_ids() -> set[int] | None:
-    """Gets the set of all guild IDs known to the bot from the guilds table. Returns None on error."""
+    """
+    Gets the set of all guild IDs known to the bot from the guilds table.
+    Uses the global pg_pool. Returns None on error or if pool not initialized.
+    Ensure initialize_pools() has been called correctly in the bot's event loop.
+    """
     global pg_pool
     if not pg_pool:
-        log.error("Pools not initialized, cannot get bot guild IDs.")
+        log.error("PostgreSQL pool not initialized. Cannot get bot guild IDs.")
         return None
 
-    # Create a new connection for this specific operation to avoid event loop conflicts
     try:
-        # Create a temporary connection just for this operation
-        # This ensures we're using the current event loop
-        temp_conn = await asyncpg.connect(DATABASE_URL)
-        try:
-            records = await temp_conn.fetch("SELECT guild_id FROM guilds")
+        # Use the global connection pool.
+        # This relies on pg_pool being initialized in the correct event loop.
+        async with pg_pool.acquire() as conn:
+            records = await conn.fetch("SELECT guild_id FROM guilds")
             guild_ids = {record['guild_id'] for record in records}
-            log.debug(f"Fetched {len(guild_ids)} guild IDs from database.")
+            log.debug(f"Fetched {len(guild_ids)} guild IDs from database using pool.")
             return guild_ids
-        finally:
-            # Always close the temporary connection
-            await temp_conn.close()
     except asyncpg.exceptions.PostgresError as e:
-        log.exception(f"PostgreSQL error fetching bot guild IDs: {e}")
+        log.exception(f"PostgreSQL error fetching bot guild IDs using pool: {e}")
         return None
     except Exception as e:
         log.exception(f"Unexpected error fetching bot guild IDs: {e}")

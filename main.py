@@ -54,12 +54,86 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-# Create bot instance with the dynamic prefix function
-bot = commands.Bot(command_prefix=get_prefix, intents=intents)
-bot.owner_id = int(os.getenv('OWNER_USER_ID'))
-bot.core_cogs = CORE_COGS # Attach core cogs list to bot instance
-bot.settings_manager = settings_manager # Attach settings manager instance
-# bot.pool will be attached after initialization
+# --- Custom Bot Class with setup_hook for async initialization ---
+class MyBot(commands.Bot):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.owner_id = int(os.getenv('OWNER_USER_ID'))
+        self.core_cogs = CORE_COGS # Attach core cogs list to bot instance
+        self.settings_manager = settings_manager # Attach settings manager instance
+        self.pool = None # Will be initialized in setup_hook
+        self.ai_cogs_to_skip = [] # For --disable-ai flag
+
+    async def setup_hook(self):
+        # This method is called before the bot logs in but after it's ready.
+        # Ideal place for async initialization.
+        log.info("Running setup_hook...")
+
+        # Initialize pools
+        log.info("Initializing database/cache pools from setup_hook...")
+        pools_initialized = await self.settings_manager.initialize_pools()
+        if not pools_initialized:
+            log.critical("Failed to initialize database/cache pools in setup_hook. Bot may not function correctly.")
+            # Depending on severity, you might want to prevent the bot from starting.
+            # For now, it will continue, but operations requiring pools will fail.
+            return
+
+        self.pool = self.settings_manager.pg_pool # Attach the pool to the bot instance
+        log.info("Database/cache pools initialized and pg_pool attached to bot instance.")
+
+        # Setup the moderation log table *after* pool initialization
+        if self.pool:
+            try:
+                await mod_log_db.setup_moderation_log_table(self.pool)
+                log.info("Moderation log table setup complete via setup_hook.")
+            except Exception as e:
+                log.exception("CRITICAL: Failed to setup moderation log table in setup_hook.")
+        else:
+            log.warning("pg_pool not available in setup_hook, skipping mod_log_db setup.")
+
+        # Load all cogs from the 'cogs' directory, skipping AI if requested
+        # ai_cogs_to_skip needs to be set based on args before bot.start is called.
+        # This is handled by setting bot.ai_cogs_to_skip in main() before bot.start().
+        await load_all_cogs(self, skip_cogs=self.ai_cogs_to_skip)
+        log.info(f"Cogs loaded in setup_hook. Skipped: {self.ai_cogs_to_skip or 'None'}")
+
+        # --- Share GurtCog, ModLogCog, and bot instance with the sync API ---
+        try:
+            gurt_cog = self.get_cog("Gurt")
+            if gurt_cog:
+                discord_bot_sync_api.gurt_cog_instance = gurt_cog
+                log.info("Successfully shared GurtCog instance with discord_bot_sync_api via setup_hook.")
+            else:
+                log.warning("GurtCog not found after loading cogs in setup_hook.")
+
+            discord_bot_sync_api.bot_instance = self
+            log.info("Successfully shared bot instance with discord_bot_sync_api via setup_hook.")
+
+            mod_log_cog = self.get_cog("ModLogCog")
+            if mod_log_cog:
+                discord_bot_sync_api.mod_log_cog_instance = mod_log_cog
+                log.info("Successfully shared ModLogCog instance with discord_bot_sync_api via setup_hook.")
+            else:
+                log.warning("ModLogCog not found after loading cogs in setup_hook.")
+        except Exception as e:
+            log.exception(f"Error sharing instances with discord_bot_sync_api in setup_hook: {e}")
+
+        # --- Manually Load FreakTetoCog (only if AI is NOT disabled) ---
+        if not self.ai_cogs_to_skip: # Check if list is empty (meaning AI is not disabled)
+            try:
+                freak_teto_cog_path = "discordbot.freak_teto.cog"
+                await self.load_extension(freak_teto_cog_path)
+                log.info(f"Successfully loaded FreakTetoCog from {freak_teto_cog_path} in setup_hook.")
+            except commands.ExtensionAlreadyLoaded:
+                log.info(f"FreakTetoCog ({freak_teto_cog_path}) already loaded (setup_hook).")
+            except commands.ExtensionNotFound:
+                log.error(f"Error: FreakTetoCog not found at {freak_teto_cog_path} (setup_hook).")
+            except Exception as e:
+                log.exception(f"Failed to load FreakTetoCog in setup_hook: {e}")
+        log.info("setup_hook completed.")
+
+# Create bot instance using the custom class
+bot = MyBot(command_prefix=get_prefix, intents=intents)
 
 # --- Logging Setup ---
 # Configure logging (adjust level and format as needed)
@@ -452,89 +526,32 @@ async def main(args): # Pass parsed args
             # Add any other AI-related cogs from the 'cogs' folder here
         ]
         # Store the skip list on the bot object for reload commands
+        # This is now done on the bot instance directly in the MyBot class
         bot.ai_cogs_to_skip = ai_cogs_to_skip
     else:
         bot.ai_cogs_to_skip = [] # Ensure it exists even if empty
 
-    # Initialize pools before starting the bot logic
-    pools_initialized = await settings_manager.initialize_pools()
+    # Pool initialization and cog loading are now handled in MyBot.setup_hook()
 
-    if not pools_initialized:
-        log.critical("Failed to initialize database/cache pools. Bot cannot start.")
-        return # Prevent bot from starting if pools fail
-
-    # Attach the pool to the bot instance *after* successful initialization
-    bot.pool = settings_manager.pg_pool
-
-    # Setup the moderation log table *after* pool initialization
     try:
-        await mod_log_db.setup_moderation_log_table(bot.pool)
-        log.info("Moderation log table setup complete.")
+        # The bot will call setup_hook internally after login but before on_ready.
+        await bot.start(TOKEN)
     except Exception as e:
-        log.exception("CRITICAL: Failed to setup moderation log table. Logging may not work correctly.")
-        # Decide if bot should continue or stop if table setup fails. Continuing for now.
-
-    try:
-        async with bot:
-            # Load all cogs from the 'cogs' directory, skipping AI if requested
-            # This should now include WelcomeCog and SettingsCog if they are in the cogs dir
-            await load_all_cogs(bot, skip_cogs=ai_cogs_to_skip)
-
-            # --- Share GurtCog, ModLogCog, and bot instance with the sync API ---
-            try:
-                gurt_cog = bot.get_cog("Gurt") # Get the loaded GurtCog instance
-                if gurt_cog:
-                    discord_bot_sync_api.gurt_cog_instance = gurt_cog
-                    print("Successfully shared GurtCog instance with discord_bot_sync_api.")
-                else:
-                    print("Warning: GurtCog not found after loading cogs. Stats API might not work.")
-
-                # Share the bot instance with the sync API
-                discord_bot_sync_api.bot_instance = bot
-                print("Successfully shared bot instance with discord_bot_sync_api.")
-
-                # Share ModLogCog instance
-                mod_log_cog = bot.get_cog("ModLogCog")
-                if mod_log_cog:
-                    discord_bot_sync_api.mod_log_cog_instance = mod_log_cog
-                    print("Successfully shared ModLogCog instance with discord_bot_sync_api.")
-                else:
-                    print("Warning: ModLogCog not found after loading cogs. AI moderation API endpoint will not work.")
-
-            except Exception as e:
-                print(f"Error sharing instances with discord_bot_sync_api: {e}")
-            # ------------------------------------------------
-
-            # --- Manually Load FreakTetoCog (only if AI is NOT disabled) ---
-            if not args.disable_ai:
-                try:
-                    freak_teto_cog_path = "discordbot.freak_teto.cog"
-                    await bot.load_extension(freak_teto_cog_path)
-                    print(f"Successfully loaded FreakTetoCog from {freak_teto_cog_path}")
-                    # Optional: Share FreakTetoCog instance if needed later
-                    # freak_teto_cog_instance = bot.get_cog("FreakTetoCog")
-                    # if freak_teto_cog_instance:
-                    #     print("Successfully shared FreakTetoCog instance.")
-                    # else:
-                    #     print("Warning: FreakTetoCog not found after loading.")
-                except commands.ExtensionAlreadyLoaded:
-                    print(f"FreakTetoCog ({freak_teto_cog_path}) already loaded.")
-                except commands.ExtensionNotFound:
-                    print(f"Error: FreakTetoCog not found at {freak_teto_cog_path}")
-                except Exception as e:
-                    print(f"Failed to load FreakTetoCog: {e}")
-                    import traceback
-                    traceback.print_exc()
-            # ------------------------------------
-
-            # Start the bot using start() for async context
-            await bot.start(TOKEN)
+        log.exception(f"An error occurred during bot.start(): {e}")
     finally:
         # Terminate the Flask server process when the bot stops
-        flask_process.terminate()
-        log.info("Flask server process terminated.")
-        # Close database/cache pools
-        await settings_manager.close_pools()
+        if flask_process and flask_process.poll() is None: # Check if process exists and is running
+            flask_process.terminate()
+            log.info("Flask server process terminated.")
+        else:
+            log.info("Flask server process was not running or already terminated.")
+
+        # Close database/cache pools if they were initialized
+        if settings_manager.pg_pool or settings_manager.redis_pool:
+            log.info("Closing database/cache pools in main finally block...")
+            await settings_manager.close_pools()
+        else:
+            log.info("Pools were not initialized or already closed, skipping close_pools in main.")
 
 # Run the main async function
 if __name__ == '__main__':
