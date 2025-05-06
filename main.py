@@ -1,3 +1,8 @@
+import asyncio
+# Set the event loop policy to the default asyncio policy BEFORE other asyncio/discord imports
+# This is to test if uvloop (if active globally) is causing issues with asyncpg.
+asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+
 import threading
 import discord
 from discord.ext import commands
