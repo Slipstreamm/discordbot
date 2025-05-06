@@ -67,13 +67,15 @@ async def initialize_pools(event_loop=None): # Add event_loop parameter
         else:
             log.info(f"initialize_pools called without event_loop. Current executing loop: {current_executing_loop}.")
 
+        # Use the correct event loop for asyncpg pool creation to avoid cross-loop issues
+        loop_to_use = event_loop or asyncio.get_event_loop()
         pg_pool = await asyncpg.create_pool(
             DATABASE_URL,
             min_size=1,
             max_size=10,
             command_timeout=30.0,  # 30 seconds timeout for commands
-            max_inactive_connection_lifetime=300  # Refresh idle connections after 5 minutes
-            # No loop parameter, asyncpg uses the current running loop
+            max_inactive_connection_lifetime=300,  # Refresh idle connections after 5 minutes
+            loop=loop_to_use
         )
         log.info(f"PostgreSQL pool created for {POSTGRES_HOST}/{POSTGRES_DB}. Loop during creation: {asyncio.get_event_loop()}")
 
