@@ -996,7 +996,7 @@ class LoggingCog(commands.Cog):
 
         if changes:
             embed = self._create_log_embed(
-                title="⚙️ Guild Updated",
+                # title="⚙️ Guild Updated", # Removed duplicate title
             title="⚙️ Guild Updated (Event)",
             description="Server settings were updated.\n*Audit log may contain updater.*\n" + "\n".join(changes),
             color=discord.Color.dark_purple()
@@ -1033,7 +1033,7 @@ class LoggingCog(commands.Cog):
 
         if desc:
             embed = self._create_log_embed(
-                title="😀 Emojis Updated",
+                # title="😀 Emojis Updated", # Removed duplicate title
             title="😀 Emojis Updated (Event)",
             description=f"*Audit log may contain updater.*\n{desc.strip()}",
             color=discord.Color.magenta()
@@ -1062,7 +1062,7 @@ class LoggingCog(commands.Cog):
             desc += f"\nMax Uses: {invite.max_uses}"
 
         embed = self._create_log_embed(
-            title="✉️ Invite Created",
+            # title="✉️ Invite Created", # Removed duplicate title
             title="✉️ Invite Created (Event)",
             description=f"{desc}\n*Audit log may contain creator.*",
             color=discord.Color.dark_magenta(),
@@ -1084,7 +1084,7 @@ class LoggingCog(commands.Cog):
         desc = f"Invite `{invite.code}` for {channel.mention if channel else 'Unknown Channel'} was deleted or expired."
 
         embed = self._create_log_embed(
-            title="🗑️ Invite Deleted",
+            # title="🗑️ Invite Deleted", # Removed duplicate title
             title="🗑️ Invite Deleted (Event)",
             description=f"{desc}\n*Audit log may contain deleter.*",
             color=discord.Color.dark_grey()

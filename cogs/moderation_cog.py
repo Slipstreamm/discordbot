@@ -240,8 +240,8 @@ class FakeModerationCog(commands.Cog):
         response = await self._fake_moderation_response("mute", member.mention, reason, duration)
         await ctx.reply(response)
 
-    @commands.command(name="timeout")
-    async def timeout(self, ctx: commands.Context, member: discord.Member = None, duration: str = None, *, reason: str = None):
+    @commands.command(name="faketimeout", aliases=["fto"]) # Renamed command and added alias
+    async def fake_timeout(self, ctx: commands.Context, member: discord.Member = None, duration: str = None, *, reason: str = None): # Renamed function
         """Pretends to timeout a member in the server. Can be used by replying to a message."""
         # Check if this is a reply to a message and no member was specified
         if not member and ctx.message.reference:
