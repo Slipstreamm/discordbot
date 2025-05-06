@@ -548,6 +548,10 @@ async def verify_discord_token(authorization: str = Header(None)) -> str:
 async def root():
     return RedirectResponse(url="https://www.youtube.com/watch?v=dQw4w9WgXcQ", status_code=301)
 
+@app.get("/ip")
+async def ip(request: Request):
+    return Response(content=request.client.host, media_type="text/plain")
+
 # Add root for dashboard API for clarity
 @dashboard_api_app.get("/")
 async def dashboard_api_root():
