@@ -1,9 +1,12 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
+from discord import app_commands, Object
 import datetime
 import logging
 from typing import Optional, Union, List
+
+# Import the new ModLogCog
+from .mod_log_cog import ModLogCog
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -223,6 +226,20 @@ class ModerationCog(commands.Cog):
             # Log the action
             logger.info(f"User {member} (ID: {member.id}) was banned from {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
 
+            # --- Add to Mod Log DB ---
+            mod_log_cog: ModLogCog = self.bot.get_cog('ModLogCog')
+            if mod_log_cog:
+                await mod_log_cog.log_action(
+                    guild=interaction.guild,
+                    moderator=interaction.user,
+                    target=member,
+                    action_type="BAN",
+                    reason=reason,
+                    # Ban duration isn't directly supported here, pass None
+                    duration=None
+                )
+            # -------------------------
+
             # Send confirmation message with DM status
             dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
             await interaction.response.send_message(f"🔨 **Banned {member.mention}**! Reason: {reason or 'No reason provided'}\n{dm_status}")
@@ -270,6 +287,19 @@ class ModerationCog(commands.Cog):
 
             # Log the action
             logger.info(f"User {banned_user} (ID: {banned_user.id}) was unbanned from {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
+
+            # --- Add to Mod Log DB ---
+            mod_log_cog: ModLogCog = self.bot.get_cog('ModLogCog')
+            if mod_log_cog:
+                await mod_log_cog.log_action(
+                    guild=interaction.guild,
+                    moderator=interaction.user,
+                    target=banned_user, # Use the fetched user object
+                    action_type="UNBAN",
+                    reason=reason,
+                    duration=None
+                )
+            # -------------------------
 
             # Send confirmation message
             await interaction.response.send_message(f"🔓 **Unbanned {banned_user}**! Reason: {reason or 'No reason provided'}")
@@ -336,6 +366,19 @@ class ModerationCog(commands.Cog):
 
             # Log the action
             logger.info(f"User {member} (ID: {member.id}) was kicked from {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
+
+            # --- Add to Mod Log DB ---
+            mod_log_cog: ModLogCog = self.bot.get_cog('ModLogCog')
+            if mod_log_cog:
+                await mod_log_cog.log_action(
+                    guild=interaction.guild,
+                    moderator=interaction.user,
+                    target=member,
+                    action_type="KICK",
+                    reason=reason,
+                    duration=None
+                )
+            # -------------------------
 
             # Send confirmation message with DM status
             dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
@@ -421,6 +464,19 @@ class ModerationCog(commands.Cog):
             # Log the action
             logger.info(f"User {member} (ID: {member.id}) was timed out in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}) for {duration}. Reason: {reason}")
 
+            # --- Add to Mod Log DB ---
+            mod_log_cog: ModLogCog = self.bot.get_cog('ModLogCog')
+            if mod_log_cog:
+                await mod_log_cog.log_action(
+                    guild=interaction.guild,
+                    moderator=interaction.user,
+                    target=member,
+                    action_type="TIMEOUT",
+                    reason=reason,
+                    duration=delta # Pass the timedelta object
+                )
+            # -------------------------
+
             # Send confirmation message with DM status
             dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
             await interaction.response.send_message(f"⏰ **Timed out {member.mention}** for {duration}! Reason: {reason or 'No reason provided'}\n{dm_status}")
@@ -472,6 +528,19 @@ class ModerationCog(commands.Cog):
 
             # Log the action
             logger.info(f"Timeout was removed from user {member} (ID: {member.id}) in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
+
+            # --- Add to Mod Log DB ---
+            mod_log_cog: ModLogCog = self.bot.get_cog('ModLogCog')
+            if mod_log_cog:
+                await mod_log_cog.log_action(
+                    guild=interaction.guild,
+                    moderator=interaction.user,
+                    target=member,
+                    action_type="REMOVE_TIMEOUT",
+                    reason=reason,
+                    duration=None
+                )
+            # -------------------------
 
             # Send confirmation message with DM status
             dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
@@ -551,8 +620,21 @@ class ModerationCog(commands.Cog):
             await interaction.response.send_message("❌ You cannot warn someone with a higher or equal role.", ephemeral=True)
             return
 
-        # Log the warning
+        # Log the warning (using standard logger first)
         logger.info(f"User {member} (ID: {member.id}) was warned in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}). Reason: {reason}")
+
+        # --- Add to Mod Log DB ---
+        mod_log_cog: ModLogCog = self.bot.get_cog('ModLogCog')
+        if mod_log_cog:
+            await mod_log_cog.log_action(
+                guild=interaction.guild,
+                moderator=interaction.user,
+                target=member,
+                action_type="WARN",
+                reason=reason,
+                duration=None
+            )
+        # -------------------------
 
         # Send warning message in the channel
         await interaction.response.send_message(f"⚠️ **{member.mention} has been warned**! Reason: {reason}")
@@ -734,6 +816,19 @@ class ModerationCog(commands.Cog):
             # Log the action
             logger.info(f"User {member} (ID: {member.id}) was timed out in {ctx.guild.name} (ID: {ctx.guild.id}) by {ctx.author} (ID: {ctx.author.id}) for {duration}. Reason: {reason}")
 
+            # --- Add to Mod Log DB ---
+            mod_log_cog: ModLogCog = self.bot.get_cog('ModLogCog')
+            if mod_log_cog:
+                await mod_log_cog.log_action(
+                    guild=ctx.guild,
+                    moderator=ctx.author,
+                    target=member,
+                    action_type="TIMEOUT",
+                    reason=reason,
+                    duration=delta # Pass the timedelta object
+                )
+            # -------------------------
+
             # Send confirmation message with DM status
             dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"
             await ctx.reply(f"⏰ **Timed out {member.mention}** for {duration}! Reason: {reason or 'No reason provided'}\n{dm_status}")
@@ -800,6 +895,19 @@ class ModerationCog(commands.Cog):
 
             # Log the action
             logger.info(f"Timeout was removed from user {member} (ID: {member.id}) in {ctx.guild.name} (ID: {ctx.guild.id}) by {ctx.author} (ID: {ctx.author.id}). Reason: {reason}")
+
+            # --- Add to Mod Log DB ---
+            mod_log_cog: ModLogCog = self.bot.get_cog('ModLogCog')
+            if mod_log_cog:
+                await mod_log_cog.log_action(
+                    guild=ctx.guild,
+                    moderator=ctx.author,
+                    target=member,
+                    action_type="REMOVE_TIMEOUT",
+                    reason=reason,
+                    duration=None
+                )
+            # -------------------------
 
             # Send confirmation message with DM status
             dm_status = "✅ DM notification sent" if dm_sent else "❌ Could not send DM notification (user may have DMs disabled)"

@@ -13,6 +13,7 @@ from commands import load_all_cogs, reload_all_cogs
 from error_handler import handle_error, patch_discord_methods, store_interaction_content
 from utils import reload_script
 import settings_manager # Import the settings manager
+from db import mod_log_db # Import the new mod log db functions
 import command_customization # Import command customization utilities
 
 # Import the unified API service runner and the sync API module
@@ -57,6 +58,8 @@ intents.members = True
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 bot.owner_id = int(os.getenv('OWNER_USER_ID'))
 bot.core_cogs = CORE_COGS # Attach core cogs list to bot instance
+bot.settings_manager = settings_manager # Attach settings manager instance
+# bot.pool will be attached after initialization
 
 # --- Logging Setup ---
 # Configure logging (adjust level and format as needed)
@@ -454,7 +457,22 @@ async def main(args): # Pass parsed args
         bot.ai_cogs_to_skip = [] # Ensure it exists even if empty
 
     # Initialize pools before starting the bot logic
-    await settings_manager.initialize_pools()
+    pools_initialized = await settings_manager.initialize_pools()
+
+    if not pools_initialized:
+        log.critical("Failed to initialize database/cache pools. Bot cannot start.")
+        return # Prevent bot from starting if pools fail
+
+    # Attach the pool to the bot instance *after* successful initialization
+    bot.pool = settings_manager.pg_pool
+
+    # Setup the moderation log table *after* pool initialization
+    try:
+        await mod_log_db.setup_moderation_log_table(bot.pool)
+        log.info("Moderation log table setup complete.")
+    except Exception as e:
+        log.exception("CRITICAL: Failed to setup moderation log table. Logging may not work correctly.")
+        # Decide if bot should continue or stop if table setup fails. Continuing for now.
 
     try:
         async with bot:
@@ -462,7 +480,7 @@ async def main(args): # Pass parsed args
             # This should now include WelcomeCog and SettingsCog if they are in the cogs dir
             await load_all_cogs(bot, skip_cogs=ai_cogs_to_skip)
 
-            # --- Share GurtCog instance and bot instance with the sync API ---
+            # --- Share GurtCog, ModLogCog, and bot instance with the sync API ---
             try:
                 gurt_cog = bot.get_cog("Gurt") # Get the loaded GurtCog instance
                 if gurt_cog:
@@ -474,6 +492,15 @@ async def main(args): # Pass parsed args
                 # Share the bot instance with the sync API
                 discord_bot_sync_api.bot_instance = bot
                 print("Successfully shared bot instance with discord_bot_sync_api.")
+
+                # Share ModLogCog instance
+                mod_log_cog = bot.get_cog("ModLogCog")
+                if mod_log_cog:
+                    discord_bot_sync_api.mod_log_cog_instance = mod_log_cog
+                    print("Successfully shared ModLogCog instance with discord_bot_sync_api.")
+                else:
+                    print("Warning: ModLogCog not found after loading cogs. AI moderation API endpoint will not work.")
+
             except Exception as e:
                 print(f"Error sharing instances with discord_bot_sync_api: {e}")
             # ------------------------------------------------

@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
 from functools import lru_cache
 from contextlib import asynccontextmanager
+from enum import Enum
 
 # --- Logging Configuration ---
 # Configure logging
@@ -59,6 +60,9 @@ class ApiSettings(BaseSettings):
     REDIS_HOST: str
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: Optional[str] = None # Optional
+
+    # Secret key for AI Moderation API endpoint
+    MOD_LOG_API_SECRET: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_file=dotenv_path,
@@ -2610,6 +2614,7 @@ async def get_token(user_id: str = Depends(verify_discord_token)):
 
     # Return only the access token, not the full token data
     return {"access_token": token_data.get("access_token")}
+
 
 @api_app.get("/token/{user_id}")
 @discordapi_app.get("/token/{user_id}")

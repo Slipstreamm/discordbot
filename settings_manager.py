@@ -2133,3 +2133,30 @@ async def get_all_command_aliases(guild_id: int) -> dict[str, list[str]] | None:
     except Exception as e:
         log.exception(f"Database error fetching command aliases for guild {guild_id}: {e}")
         return None
+
+
+# --- Moderation Logging Settings ---
+
+async def is_mod_log_enabled(guild_id: int, default: bool = False) -> bool:
+    """Checks if the integrated moderation log is enabled for a guild."""
+    enabled_str = await get_setting(guild_id, 'mod_log_enabled', default=str(default))
+    # Handle potential non-string default if get_setting fails early
+    if isinstance(enabled_str, bool):
+        return enabled_str
+    return enabled_str.lower() == 'true'
+
+async def set_mod_log_enabled(guild_id: int, enabled: bool) -> bool:
+    """Sets the enabled status for the integrated moderation log."""
+    return await set_setting(guild_id, 'mod_log_enabled', str(enabled))
+
+async def get_mod_log_channel_id(guild_id: int) -> int | None:
+    """Gets the channel ID for the integrated moderation log."""
+    channel_id_str = await get_setting(guild_id, 'mod_log_channel_id', default=None)
+    if channel_id_str and channel_id_str.isdigit():
+        return int(channel_id_str)
+    return None
+
+async def set_mod_log_channel_id(guild_id: int, channel_id: int | None) -> bool:
+    """Sets the channel ID for the integrated moderation log. Set to None to disable."""
+    value_to_set = str(channel_id) if channel_id is not None else None
+    return await set_setting(guild_id, 'mod_log_channel_id', value_to_set)

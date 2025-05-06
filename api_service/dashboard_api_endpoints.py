@@ -107,7 +107,34 @@ class CommandInfo(BaseModel):
     enabled: bool = True
     cog_name: Optional[str] = None
 
+class Guild(BaseModel):
+    id: str
+    name: str
+    icon_url: Optional[str] = None
+
 # --- Endpoints ---
+
+@router.get("/user-guilds", response_model=List[Guild])
+async def get_user_guilds(
+    user: dict = Depends(get_dashboard_user)
+):
+    """Get all guilds the user is an admin of."""
+    try:
+        # This would normally fetch guilds from Discord API or the bot
+        # For now, we'll return a mock response
+        # TODO: Replace mock data with actual API call to Discord
+        guilds = [
+            Guild(id="123456789", name="My Awesome Server", icon_url="https://cdn.discordapp.com/icons/123456789/abc123def456ghi789jkl012mno345pqr.png"),
+            Guild(id="987654321", name="Another Great Server", icon_url="https://cdn.discordapp.com/icons/987654321/zyx987wvu654tsr321qpo098mlk765jih.png")
+        ]
+        return guilds
+    except Exception as e:
+        log.error(f"Error getting user guilds: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting user guilds: {str(e)}"
+        )
+
 @router.get("/guilds/{guild_id}/channels", response_model=List[Channel])
 async def get_guild_channels(
     guild_id: int,
@@ -118,6 +145,7 @@ async def get_guild_channels(
     try:
         # This would normally fetch channels from Discord API or the bot
         # For now, we'll return a mock response
+        # TODO: Replace mock data with actual API call to Discord
         channels = [
             Channel(id="123456789", name="general", type=0),
             Channel(id="123456790", name="welcome", type=0),
@@ -142,6 +170,7 @@ async def get_guild_roles(
     try:
         # This would normally fetch roles from Discord API or the bot
         # For now, we'll return a mock response
+        # TODO: Replace mock data with actual API call to Discord
         roles = [
             Role(id="123456789", name="@everyone", color=0, position=0, permissions="0"),
             Role(id="123456790", name="Admin", color=16711680, position=1, permissions="8"),
@@ -166,6 +195,7 @@ async def get_guild_commands(
     try:
         # This would normally fetch commands from the bot
         # For now, we'll return a mock response
+        # TODO: Replace mock data with actual bot command introspection
         commands = [
             Command(name="help", description="Show help message"),
             Command(name="ping", description="Check bot latency"),
@@ -651,6 +681,7 @@ async def sync_guild_commands(
         # This endpoint would trigger a command sync for the guild
         # In a real implementation, this would communicate with the bot to sync commands
         # For now, we'll just return a success message
+        # TODO: Implement actual command syncing logic
         return {"message": "Command sync requested. This may take a moment to complete."}
     except Exception as e:
         log.error(f"Error syncing commands for guild {guild_id}: {e}")
@@ -1168,6 +1199,7 @@ async def get_conversations(
     try:
         # This would normally fetch conversations from the database
         # For now, we'll return a mock response
+        # TODO: Implement actual conversation fetching
         conversations = [
             Conversation(
                 id="1",
@@ -1201,6 +1233,7 @@ async def get_conversation_messages(
     try:
         # This would normally fetch messages from the database
         # For now, we'll return a mock response
+        # TODO: Implement actual message fetching
         messages = [
             Message(
                 id="1",

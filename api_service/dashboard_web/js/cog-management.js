@@ -432,37 +432,3 @@ function saveCommandsSettings() {
             Toast.error('Failed to save command settings. Please try again.');
         });
 }
-
-/**
- * Show a specific section and hide others
- * @param {string} sectionId - ID of the section to show
- */
-function showSection(sectionId) {
-    // Get all sections
-    const sections = document.querySelectorAll('.dashboard-section');
-
-    // Hide all sections
-    sections.forEach(section => {
-        section.style.display = 'none';
-    });
-
-    // Get all nav buttons
-    const navButtons = document.querySelectorAll('.nav-button');
-
-    // Remove active class from all nav buttons
-    navButtons.forEach(button => {
-        button.classList.remove('active');
-    });
-
-    // Show the selected section and activate the corresponding nav button
-    const selectedSection = document.getElementById(`${sectionId}-section`);
-    const selectedNavButton = document.getElementById(`nav-${sectionId}`);
-
-    if (selectedSection) {
-        selectedSection.style.display = 'block';
-    }
-
-    if (selectedNavButton) {
-        selectedNavButton.classList.add('active');
-    }
-}

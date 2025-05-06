@@ -18,6 +18,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initialize dropdowns
   initDropdowns();
+
+  // Store selected guild ID globally (using localStorage)
+  window.selectedGuildId = localStorage.getItem('selectedGuildId');
+  window.currentSettingsGuildId = null; // Track which guild's settings are loaded
 });
 
 /**
@@ -163,8 +167,8 @@ function initAuth() {
             loadUserInfo();
           }
 
-          // Load initial data
-          loadDashboardData();
+          // Show server selection screen first
+          showServerSelection();
         } else {
           // User is not authenticated, show login
           if (authSection) authSection.style.display = 'block';
@@ -283,13 +287,27 @@ function initTabs() {
 
 /**
  * Show a specific section of the dashboard
- * @param {string} sectionId - The ID of the section to show
+ * @param {string} sectionId - The ID of the section to show (e.g., 'server-settings')
  */
 function showSection(sectionId) {
-  // Hide all sections
+  console.log(`Attempting to show section: ${sectionId}`);
+
+  // Check if a server is selected before showing any section other than server-select
+  if (!window.selectedGuildId && sectionId !== 'server-select') {
+    console.log('No server selected, redirecting to server selection.');
+    showServerSelection(); // Redirect to server selection
+    return; // Stop further execution
+  }
+
+  // Hide all specific dashboard sections first
   document.querySelectorAll('.dashboard-section').forEach(section => {
     section.style.display = 'none';
   });
+  // Also hide the server selection section if it exists and we are showing another section
+  const serverSelectSection = document.getElementById('server-select-section');
+  if (serverSelectSection && sectionId !== 'server-select') {
+      serverSelectSection.style.display = 'none';
+  }
 
   // Remove active class from all nav items
   document.querySelectorAll('.nav-item').forEach(item => {
@@ -297,31 +315,76 @@ function showSection(sectionId) {
   });
 
   // Show the selected section
-  const section = document.getElementById(`${sectionId}-section`);
-  if (section) {
-    section.style.display = 'block';
-  }
+  const sectionElement = document.getElementById(`${sectionId}-section`);
+  if (sectionElement) {
+    sectionElement.style.display = 'block';
+    console.log(`Successfully displayed section: ${sectionId}-section`);
 
-  // Add active class to the corresponding nav item
-  const navItem = document.querySelector(`.nav-item[data-section="${sectionId}-section"]`);
-  if (navItem) {
-    navItem.classList.add('active');
-  }
+    // Add active class to the corresponding nav item
+    const navItem = document.querySelector(`.nav-item[data-section="${sectionId}-section"]`);
+    if (navItem) {
+      navItem.classList.add('active');
+    }
 
-  // Load AI settings if needed
-  if (sectionId === 'ai-settings' && typeof loadAiSettings === 'function' && typeof aiSettingsLoaded !== 'undefined' && !aiSettingsLoaded) {
-    loadAiSettings();
-  }
+    // Load data for the specific section if needed and a guild is selected
+    if (window.selectedGuildId) {
+        // Load AI settings if needed (assuming it's guild-specific now)
+        if (sectionId === 'ai-settings' && typeof loadAiSettings === 'function') {
+            // Check if already loaded for this guild to prevent redundant calls
+            // This requires loadAiSettings to track its loaded state per guild or be idempotent
+            console.log(`Loading AI settings for guild ${window.selectedGuildId}`);
+            loadAiSettings(window.selectedGuildId); // Pass guildId
+        }
 
-  // Load theme settings if needed
-  if (sectionId === 'theme-settings' && typeof loadThemeSettings === 'function' && typeof themeSettingsLoaded !== 'undefined' && !themeSettingsLoaded) {
-    loadThemeSettings();
-  }
+        // Load theme settings if needed (assuming global/user-specific)
+        if (sectionId === 'theme-settings' && typeof loadThemeSettings === 'function' && typeof themeSettingsLoaded !== 'undefined' && !themeSettingsLoaded) {
+            console.log("Loading theme settings");
+            loadThemeSettings();
+            // themeSettingsLoaded = true; // Assuming loadThemeSettings handles this
+        }
 
-  // Load cog management if needed
-  if (sectionId === 'cog-management' && typeof loadGuildsForCogManagement === 'function' && typeof cogManagementLoaded !== 'undefined' && !cogManagementLoaded) {
-    loadGuildsForCogManagement();
-    cogManagementLoaded = true;
+        // Load cog management if needed
+        if (sectionId === 'cog-management' && typeof loadCogManagementData === 'function') {
+             // Check if already loaded for this guild
+             if (!window.cogManagementLoadedGuild || window.cogManagementLoadedGuild !== window.selectedGuildId) {
+                console.log(`Loading Cog Management data for guild ${window.selectedGuildId}`);
+                loadCogManagementData(window.selectedGuildId); // Pass guildId
+                window.cogManagementLoadedGuild = window.selectedGuildId; // Track loaded guild
+             } else {
+                console.log(`Cog Management data for guild ${window.selectedGuildId} already loaded.`);
+             }
+        }
+
+        // Load command customization if needed
+        if (sectionId === 'command-customization' && typeof loadCommandCustomizationData === 'function') {
+            // Check if already loaded for this guild
+            if (!window.commandCustomizationLoadedGuild || window.commandCustomizationLoadedGuild !== window.selectedGuildId) {
+                console.log(`Loading Command Customization data for guild ${window.selectedGuildId}`);
+                loadCommandCustomizationData(window.selectedGuildId); // Pass guildId
+                window.commandCustomizationLoadedGuild = window.selectedGuildId; // Track loaded guild
+            } else {
+                console.log(`Command Customization data for guild ${window.selectedGuildId} already loaded.`);
+            }
+        }
+
+        // Load general server settings (prefix, welcome/leave, modules, permissions) if viewing relevant sections
+        if (['server-settings', 'welcome-module', 'modules-settings', 'permissions-settings'].includes(sectionId)) {
+            // loadGuildSettings already prevents redundant loads using window.currentSettingsGuildId
+            console.log(`Loading general guild settings for guild ${window.selectedGuildId}`);
+            loadGuildSettings(window.selectedGuildId);
+        }
+    }
+  } else {
+    console.warn(`Section with ID ${sectionId}-section not found.`);
+    // Optionally show a default section or an error message
+    // If no section found and a guild is selected, maybe default to server-settings?
+    if (window.selectedGuildId) {
+        console.log("Defaulting to server-settings section.");
+        showSection('server-settings');
+    } else {
+        // If no guild selected either, go back to server selection
+        showServerSelection();
+    }
   }
 }
 
@@ -360,11 +423,118 @@ function initDropdowns() {
 }
 
 /**
- * Load dashboard data
+ * Show the server selection screen
+ */
+function showServerSelection() {
+  console.log('Showing server selection screen...');
+  const dashboardContainer = document.getElementById('dashboard-container');
+  const serverSelectSection = document.getElementById('server-select-section'); // Assuming this ID exists in index.html
+
+  if (!serverSelectSection) {
+    console.error('Server selection section not found!');
+    // Maybe show an error to the user or default to the old behavior
+    loadDashboardData(); // Fallback?
+    return;
+  }
+
+  // Hide main dashboard content and show server selection
+  if (dashboardContainer) dashboardContainer.style.display = 'none';
+  serverSelectSection.style.display = 'block';
+
+  // Hide all other specific dashboard sections just in case
+  document.querySelectorAll('.dashboard-section').forEach(section => {
+    section.style.display = 'none';
+  });
+
+  // Load the list of guilds for the user
+  loadUserGuilds();
+}
+
+/**
+ * Load guilds the user has admin access to for the selection screen
+ */
+function loadUserGuilds() {
+  const serverListContainer = document.getElementById('server-list-container'); // Assuming this ID exists within server-select-section
+  if (!serverListContainer) {
+    console.error('Server list container not found!');
+    return;
+  }
+
+  serverListContainer.innerHTML = '<div class="loading-spinner"></div><p>Loading your servers...</p>'; // Show loading state
+
+  API.get('/dashboard/api/user-guilds')
+    .then(guilds => {
+      serverListContainer.innerHTML = ''; // Clear loading state
+
+      if (!guilds || guilds.length === 0) {
+        serverListContainer.innerHTML = '<p>No servers found where you have admin permissions.</p>';
+        return;
+      }
+
+      guilds.forEach(guild => {
+        const guildElement = document.createElement('div');
+        guildElement.className = 'server-select-item card'; // Add card class for styling
+        guildElement.style.cursor = 'pointer';
+        guildElement.dataset.guildId = guild.id;
+
+        const iconElement = document.createElement('img');
+        iconElement.className = 'server-icon';
+        iconElement.src = guild.icon_url || 'img/default-icon.png'; // Provide a default icon path
+        iconElement.alt = `${guild.name} icon`;
+        iconElement.width = 50;
+        iconElement.height = 50;
+
+        const nameElement = document.createElement('span');
+        nameElement.className = 'server-name';
+        nameElement.textContent = guild.name;
+
+        guildElement.appendChild(iconElement);
+        guildElement.appendChild(nameElement);
+
+        guildElement.addEventListener('click', () => {
+          console.log(`Server selected: ${guild.name} (${guild.id})`);
+          // Store selected guild ID
+          localStorage.setItem('selectedGuildId', guild.id);
+          window.selectedGuildId = guild.id;
+          window.currentSettingsGuildId = null; // Reset loaded settings tracker
+
+          // Hide server selection and show dashboard
+          const serverSelectSection = document.getElementById('server-select-section');
+          const dashboardContainer = document.getElementById('dashboard-container');
+          if (serverSelectSection) serverSelectSection.style.display = 'none';
+          if (dashboardContainer) dashboardContainer.style.display = 'block';
+
+          // Load data for the selected guild and show the default section
+          loadDashboardData(); // Now loads data for the selected guild
+          showSection('server-settings'); // Show the server settings section by default
+        });
+
+        serverListContainer.appendChild(guildElement);
+      });
+    })
+    .catch(error => {
+      console.error('Error loading user guilds:', error);
+      serverListContainer.innerHTML = '<p class="text-danger">Error loading servers. Please try again.</p>';
+      Toast.error('Failed to load your servers.');
+    });
+}
+
+
+/**
+ * Load initial dashboard data *after* a server has been selected
  */
 function loadDashboardData() {
-  // Load guilds for server select
-  loadGuilds();
+  if (!window.selectedGuildId) {
+    console.warn('loadDashboardData called without a selected guild ID.');
+    showServerSelection(); // Redirect back to selection if no guild is selected
+    return;
+  }
+  console.log(`Loading dashboard data for guild: ${window.selectedGuildId}`);
+  // No longer need to load the general guild list here.
+  // Specific sections will load their data via showSection or dedicated functions.
+  // We might load some initial settings common to multiple sections here if needed.
+  // For now, let's ensure the basic settings are loaded if the user lands on a relevant page.
+  loadGuildSettings(window.selectedGuildId);
 }
 
 /**
@@ -401,9 +571,11 @@ function showBotTokenMissingError() {
 }
 
 /**
- * Load guilds for server select dropdown
+ * Load guilds for the *original* server select dropdown (now potentially redundant)
+ * Kept for reference or potential future use, but not called by default flow anymore.
  */
 function loadGuilds() {
+  console.warn("loadGuilds function called - this might be redundant now.");
   const guildSelect = document.getElementById('guild-select');
   if (!guildSelect) return;
 
@@ -451,10 +623,26 @@ function loadGuilds() {
 }
 
 /**
- * Load settings for a specific guild
- * @param {string} guildId - The guild ID
+ * Load settings for the currently selected guild (window.selectedGuildId)
+ * @param {string} guildId - The guild ID to load settings for
  */
 function loadGuildSettings(guildId) {
+  // Prevent reloading if settings for this guild are already loaded
+  if (window.currentSettingsGuildId === guildId) {
+    console.log(`Settings for guild ${guildId} already loaded.`);
+    // Ensure the forms are visible if navigating back
+    const settingsForm = document.getElementById('settings-form');
+    const welcomeSettingsForm = document.getElementById('welcome-settings-form');
+    const modulesSettingsForm = document.getElementById('modules-settings-form');
+    const permissionsSettingsForm = document.getElementById('permissions-settings-form');
+    if (settingsForm) settingsForm.style.display = 'block';
+    if (welcomeSettingsForm) welcomeSettingsForm.style.display = 'block';
+    if (modulesSettingsForm) modulesSettingsForm.style.display = 'block';
+    if (permissionsSettingsForm) permissionsSettingsForm.style.display = 'block';
+    return;
+  }
+  console.log(`Loading settings for guild: ${guildId}`);
+
   const settingsForm = document.getElementById('settings-form');
   const welcomeSettingsForm = document.getElementById('welcome-settings-form');
   const modulesSettingsForm = document.getElementById('modules-settings-form');
@@ -497,6 +685,9 @@ function loadGuildSettings(guildId) {
       loadGuildChannels(guildId);
       loadGuildRoles(guildId);
       loadGuildCommands(guildId);
+
+      // Mark settings as loaded for this guild
+      window.currentSettingsGuildId = guildId;
 
       // Set up event listeners for buttons
       setupSaveSettingsButtons(guildId);
@@ -1370,5 +1561,3 @@ function setupWelcomeLeaveTestButtons(guildId) {
     });
   }
 }
-
-

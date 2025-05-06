@@ -403,6 +403,88 @@ class SettingsCog(commands.Cog, name="Settings"):
 
     # TODO: Add command to list permissions?
 
+
+    # --- Moderation Logging Settings ---
+    @commands.group(name='modlogconfig', help="Configure the integrated moderation logging.", invoke_without_command=True)
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def modlog_config_group(self, ctx: commands.Context):
+        """Base command for moderation log configuration. Shows current settings."""
+        guild_id = ctx.guild.id
+        enabled = await settings_manager.is_mod_log_enabled(guild_id)
+        channel_id = await settings_manager.get_mod_log_channel_id(guild_id)
+        channel = ctx.guild.get_channel(channel_id) if channel_id else None
+
+        status = "✅ Enabled" if enabled else "❌ Disabled"
+        channel_status = channel.mention if channel else ("Not Set" if channel_id else "Not Set")
+
+        embed = discord.Embed(title="Moderation Logging Configuration", color=discord.Color.teal())
+        embed.add_field(name="Status", value=status, inline=False)
+        embed.add_field(name="Log Channel", value=channel_status, inline=False)
+        await ctx.send(embed=embed)
+
+    @modlog_config_group.command(name='enable', help="Enables the integrated moderation logging.")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def modlog_enable(self, ctx: commands.Context):
+        """Enables the integrated moderation logging for this server."""
+        guild_id = ctx.guild.id
+        success = await settings_manager.set_mod_log_enabled(guild_id, True)
+        if success:
+            await ctx.send("✅ Integrated moderation logging has been enabled.")
+            log.info(f"Moderation logging enabled for guild {guild_id} by {ctx.author.name}")
+        else:
+            await ctx.send("❌ Failed to enable moderation logging. Please check logs.")
+            log.error(f"Failed to enable moderation logging for guild {guild_id}")
+
+    @modlog_config_group.command(name='disable', help="Disables the integrated moderation logging.")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def modlog_disable(self, ctx: commands.Context):
+        """Disables the integrated moderation logging for this server."""
+        guild_id = ctx.guild.id
+        success = await settings_manager.set_mod_log_enabled(guild_id, False)
+        if success:
+            await ctx.send("❌ Integrated moderation logging has been disabled.")
+            log.info(f"Moderation logging disabled for guild {guild_id} by {ctx.author.name}")
+        else:
+            await ctx.send("❌ Failed to disable moderation logging. Please check logs.")
+            log.error(f"Failed to disable moderation logging for guild {guild_id}")
+
+    @modlog_config_group.command(name='setchannel', help="Sets the channel where moderation logs will be sent. Usage: `setchannel #channel`")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def modlog_setchannel(self, ctx: commands.Context, channel: discord.TextChannel):
+        """Sets the channel for integrated moderation logs."""
+        guild_id = ctx.guild.id
+        # Basic check for bot permissions in the target channel
+        if not channel.permissions_for(ctx.guild.me).send_messages or not channel.permissions_for(ctx.guild.me).embed_links:
+             await ctx.send(f"❌ I need 'Send Messages' and 'Embed Links' permissions in {channel.mention} to send logs there.")
+             return
+
+        success = await settings_manager.set_mod_log_channel_id(guild_id, channel.id)
+        if success:
+            await ctx.send(f"✅ Moderation logs will now be sent to {channel.mention}.")
+            log.info(f"Moderation log channel set to {channel.id} for guild {guild_id} by {ctx.author.name}")
+        else:
+            await ctx.send("❌ Failed to set the moderation log channel. Please check logs.")
+            log.error(f"Failed to set moderation log channel for guild {guild_id}")
+
+    @modlog_config_group.command(name='unsetchannel', help="Unsets the moderation log channel (disables sending logs).")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def modlog_unsetchannel(self, ctx: commands.Context):
+        """Unsets the channel for integrated moderation logs."""
+        guild_id = ctx.guild.id
+        success = await settings_manager.set_mod_log_channel_id(guild_id, None)
+        if success:
+            await ctx.send("✅ Moderation log channel has been unset. Logs will not be sent to a channel.")
+            log.info(f"Moderation log channel unset for guild {guild_id} by {ctx.author.name}")
+        else:
+            await ctx.send("❌ Failed to unset the moderation log channel. Please check logs.")
+            log.error(f"Failed to unset moderation log channel for guild {guild_id}")
+
+
     # --- Error Handling for this Cog ---
     @set_prefix.error
     @enable_cog.error
@@ -416,7 +498,29 @@ class SettingsCog(commands.Cog, name="Settings"):
     @add_command_alias.error
     @remove_command_alias.error
     @sync_commands.error
+    @modlog_config_group.error # Add error handler for the group
+    @modlog_enable.error
+    @modlog_disable.error
+    @modlog_setchannel.error
+    @modlog_unsetchannel.error
     async def on_command_error(self, ctx: commands.Context, error):
+        # Check if the error originates from the modlogconfig group or its subcommands
+        if ctx.command and (ctx.command.name == 'modlogconfig' or (ctx.command.parent and ctx.command.parent.name == 'modlogconfig')):
+            if isinstance(error, commands.MissingPermissions):
+                await ctx.send("You need Administrator permissions to configure moderation logging.")
+                return # Handled
+            elif isinstance(error, commands.BadArgument):
+                 await ctx.send(f"Invalid argument. Usage: `{ctx.prefix}help {ctx.command.qualified_name}`")
+                 return # Handled
+            elif isinstance(error, commands.MissingRequiredArgument):
+                 await ctx.send(f"Missing argument. Usage: `{ctx.prefix}help {ctx.command.qualified_name}`")
+                 return # Handled
+            elif isinstance(error, commands.NoPrivateMessage):
+                 await ctx.send("This command can only be used in a server.")
+                 return # Handled
+            # Let other errors fall through to the generic handler below
+
+        # Generic handlers for other commands in this cog
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("You need Administrator permissions to use this command.")
         elif isinstance(error, commands.BadArgument):

@@ -29,7 +29,23 @@
         </div>
     </div>
 
-    <!-- Dashboard Section -->
+    <!-- Server Selection Section (New) -->
+    <div id="server-select-section" class="container dashboard-section" style="display: none; margin-top: 80px;">
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">Select a Server</h2>
+                <p class="text-muted">Choose the server you want to manage.</p>
+            </div>
+            <div id="server-list-container" class="server-list-grid p-4">
+                <!-- Server items will be populated by JS -->
+                <div class="loading-spinner-container">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dashboard Section (Initially hidden until server selected) -->
     <div id="dashboard-container" class="dashboard-container" style="display: none;">
         <!-- Sidebar -->
         <div id="sidebar" class="sidebar">
@@ -100,16 +116,12 @@
             <div class="card">
                 <div class="card-header">
                     <h2 class="card-title">Manage Server Settings</h2>
+                    <p class="text-muted">Settings for the selected server.</p> <!-- Added description -->
                 </div>
-                <div class="form-group">
-                    <label for="guild-select">Select Server:</label>
-                    <select name="guilds" id="guild-select" class="w-full">
-                        <option value="">--Please choose a server--</option>
-                    </select>
-                </div>
+                <!-- Removed guild-select dropdown -->
             </div>
 
-            <div id="settings-form" style="display: none;">
+            <div id="settings-form"> <!-- Display block by default now, JS will load content -->
                 <div class="card">
                     <div class="card-header">
                         <h3 class="card-title">Prefix Settings</h3>
@@ -500,13 +512,9 @@
                     <div class="card">
                         <div class="card-header">
                             <h2 class="card-title">Manage Cogs & Commands</h2>
+                            <p class="text-muted">Enable/disable modules and commands for the selected server.</p> <!-- Added description -->
                         </div>
-                        <div class="form-group">
-                            <label for="cog-guild-select">Select Server:</label>
-                            <select name="guilds" id="cog-guild-select" class="w-full">
-                                <option value="">--Please choose a server--</option>
-                            </select>
-                        </div>
+                        <!-- Removed cog-guild-select dropdown -->
                     </div>
 
                     <div id="cog-management-loading" class="loading-container">
