@@ -17,6 +17,9 @@ from pydantic import BaseModel, Field
 from functools import lru_cache
 from contextlib import asynccontextmanager
 from enum import Enum
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # --- Logging Configuration ---
 # Configure logging
@@ -368,6 +371,15 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
 
 # Create the FastAPI app with lifespan
 app = FastAPI(title="Unified API Service", lifespan=lifespan)
+
+@app.exception_handler(StarletteHTTPException)
+async def teapot_override(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 404:
+        return JSONResponse(
+            status_code=418,
+            content={"detail": "I'm a teapot"}
+        )
+    raise exc  # let other errors propagate normally
 
 # Add Session Middleware for Dashboard Auth
 # Uses DASHBOARD_SECRET_KEY from settings
