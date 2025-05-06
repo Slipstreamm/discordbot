@@ -21,134 +21,44 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") # Optional
 DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}/{POSTGRES_DB}"
 REDIS_URL = f"redis://{':' + REDIS_PASSWORD + '@' if REDIS_PASSWORD else ''}{REDIS_HOST}:{REDIS_PORT}/0" # Use DB 0 for settings cache
 
-# --- Global Connection Pools ---
-pg_pool = None
-redis_pool = None
+# --- Module-level Connection Pools (to be set by the bot) ---
+_active_pg_pool = None
+_active_redis_pool = None
 
 # --- Logging ---
 log = logging.getLogger(__name__)
 
 # --- Connection Management ---
-async def initialize_pools(event_loop=None): # Add event_loop parameter
+def set_bot_pools(pg_pool_instance, redis_pool_instance):
     """
-    Initializes the PostgreSQL and Redis connection pools.
-
-    IMPORTANT: This function MUST be awaited from an asynchronous context
-    that runs on the SAME event loop as your Discord bot's operations.
-    For a discord.py bot, this typically means calling it from within the
-    bot's `setup_hook()` method or early in an `async def on_ready()` event.
-    This ensures that the connection pools are bound to the correct event loop.
-
-    Args:
-        event_loop: The asyncio event loop to use for the PostgreSQL pool.
-                    If None, asyncio.get_event_loop() will be used by asyncpg.
+    Sets the active PostgreSQL and Redis pools for this module.
+    This function should be called by the main bot application (e.g., in setup_hook)
+    after it has initialized the pools on the correct event loop.
     """
-    global pg_pool, redis_pool
-    log.info(f"Initializing database and cache connection pools (event_loop provided: {event_loop is not None})...")
+    global _active_pg_pool, _active_redis_pool
+    _active_pg_pool = pg_pool_instance
+    _active_redis_pool = redis_pool_instance
+    if _active_pg_pool:
+        log.info(f"settings_manager: PostgreSQL pool set (Loop: {asyncio.get_event_loop()}).")
+    else:
+        log.warning("settings_manager: PostgreSQL pool was not set.")
+    if _active_redis_pool:
+        log.info(f"settings_manager: Redis pool set (Loop: {asyncio.get_event_loop()}).")
+    else:
+        log.warning("settings_manager: Redis pool was not set.")
 
-    # Close existing pools if they exist
-    if pg_pool:
-        log.info("Closing existing PostgreSQL pool before reinitializing...")
-        await pg_pool.close()
-        pg_pool = None
-
-    if redis_pool:
-        log.info("Closing existing Redis pool before reinitializing...")
-        await redis_pool.close()
-        redis_pool = None
-
-    # Initialize new pools
-    try:
-        # asyncpg will automatically use the event loop it's called from.
-        # The event_loop parameter is now primarily for logging/confirmation.
-        current_executing_loop = asyncio.get_event_loop()
-        if event_loop:
-            log.info(f"initialize_pools called with event_loop: {event_loop}. Current executing loop: {current_executing_loop}.")
-        else:
-            log.info(f"initialize_pools called without event_loop. Current executing loop: {current_executing_loop}.")
-
-        # Use the correct event loop for asyncpg pool creation to avoid cross-loop issues
-        loop_to_use = event_loop or asyncio.get_event_loop()
-        pg_pool = await asyncpg.create_pool(
-            DATABASE_URL,
-            min_size=1,
-            max_size=10,
-            command_timeout=30.0,  # 30 seconds timeout for commands
-            max_inactive_connection_lifetime=300,  # Refresh idle connections after 5 minutes
-            loop=loop_to_use
-        )
-        log.info(f"PostgreSQL pool created for {POSTGRES_HOST}/{POSTGRES_DB}. Loop during creation: {asyncio.get_event_loop()}")
-
-        # Create Redis pool
-        # This creates a connection pool that doesn't bind to a specific event loop
-        redis_pool = redis.from_url(
-            REDIS_URL,
-            decode_responses=True,
-            max_connections=20,  # Limit max connections
-            socket_timeout=5.0,  # 5 second timeout for operations
-            socket_connect_timeout=3.0,  # 3 second timeout for connections
-            retry_on_timeout=True,  # Retry on timeout
-            health_check_interval=30  # Check connection health every 30 seconds
-        )
-
-        # Test connection with a timeout
-        try:
-            await asyncio.wait_for(redis_pool.ping(), timeout=5.0)
-            log.info(f"Redis pool connected to {REDIS_HOST}:{REDIS_PORT}")
-        except asyncio.TimeoutError:
-            log.error(f"Redis connection timeout when connecting to {REDIS_HOST}:{REDIS_PORT}")
-            raise
-
-        # Initialize database schema
-        await initialize_database()  # Ensure tables exist
-
-        # Run database migrations
-        await run_migrations()  # Apply any necessary migrations
-
-        return True  # Indicate successful initialization
-    except Exception as e:
-        log.exception(f"Failed to initialize connection pools: {e}")
-        # Clean up any partially initialized resources
-        if pg_pool:
-            await pg_pool.close()
-            pg_pool = None
-        if redis_pool:
-            await redis_pool.close()
-            redis_pool = None
-        # Raise the exception to be handled by the caller
-        raise
-
-async def close_pools():
-    """Closes the PostgreSQL and Redis connection pools gracefully."""
-    global pg_pool, redis_pool
-    log.info("Closing database and cache connection pools...")
-    if redis_pool:
-        try:
-            await redis_pool.close()
-            log.info("Redis pool closed.")
-        except Exception as e:
-            log.exception(f"Error closing Redis pool: {e}")
-        redis_pool = None # Ensure it's marked as closed
-
-    if pg_pool:
-        try:
-            await pg_pool.close()
-            log.info("PostgreSQL pool closed.")
-        except Exception as e:
-            log.exception(f"Error closing PostgreSQL pool: {e}")
-        pg_pool = None # Ensure it's marked as closed
-
+# initialize_pools and close_pools are removed as pool lifecycle is managed by the bot.
 
 # --- Database Schema Initialization ---
 async def run_migrations():
     """Run database migrations to update schema."""
-    if not pg_pool:
-        log.error("PostgreSQL pool not initialized. Cannot run migrations.")
+    if not _active_pg_pool:
+        log.error("PostgreSQL pool not initialized in settings_manager. Cannot run migrations.")
         return
 
     log.info("Running database migrations...")
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Check if custom_command_description column exists in command_customization table
             column_exists = await conn.fetchval("""
                 SELECT EXISTS (
@@ -175,12 +85,12 @@ async def run_migrations():
 
 async def initialize_database():
     """Creates necessary tables in the PostgreSQL database if they don't exist."""
-    if not pg_pool:
-        log.error("PostgreSQL pool not initialized. Cannot initialize database.")
+    if not _active_pg_pool:
+        log.error("PostgreSQL pool not initialized in settings_manager. Cannot initialize database.")
         return
 
     log.info("Initializing database schema...")
-    async with pg_pool.acquire() as conn:
+    async with _active_pg_pool.acquire() as conn:
         async with conn.transaction():
             # Guilds table (to track known guilds, maybe store basic info later)
             await conn.execute("""
@@ -337,12 +247,12 @@ async def initialize_database():
 
 async def get_starboard_settings(guild_id: int):
     """Gets the starboard settings for a guild."""
-    if not pg_pool:
-        log.warning(f"PostgreSQL pool not initialized, returning None for starboard settings.")
+    if not _active_pg_pool:
+        log.warning(f"PostgreSQL pool not initialized in settings_manager, returning None for starboard settings.")
         return None
 
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Check if the guild exists in the starboard_settings table
             settings = await conn.fetchrow(
                 """
@@ -388,8 +298,8 @@ async def update_starboard_settings(guild_id: int, **kwargs):
     Returns:
         bool: True if successful, False otherwise
     """
-    if not pg_pool:
-        log.error(f"PostgreSQL pool not initialized, cannot update starboard settings.")
+    if not _active_pg_pool:
+        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot update starboard settings.")
         return False
 
     valid_keys = {'enabled', 'star_emoji', 'threshold', 'starboard_channel_id', 'ignore_bots', 'self_star'}
@@ -404,7 +314,7 @@ async def update_starboard_settings(guild_id: int, **kwargs):
         # Acquire a connection with a timeout
         conn = None
         try:
-            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+            conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
             # Ensure guild exists
             try:
@@ -414,7 +324,7 @@ async def update_starboard_settings(guild_id: int, **kwargs):
                     log.warning(f"Connection issue when inserting guild {guild_id}: {e}")
                     # Try to reset the connection
                     await conn.close()
-                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+                    conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
                 else:
                     raise
 
@@ -437,7 +347,7 @@ async def update_starboard_settings(guild_id: int, **kwargs):
                     log.warning(f"Connection issue when updating starboard settings for guild {guild_id}: {e}")
                     # Try to reset the connection
                     await conn.close()
-                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+                    conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
                     # Try again with the new connection
                     await conn.execute(
@@ -456,7 +366,7 @@ async def update_starboard_settings(guild_id: int, **kwargs):
         finally:
             # Always release the connection back to the pool
             if conn:
-                await pg_pool.release(conn)
+                await _active_pg_pool.release(conn)
     except asyncio.TimeoutError:
         log.error(f"Timeout acquiring database connection for starboard settings update (Guild: {guild_id})")
         return False
@@ -466,12 +376,12 @@ async def update_starboard_settings(guild_id: int, **kwargs):
 
 async def get_starboard_entry(guild_id: int, original_message_id: int):
     """Gets a starboard entry for a specific message."""
-    if not pg_pool:
-        log.warning(f"PostgreSQL pool not initialized, returning None for starboard entry.")
+    if not _active_pg_pool:
+        log.warning(f"PostgreSQL pool not initialized in settings_manager, returning None for starboard entry.")
         return None
 
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             entry = await conn.fetchrow(
                 """
                 SELECT * FROM starboard_entries
@@ -488,12 +398,12 @@ async def get_starboard_entry(guild_id: int, original_message_id: int):
 async def create_starboard_entry(guild_id: int, original_message_id: int, original_channel_id: int,
                                 starboard_message_id: int, author_id: int, star_count: int = 1):
     """Creates a new starboard entry."""
-    if not pg_pool:
-        log.error(f"PostgreSQL pool not initialized, cannot create starboard entry.")
+    if not _active_pg_pool:
+        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot create starboard entry.")
         return False
 
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
 
@@ -516,15 +426,15 @@ async def create_starboard_entry(guild_id: int, original_message_id: int, origin
 
 async def update_starboard_entry(guild_id: int, original_message_id: int, star_count: int):
     """Updates the star count for an existing starboard entry."""
-    if not pg_pool:
-        log.error(f"PostgreSQL pool not initialized, cannot update starboard entry.")
+    if not _active_pg_pool:
+        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot update starboard entry.")
         return False
 
     try:
         # Acquire a connection with a timeout
         conn = None
         try:
-            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+            conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
             await conn.execute(
                 """
@@ -540,7 +450,7 @@ async def update_starboard_entry(guild_id: int, original_message_id: int, star_c
         finally:
             # Always release the connection back to the pool
             if conn:
-                await pg_pool.release(conn)
+                await _active_pg_pool.release(conn)
     except asyncio.TimeoutError:
         log.error(f"Timeout acquiring database connection for starboard entry update (Guild: {guild_id}, Message: {original_message_id})")
         return False
@@ -550,15 +460,15 @@ async def update_starboard_entry(guild_id: int, original_message_id: int, star_c
 
 async def delete_starboard_entry(guild_id: int, original_message_id: int):
     """Deletes a starboard entry."""
-    if not pg_pool:
-        log.error(f"PostgreSQL pool not initialized, cannot delete starboard entry.")
+    if not _active_pg_pool:
+        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot delete starboard entry.")
         return False
 
     try:
         # Acquire a connection with a timeout
         conn = None
         try:
-            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+            conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
             # Delete the entry
             await conn.execute(
@@ -583,7 +493,7 @@ async def delete_starboard_entry(guild_id: int, original_message_id: int):
         finally:
             # Always release the connection back to the pool
             if conn:
-                await pg_pool.release(conn)
+                await _active_pg_pool.release(conn)
     except asyncio.TimeoutError:
         log.error(f"Timeout acquiring database connection for starboard entry deletion (Guild: {guild_id}, Message: {original_message_id})")
         return False
@@ -593,15 +503,15 @@ async def delete_starboard_entry(guild_id: int, original_message_id: int):
 
 async def clear_starboard_entries(guild_id: int):
     """Clears all starboard entries for a guild."""
-    if not pg_pool:
-        log.error(f"PostgreSQL pool not initialized, cannot clear starboard entries.")
+    if not _active_pg_pool:
+        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot clear starboard entries.")
         return False
 
     try:
         # Acquire a connection with a timeout
         conn = None
         try:
-            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+            conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
             # Get all starboard entries for this guild
             entries = await conn.fetch(
@@ -635,7 +545,7 @@ async def clear_starboard_entries(guild_id: int):
         finally:
             # Always release the connection back to the pool
             if conn:
-                await pg_pool.release(conn)
+                await _active_pg_pool.release(conn)
     except asyncio.TimeoutError:
         log.error(f"Timeout acquiring database connection for clearing starboard entries (Guild: {guild_id})")
         return False
@@ -645,8 +555,8 @@ async def clear_starboard_entries(guild_id: int):
 
 async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
     """Records a user's star reaction to a message."""
-    if not pg_pool:
-        log.error(f"PostgreSQL pool not initialized, cannot add starboard reaction.")
+    if not _active_pg_pool:
+        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot add starboard reaction.")
         return False
 
     # Use a timeout to prevent hanging on database operations
@@ -654,7 +564,7 @@ async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
         # Acquire a connection with a timeout
         conn = None
         try:
-            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+            conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
             # Ensure guild exists
             try:
@@ -664,7 +574,7 @@ async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
                     log.warning(f"Connection issue when inserting guild {guild_id}: {e}")
                     # Try to reset the connection
                     await conn.close()
-                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+                    conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
                 else:
                     raise
 
@@ -683,7 +593,7 @@ async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
                     log.warning(f"Connection issue when adding reaction for message {message_id} in guild {guild_id}: {e}")
                     # Try to reset the connection
                     await conn.close()
-                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+                    conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
                     # Try again with the new connection
                     await conn.execute(
@@ -712,7 +622,7 @@ async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
                     log.warning(f"Connection issue when counting reactions for message {message_id} in guild {guild_id}: {e}")
                     # Try to reset the connection
                     await conn.close()
-                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+                    conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
                     # Try again with the new connection
                     count = await conn.fetchval(
@@ -729,7 +639,7 @@ async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
             # Always release the connection back to the pool
             if conn:
                 try:
-                    await pg_pool.release(conn)
+                    await _active_pg_pool.release(conn)
                 except Exception as e:
                     log.warning(f"Error releasing connection: {e}")
     except asyncio.TimeoutError:
@@ -741,8 +651,8 @@ async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
 
 async def remove_starboard_reaction(guild_id: int, message_id: int, user_id: int):
     """Removes a user's star reaction from a message."""
-    if not pg_pool:
-        log.error(f"PostgreSQL pool not initialized, cannot remove starboard reaction.")
+    if not _active_pg_pool:
+        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot remove starboard reaction.")
         return False
 
     # Use a timeout to prevent hanging on database operations
@@ -750,7 +660,7 @@ async def remove_starboard_reaction(guild_id: int, message_id: int, user_id: int
         # Acquire a connection with a timeout
         conn = None
         try:
-            conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+            conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
             # Remove the reaction record
             try:
@@ -766,7 +676,7 @@ async def remove_starboard_reaction(guild_id: int, message_id: int, user_id: int
                     log.warning(f"Connection issue when removing reaction for message {message_id} in guild {guild_id}: {e}")
                     # Try to reset the connection
                     await conn.close()
-                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+                    conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
                     # Try again with the new connection
                     await conn.execute(
@@ -794,7 +704,7 @@ async def remove_starboard_reaction(guild_id: int, message_id: int, user_id: int
                     log.warning(f"Connection issue when counting reactions for message {message_id} in guild {guild_id}: {e}")
                     # Try to reset the connection
                     await conn.close()
-                    conn = await asyncio.wait_for(pg_pool.acquire(), timeout=5.0)
+                    conn = await asyncio.wait_for(_active_pg_pool.acquire(), timeout=5.0)
 
                     # Try again with the new connection
                     count = await conn.fetchval(
@@ -811,7 +721,7 @@ async def remove_starboard_reaction(guild_id: int, message_id: int, user_id: int
             # Always release the connection back to the pool
             if conn:
                 try:
-                    await pg_pool.release(conn)
+                    await _active_pg_pool.release(conn)
                 except Exception as e:
                     log.warning(f"Error releasing connection: {e}")
     except asyncio.TimeoutError:
@@ -823,12 +733,12 @@ async def remove_starboard_reaction(guild_id: int, message_id: int, user_id: int
 
 async def get_starboard_reaction_count(guild_id: int, message_id: int):
     """Gets the count of star reactions for a message."""
-    if not pg_pool:
-        log.warning(f"PostgreSQL pool not initialized, returning 0 for starboard reaction count.")
+    if not _active_pg_pool:
+        log.warning(f"PostgreSQL pool not initialized in settings_manager, returning 0 for starboard reaction count.")
         return 0
 
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             count = await conn.fetchval(
                 """
                 SELECT COUNT(*) FROM starboard_reactions
@@ -844,12 +754,12 @@ async def get_starboard_reaction_count(guild_id: int, message_id: int):
 
 async def has_user_reacted(guild_id: int, message_id: int, user_id: int):
     """Checks if a user has already reacted to a message."""
-    if not pg_pool:
-        log.warning(f"PostgreSQL pool not initialized, returning False for user reaction check.")
+    if not _active_pg_pool:
+        log.warning(f"PostgreSQL pool not initialized in settings_manager, returning False for user reaction check.")
         return False
 
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             result = await conn.fetchval(
                 """
                 SELECT EXISTS(
@@ -877,8 +787,8 @@ def _get_redis_key(guild_id: int, key_type: str, identifier: str = None) -> str:
 
 async def get_guild_prefix(guild_id: int, default_prefix: str) -> str:
     """Gets the command prefix for a guild, checking cache first."""
-    if not pg_pool or not redis_pool:
-        log.warning("Pools not initialized, returning default prefix.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.warning("Pools not initialized in settings_manager, returning default prefix.")
         return default_prefix
 
     cache_key = _get_redis_key(guild_id, "prefix")
@@ -886,7 +796,7 @@ async def get_guild_prefix(guild_id: int, default_prefix: str) -> str:
     # Try to get from cache with timeout and error handling
     try:
         # Use a timeout to prevent hanging on Redis operations
-        cached_prefix = await asyncio.wait_for(redis_pool.get(cache_key), timeout=2.0)
+        cached_prefix = await asyncio.wait_for(_active_redis_pool.get(cache_key), timeout=2.0)
         if cached_prefix is not None:
             log.debug(f"Cache hit for prefix (Guild: {guild_id})")
             return cached_prefix
@@ -903,7 +813,7 @@ async def get_guild_prefix(guild_id: int, default_prefix: str) -> str:
     # Cache miss or Redis error, get from database
     log.debug(f"Cache miss for prefix (Guild: {guild_id})")
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             prefix = await conn.fetchval(
                 "SELECT setting_value FROM guild_settings WHERE guild_id = $1 AND setting_key = 'prefix'",
                 guild_id
@@ -915,7 +825,7 @@ async def get_guild_prefix(guild_id: int, default_prefix: str) -> str:
         try:
             # Use a timeout to prevent hanging on Redis operations
             await asyncio.wait_for(
-                redis_pool.set(cache_key, final_prefix, ex=3600),  # Cache for 1 hour
+                _active_redis_pool.set(cache_key, final_prefix, ex=3600),  # Cache for 1 hour
                 timeout=2.0
             )
         except asyncio.TimeoutError:
@@ -935,13 +845,13 @@ async def get_guild_prefix(guild_id: int, default_prefix: str) -> str:
 
 async def set_guild_prefix(guild_id: int, prefix: str):
     """Sets the command prefix for a guild and updates the cache."""
-    if not pg_pool or not redis_pool:
-        log.error("Pools not initialized, cannot set prefix.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error("Pools not initialized in settings_manager, cannot set prefix.")
         return False # Indicate failure
 
     cache_key = _get_redis_key(guild_id, "prefix")
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
             # Upsert the setting
@@ -955,14 +865,14 @@ async def set_guild_prefix(guild_id: int, prefix: str):
             )
 
         # Update cache
-        await redis_pool.set(cache_key, prefix, ex=3600) # Cache for 1 hour
+        await _active_redis_pool.set(cache_key, prefix, ex=3600) # Cache for 1 hour
         log.info(f"Set prefix for guild {guild_id} to '{prefix}'")
         return True # Indicate success
     except Exception as e:
         log.exception(f"Database or Redis error setting prefix for guild {guild_id}: {e}")
         # Attempt to invalidate cache on error to prevent stale data
         try:
-            await redis_pool.delete(cache_key)
+            await _active_redis_pool.delete(cache_key)
         except Exception as redis_err:
             log.exception(f"Failed to invalidate Redis cache for prefix (Guild: {guild_id}): {redis_err}")
         return False # Indicate failure
@@ -971,8 +881,8 @@ async def set_guild_prefix(guild_id: int, prefix: str):
 
 async def get_setting(guild_id: int, key: str, default=None):
     """Gets a specific setting for a guild, checking cache first."""
-    if not pg_pool or not redis_pool:
-        log.warning(f"Pools not initialized, returning default for setting '{key}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.warning(f"Pools not initialized in settings_manager, returning default for setting '{key}'.")
         return default
 
     cache_key = _get_redis_key(guild_id, "setting", key)
@@ -980,7 +890,7 @@ async def get_setting(guild_id: int, key: str, default=None):
     # Try to get from cache with timeout and error handling
     try:
         # Use a timeout to prevent hanging on Redis operations
-        cached_value = await asyncio.wait_for(redis_pool.get(cache_key), timeout=2.0)
+        cached_value = await asyncio.wait_for(_active_redis_pool.get(cache_key), timeout=2.0)
         if cached_value is not None:
             # Note: Redis stores everything as strings. Consider type conversion if needed.
             log.debug(f"Cache hit for setting '{key}' (Guild: {guild_id})")
@@ -1001,7 +911,7 @@ async def get_setting(guild_id: int, key: str, default=None):
     # Cache miss or Redis error, get from database
     log.debug(f"Cache miss for setting '{key}' (Guild: {guild_id})")
     try:
-        async with pg_pool.acquire() as conn: # Reverted to using pg_pool
+        async with _active_pg_pool.acquire() as conn: # Use _active_pg_pool
             value = await conn.fetchval(
                 "SELECT setting_value FROM guild_settings WHERE guild_id = $1 AND setting_key = $2",
                 guild_id, key
@@ -1020,7 +930,7 @@ async def get_setting(guild_id: int, key: str, default=None):
         try:
             # Use a timeout to prevent hanging on Redis operations
             await asyncio.wait_for(
-                redis_pool.set(cache_key, value_to_cache, ex=3600),  # Cache for 1 hour
+                _active_redis_pool.set(cache_key, value_to_cache, ex=3600),  # Cache for 1 hour
                 timeout=2.0
             )
         except asyncio.TimeoutError:
@@ -1041,7 +951,7 @@ async def get_setting(guild_id: int, key: str, default=None):
         try:
             # Use a timeout to prevent hanging on Redis operations
             await asyncio.wait_for(
-                redis_pool.set(cache_key, value_to_cache, ex=3600),  # Cache for 1 hour
+                _active_redis_pool.set(cache_key, value_to_cache, ex=3600),  # Cache for 1 hour
                 timeout=2.0
             )
         except asyncio.TimeoutError:
@@ -1060,13 +970,13 @@ async def get_setting(guild_id: int, key: str, default=None):
 async def set_setting(guild_id: int, key: str, value: str | None):
     """Sets a specific setting for a guild and updates/invalidates the cache.
        Setting value to None effectively deletes the setting."""
-    if not redis_pool: # Only redis_pool is strictly necessary for cache part now
-        log.error(f"Redis pool not initialized, cannot set setting '{key}' (cache part will fail).")
-        # DB part might still work if DATABASE_URL is valid
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error(f"Pools not initialized in settings_manager, cannot set setting '{key}'.")
+        return False # Indicate failure
 
     cache_key = _get_redis_key(guild_id, "setting", key)
     try:
-        async with pg_pool.acquire() as conn: # Reverted to using pg_pool
+        async with _active_pg_pool.acquire() as conn: # Use _active_pg_pool
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
 
@@ -1080,9 +990,9 @@ async def set_setting(guild_id: int, key: str, value: str | None):
                     """,
                     guild_id, key, str(value) # Ensure value is string
                 )
-                # Update cache if redis_pool is available
-                if redis_pool:
-                    await redis_pool.set(cache_key, str(value), ex=3600)
+                # Update cache if _active_redis_pool is available
+                if _active_redis_pool:
+                    await _active_redis_pool.set(cache_key, str(value), ex=3600)
                 log.info(f"Set setting '{key}' for guild {guild_id}")
             else:
                 # Delete the setting if value is None
@@ -1090,17 +1000,17 @@ async def set_setting(guild_id: int, key: str, value: str | None):
                     "DELETE FROM guild_settings WHERE guild_id = $1 AND setting_key = $2",
                     guild_id, key
                 )
-                # Invalidate cache if redis_pool is available
-                if redis_pool:
-                    await redis_pool.delete(cache_key)
+                # Invalidate cache if _active_redis_pool is available
+                if _active_redis_pool:
+                    await _active_redis_pool.delete(cache_key)
                 log.info(f"Deleted setting '{key}' for guild {guild_id}")
         return True
     except Exception as e:
         log.exception(f"Database or Redis error setting setting '{key}' for guild {guild_id}: {e}")
-        # Attempt to invalidate cache on error if redis_pool is available
-        if redis_pool:
+        # Attempt to invalidate cache on error if _active_redis_pool is available
+        if _active_redis_pool:
             try:
-                await redis_pool.delete(cache_key)
+                await _active_redis_pool.delete(cache_key)
             except Exception as redis_err:
                 log.exception(f"Failed to invalidate Redis cache for setting '{key}' (Guild: {guild_id}): {redis_err}")
         return False
@@ -1111,8 +1021,8 @@ async def set_setting(guild_id: int, key: str, value: str | None):
 async def is_cog_enabled(guild_id: int, cog_name: str, default_enabled: bool = True) -> bool:
     """Checks if a cog is enabled for a guild, checking cache first.
        Uses default_enabled if no specific setting is found."""
-    if not pg_pool or not redis_pool:
-        log.warning(f"Pools not initialized, returning default for cog '{cog_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.warning(f"Pools not initialized in settings_manager, returning default for cog '{cog_name}'.")
         return default_enabled
 
     cache_key = _get_redis_key(guild_id, "cog_enabled", cog_name)
@@ -1120,7 +1030,7 @@ async def is_cog_enabled(guild_id: int, cog_name: str, default_enabled: bool = T
     # Try to get from cache with timeout and error handling
     try:
         # Use a timeout to prevent hanging on Redis operations
-        cached_value = await asyncio.wait_for(redis_pool.get(cache_key), timeout=2.0)
+        cached_value = await asyncio.wait_for(_active_redis_pool.get(cache_key), timeout=2.0)
         if cached_value is not None:
             log.debug(f"Cache hit for cog enabled status '{cog_name}' (Guild: {guild_id})")
             return cached_value == "True" # Redis stores strings
@@ -1138,7 +1048,7 @@ async def is_cog_enabled(guild_id: int, cog_name: str, default_enabled: bool = T
     log.debug(f"Cache miss for cog enabled status '{cog_name}' (Guild: {guild_id})")
     db_enabled_status = None
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             db_enabled_status = await conn.fetchval(
                 "SELECT enabled FROM enabled_cogs WHERE guild_id = $1 AND cog_name = $2",
                 guild_id, cog_name
@@ -1150,7 +1060,7 @@ async def is_cog_enabled(guild_id: int, cog_name: str, default_enabled: bool = T
         try:
             # Use a timeout to prevent hanging on Redis operations
             await asyncio.wait_for(
-                redis_pool.set(cache_key, str(final_status), ex=3600),  # Cache for 1 hour
+                _active_redis_pool.set(cache_key, str(final_status), ex=3600),  # Cache for 1 hour
                 timeout=2.0
             )
         except asyncio.TimeoutError:
@@ -1172,13 +1082,13 @@ async def is_cog_enabled(guild_id: int, cog_name: str, default_enabled: bool = T
 
 async def set_cog_enabled(guild_id: int, cog_name: str, enabled: bool):
     """Sets the enabled status for a cog in a guild and updates the cache."""
-    if not pg_pool or not redis_pool:
-        log.error(f"Pools not initialized, cannot set cog enabled status for '{cog_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error(f"Pools not initialized in settings_manager, cannot set cog enabled status for '{cog_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cog_enabled", cog_name)
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
             # Upsert the enabled status
@@ -1192,14 +1102,14 @@ async def set_cog_enabled(guild_id: int, cog_name: str, enabled: bool):
             )
 
         # Update cache
-        await redis_pool.set(cache_key, str(enabled), ex=3600)
+        await _active_redis_pool.set(cache_key, str(enabled), ex=3600)
         log.info(f"Set cog '{cog_name}' enabled status to {enabled} for guild {guild_id}")
         return True
     except Exception as e:
         log.exception(f"Database or Redis error setting cog enabled status for '{cog_name}' in guild {guild_id}: {e}")
         # Attempt to invalidate cache on error
         try:
-            await redis_pool.delete(cache_key)
+            await _active_redis_pool.delete(cache_key)
         except Exception as redis_err:
              log.exception(f"Failed to invalidate Redis cache for cog enabled status '{cog_name}' (Guild: {guild_id}): {redis_err}")
         return False
@@ -1208,8 +1118,8 @@ async def set_cog_enabled(guild_id: int, cog_name: str, enabled: bool):
 async def is_command_enabled(guild_id: int, command_name: str, default_enabled: bool = True) -> bool:
     """Checks if a command is enabled for a guild, checking cache first.
        Uses default_enabled if no specific setting is found."""
-    if not pg_pool or not redis_pool:
-        log.warning(f"Pools not initialized, returning default for command '{command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.warning(f"Pools not initialized in settings_manager, returning default for command '{command_name}'.")
         return default_enabled
 
     cache_key = _get_redis_key(guild_id, "cmd_enabled", command_name)
@@ -1217,7 +1127,7 @@ async def is_command_enabled(guild_id: int, command_name: str, default_enabled: 
     # Try to get from cache with timeout and error handling
     try:
         # Use a timeout to prevent hanging on Redis operations
-        cached_value = await asyncio.wait_for(redis_pool.get(cache_key), timeout=2.0)
+        cached_value = await asyncio.wait_for(_active_redis_pool.get(cache_key), timeout=2.0)
         if cached_value is not None:
             log.debug(f"Cache hit for command enabled status '{command_name}' (Guild: {guild_id})")
             return cached_value == "True" # Redis stores strings
@@ -1235,7 +1145,7 @@ async def is_command_enabled(guild_id: int, command_name: str, default_enabled: 
     log.debug(f"Cache miss for command enabled status '{command_name}' (Guild: {guild_id})")
     db_enabled_status = None
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             db_enabled_status = await conn.fetchval(
                 "SELECT enabled FROM enabled_commands WHERE guild_id = $1 AND command_name = $2",
                 guild_id, command_name
@@ -1247,7 +1157,7 @@ async def is_command_enabled(guild_id: int, command_name: str, default_enabled: 
         try:
             # Use a timeout to prevent hanging on Redis operations
             await asyncio.wait_for(
-                redis_pool.set(cache_key, str(final_status), ex=3600),  # Cache for 1 hour
+                _active_redis_pool.set(cache_key, str(final_status), ex=3600),  # Cache for 1 hour
                 timeout=2.0
             )
         except asyncio.TimeoutError:
@@ -1269,13 +1179,13 @@ async def is_command_enabled(guild_id: int, command_name: str, default_enabled: 
 
 async def set_command_enabled(guild_id: int, command_name: str, enabled: bool):
     """Sets the enabled status for a command in a guild and updates the cache."""
-    if not pg_pool or not redis_pool:
-        log.error(f"Pools not initialized, cannot set command enabled status for '{command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error(f"Pools not initialized in settings_manager, cannot set command enabled status for '{command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_enabled", command_name)
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
             # Upsert the enabled status
@@ -1289,14 +1199,14 @@ async def set_command_enabled(guild_id: int, command_name: str, enabled: bool):
             )
 
         # Update cache
-        await redis_pool.set(cache_key, str(enabled), ex=3600)
+        await _active_redis_pool.set(cache_key, str(enabled), ex=3600)
         log.info(f"Set command '{command_name}' enabled status to {enabled} for guild {guild_id}")
         return True
     except Exception as e:
         log.exception(f"Database or Redis error setting command enabled status for '{command_name}' in guild {guild_id}: {e}")
         # Attempt to invalidate cache on error
         try:
-            await redis_pool.delete(cache_key)
+            await _active_redis_pool.delete(cache_key)
         except Exception as redis_err:
              log.exception(f"Failed to invalidate Redis cache for command enabled status '{command_name}' (Guild: {guild_id}): {redis_err}")
         return False
@@ -1305,12 +1215,12 @@ async def set_command_enabled(guild_id: int, command_name: str, enabled: bool):
 async def get_all_enabled_commands(guild_id: int) -> Dict[str, bool]:
     """Gets all command enabled statuses for a guild.
        Returns a dictionary of command_name -> enabled status."""
-    if not pg_pool:
-        log.error(f"Database pool not initialized, cannot get command enabled statuses for guild {guild_id}.")
+    if not _active_pg_pool:
+        log.error(f"Database pool not initialized in settings_manager, cannot get command enabled statuses for guild {guild_id}.")
         return {}
 
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             records = await conn.fetch(
                 "SELECT command_name, enabled FROM enabled_commands WHERE guild_id = $1",
                 guild_id
@@ -1324,12 +1234,12 @@ async def get_all_enabled_commands(guild_id: int) -> Dict[str, bool]:
 async def get_all_enabled_cogs(guild_id: int) -> Dict[str, bool]:
     """Gets all cog enabled statuses for a guild.
        Returns a dictionary of cog_name -> enabled status."""
-    if not pg_pool:
-        log.error(f"Database pool not initialized, cannot get cog enabled statuses for guild {guild_id}.")
+    if not _active_pg_pool:
+        log.error(f"Database pool not initialized in settings_manager, cannot get cog enabled statuses for guild {guild_id}.")
         return {}
 
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             records = await conn.fetch(
                 "SELECT cog_name, enabled FROM enabled_cogs WHERE guild_id = $1",
                 guild_id
@@ -1343,13 +1253,13 @@ async def get_all_enabled_cogs(guild_id: int) -> Dict[str, bool]:
 
 async def add_command_permission(guild_id: int, command_name: str, role_id: int) -> bool:
     """Adds permission for a role to use a command and invalidates cache."""
-    if not pg_pool or not redis_pool:
-        log.error(f"Pools not initialized, cannot add permission for command '{command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error(f"Pools not initialized in settings_manager, cannot add permission for command '{command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
             # Add the permission rule
@@ -1363,14 +1273,14 @@ async def add_command_permission(guild_id: int, command_name: str, role_id: int)
             )
 
         # Invalidate cache after DB operation succeeds
-        await redis_pool.delete(cache_key)
+        await _active_redis_pool.delete(cache_key)
         log.info(f"Added permission for role {role_id} to use command '{command_name}' in guild {guild_id}")
         return True
     except Exception as e:
         log.exception(f"Database or Redis error adding permission for command '{command_name}' in guild {guild_id}: {e}")
         # Attempt to invalidate cache even on error
         try:
-            await redis_pool.delete(cache_key)
+            await _active_redis_pool.delete(cache_key)
         except Exception as redis_err:
              log.exception(f"Failed to invalidate Redis cache for command permissions '{command_name}' (Guild: {guild_id}): {redis_err}")
         return False
@@ -1378,13 +1288,13 @@ async def add_command_permission(guild_id: int, command_name: str, role_id: int)
 
 async def remove_command_permission(guild_id: int, command_name: str, role_id: int) -> bool:
     """Removes permission for a role to use a command and invalidates cache."""
-    if not pg_pool or not redis_pool:
-        log.error(f"Pools not initialized, cannot remove permission for command '{command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error(f"Pools not initialized in settings_manager, cannot remove permission for command '{command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Ensure guild exists (though unlikely to be needed for delete)
             # await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
             # Remove the permission rule
@@ -1397,14 +1307,14 @@ async def remove_command_permission(guild_id: int, command_name: str, role_id: i
             )
 
         # Invalidate cache after DB operation succeeds
-        await redis_pool.delete(cache_key)
+        await _active_redis_pool.delete(cache_key)
         log.info(f"Removed permission for role {role_id} to use command '{command_name}' in guild {guild_id}")
         return True
     except Exception as e:
         log.exception(f"Database or Redis error removing permission for command '{command_name}' in guild {guild_id}: {e}")
         # Attempt to invalidate cache even on error
         try:
-            await redis_pool.delete(cache_key)
+            await _active_redis_pool.delete(cache_key)
         except Exception as redis_err:
              log.exception(f"Failed to invalidate Redis cache for command permissions '{command_name}' (Guild: {guild_id}): {redis_err}")
         return False
@@ -1415,8 +1325,8 @@ async def check_command_permission(guild_id: int, command_name: str, member_role
        Returns True if allowed, False otherwise.
        If no permissions are set for the command in the DB, it defaults to allowed by this check.
     """
-    if not pg_pool or not redis_pool:
-        log.warning(f"Pools not initialized, defaulting to allowed for command '{command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.warning(f"Pools not initialized in settings_manager, defaulting to allowed for command '{command_name}'.")
         return True # Default to allowed if system isn't ready
 
     cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
@@ -1424,8 +1334,8 @@ async def check_command_permission(guild_id: int, command_name: str, member_role
 
     try:
         # Check cache first - stores a set of allowed role IDs as strings
-        if await redis_pool.exists(cache_key):
-            cached_roles = await redis_pool.smembers(cache_key)
+        if await _active_redis_pool.exists(cache_key):
+            cached_roles = await _active_redis_pool.smembers(cache_key)
             # Handle the empty set marker
             if cached_roles == {"__EMPTY_SET__"}:
                  log.debug(f"Cache hit (empty set) for cmd perms '{command_name}' (Guild: {guild_id}). Command allowed by default.")
@@ -1435,7 +1345,7 @@ async def check_command_permission(guild_id: int, command_name: str, member_role
         else:
             # Cache miss - fetch from DB
             log.debug(f"Cache miss for cmd perms '{command_name}' (Guild: {guild_id})")
-            async with pg_pool.acquire() as conn:
+            async with _active_pg_pool.acquire() as conn:
                 records = await conn.fetch(
                     "SELECT allowed_role_id FROM command_permissions WHERE guild_id = $1 AND command_name = $2",
                     guild_id, command_name
@@ -1445,7 +1355,7 @@ async def check_command_permission(guild_id: int, command_name: str, member_role
 
             # Cache the result (even if empty)
             try:
-                async with redis_pool.pipeline(transaction=True) as pipe:
+                async with _active_redis_pool.pipeline(transaction=True) as pipe:
                     pipe.delete(cache_key) # Ensure clean state
                     if allowed_role_ids_str:
                         pipe.sadd(cache_key, *allowed_role_ids_str)
@@ -1478,15 +1388,15 @@ async def check_command_permission(guild_id: int, command_name: str, member_role
 
 async def get_command_permissions(guild_id: int, command_name: str) -> set[int] | None:
     """Gets the set of allowed role IDs for a specific command, checking cache first. Returns None on error."""
-    if not pg_pool or not redis_pool:
-        log.warning(f"Pools not initialized, cannot get permissions for command '{command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.warning(f"Pools not initialized in settings_manager, cannot get permissions for command '{command_name}'.")
         return None
 
     cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
     try:
         # Check cache first
-        if await redis_pool.exists(cache_key):
-            cached_roles_str = await redis_pool.smembers(cache_key)
+        if await _active_redis_pool.exists(cache_key):
+            cached_roles_str = await _active_redis_pool.smembers(cache_key)
             if cached_roles_str == {"__EMPTY_SET__"}:
                 log.debug(f"Cache hit (empty set) for cmd perms '{command_name}' (Guild: {guild_id}).")
                 return set() # Return empty set if explicitly empty
@@ -1499,7 +1409,7 @@ async def get_command_permissions(guild_id: int, command_name: str) -> set[int] 
 
     log.debug(f"Cache miss for cmd perms '{command_name}' (Guild: {guild_id})")
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             records = await conn.fetch(
                 "SELECT allowed_role_id FROM command_permissions WHERE guild_id = $1 AND command_name = $2",
                 guild_id, command_name
@@ -1509,7 +1419,7 @@ async def get_command_permissions(guild_id: int, command_name: str) -> set[int] 
         # Cache the result
         try:
             allowed_role_ids_str = {str(role_id) for role_id in allowed_role_ids}
-            async with redis_pool.pipeline(transaction=True) as pipe:
+            async with _active_redis_pool.pipeline(transaction=True) as pipe:
                 pipe.delete(cache_key) # Ensure clean state
                 if allowed_role_ids_str:
                     pipe.sadd(cache_key, *allowed_role_ids_str)
@@ -1700,18 +1610,17 @@ async def set_log_event_enabled(guild_id: int, event_key: str, enabled: bool) ->
 async def get_bot_guild_ids() -> set[int] | None:
     """
     Gets the set of all guild IDs known to the bot from the guilds table.
-    Uses the global pg_pool. Returns None on error or if pool not initialized.
-    Ensure initialize_pools() has been called correctly in the bot's event loop.
+    Uses the _active_pg_pool. Returns None on error or if pool not initialized.
+    Ensure set_bot_pools() has been called correctly.
     """
-    global pg_pool
-    if not pg_pool:
-        log.error("PostgreSQL pool not initialized. Cannot get bot guild IDs.")
+    global _active_pg_pool
+    if not _active_pg_pool:
+        log.error("PostgreSQL pool not initialized in settings_manager. Cannot get bot guild IDs.")
         return None
 
     try:
-        # Use the global connection pool.
-        # This relies on pg_pool being initialized in the correct event loop.
-        async with pg_pool.acquire() as conn:
+        # Use the module-level connection pool.
+        async with _active_pg_pool.acquire() as conn:
             records = await conn.fetch("SELECT guild_id FROM guilds")
             guild_ids = {record['guild_id'] for record in records}
             log.debug(f"Fetched {len(guild_ids)} guild IDs from database using pool.")
@@ -1729,13 +1638,13 @@ async def get_bot_guild_ids() -> set[int] | None:
 async def get_custom_command_name(guild_id: int, original_command_name: str) -> str | None:
     """Gets the custom command name for a guild, checking cache first.
        Returns None if no custom name is set."""
-    if not pg_pool or not redis_pool:
-        log.warning(f"Pools not initialized, returning None for custom command name '{original_command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.warning(f"Pools not initialized in settings_manager, returning None for custom command name '{original_command_name}'.")
         return None
 
     cache_key = _get_redis_key(guild_id, "cmd_custom", original_command_name)
     try:
-        cached_value = await redis_pool.get(cache_key)
+        cached_value = await _active_redis_pool.get(cache_key)
         if cached_value is not None:
             log.debug(f"Cache hit for custom command name '{original_command_name}' (Guild: {guild_id})")
             return None if cached_value == "__NONE__" else cached_value
@@ -1743,7 +1652,7 @@ async def get_custom_command_name(guild_id: int, original_command_name: str) -> 
         log.exception(f"Redis error getting custom command name for '{original_command_name}' (Guild: {guild_id}): {e}")
 
     log.debug(f"Cache miss for custom command name '{original_command_name}' (Guild: {guild_id})")
-    async with pg_pool.acquire() as conn:
+    async with _active_pg_pool.acquire() as conn:
         custom_name = await conn.fetchval(
             "SELECT custom_command_name FROM command_customization WHERE guild_id = $1 AND original_command_name = $2",
             guild_id, original_command_name
@@ -1752,7 +1661,7 @@ async def get_custom_command_name(guild_id: int, original_command_name: str) -> 
     # Cache the result (even if None)
     try:
         value_to_cache = custom_name if custom_name is not None else "__NONE__"
-        await redis_pool.set(cache_key, value_to_cache, ex=3600)  # Cache for 1 hour
+        await _active_redis_pool.set(cache_key, value_to_cache, ex=3600)  # Cache for 1 hour
     except Exception as e:
         log.exception(f"Redis error setting cache for custom command name '{original_command_name}' (Guild: {guild_id}): {e}")
 
@@ -1762,13 +1671,13 @@ async def get_custom_command_name(guild_id: int, original_command_name: str) -> 
 async def get_custom_command_description(guild_id: int, original_command_name: str) -> str | None:
     """Gets the custom command description for a guild, checking cache first.
        Returns None if no custom description is set."""
-    if not pg_pool or not redis_pool:
-        log.warning(f"Pools not initialized, returning None for custom command description '{original_command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.warning(f"Pools not initialized in settings_manager, returning None for custom command description '{original_command_name}'.")
         return None
 
     cache_key = _get_redis_key(guild_id, "cmd_desc", original_command_name)
     try:
-        cached_value = await redis_pool.get(cache_key)
+        cached_value = await _active_redis_pool.get(cache_key)
         if cached_value is not None:
             log.debug(f"Cache hit for custom command description '{original_command_name}' (Guild: {guild_id})")
             return None if cached_value == "__NONE__" else cached_value
@@ -1776,7 +1685,7 @@ async def get_custom_command_description(guild_id: int, original_command_name: s
         log.exception(f"Redis error getting custom command description for '{original_command_name}' (Guild: {guild_id}): {e}")
 
     log.debug(f"Cache miss for custom command description '{original_command_name}' (Guild: {guild_id})")
-    async with pg_pool.acquire() as conn:
+    async with _active_pg_pool.acquire() as conn:
         custom_desc = await conn.fetchval(
             "SELECT custom_command_description FROM command_customization WHERE guild_id = $1 AND original_command_name = $2",
             guild_id, original_command_name
@@ -1785,7 +1694,7 @@ async def get_custom_command_description(guild_id: int, original_command_name: s
     # Cache the result (even if None)
     try:
         value_to_cache = custom_desc if custom_desc is not None else "__NONE__"
-        await redis_pool.set(cache_key, value_to_cache, ex=3600)  # Cache for 1 hour
+        await _active_redis_pool.set(cache_key, value_to_cache, ex=3600)  # Cache for 1 hour
     except Exception as e:
         log.exception(f"Redis error setting cache for custom command description '{original_command_name}' (Guild: {guild_id}): {e}")
 
@@ -1795,13 +1704,13 @@ async def get_custom_command_description(guild_id: int, original_command_name: s
 async def set_custom_command_name(guild_id: int, original_command_name: str, custom_command_name: str | None) -> bool:
     """Sets a custom command name for a guild and updates the cache.
        Setting custom_command_name to None removes the customization."""
-    if not pg_pool or not redis_pool:
-        log.error(f"Pools not initialized, cannot set custom command name for '{original_command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error(f"Pools not initialized in settings_manager, cannot set custom command name for '{original_command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_custom", original_command_name)
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
 
@@ -1816,7 +1725,7 @@ async def set_custom_command_name(guild_id: int, original_command_name: str, cus
                     guild_id, original_command_name, custom_command_name
                 )
                 # Update cache
-                await redis_pool.set(cache_key, custom_command_name, ex=3600)
+                await _active_redis_pool.set(cache_key, custom_command_name, ex=3600)
                 log.info(f"Set custom command name for '{original_command_name}' to '{custom_command_name}' for guild {guild_id}")
             else:
                 # Delete the customization if value is None
@@ -1825,7 +1734,7 @@ async def set_custom_command_name(guild_id: int, original_command_name: str, cus
                     guild_id, original_command_name
                 )
                 # Update cache to indicate no customization
-                await redis_pool.set(cache_key, "__NONE__", ex=3600)
+                await _active_redis_pool.set(cache_key, "__NONE__", ex=3600)
                 log.info(f"Removed custom command name for '{original_command_name}' for guild {guild_id}")
 
         return True
@@ -1833,7 +1742,7 @@ async def set_custom_command_name(guild_id: int, original_command_name: str, cus
         log.exception(f"Database or Redis error setting custom command name for '{original_command_name}' in guild {guild_id}: {e}")
         # Attempt to invalidate cache on error
         try:
-            await redis_pool.delete(cache_key)
+            await _active_redis_pool.delete(cache_key)
         except Exception as redis_err:
             log.exception(f"Failed to invalidate Redis cache for custom command name '{original_command_name}' (Guild: {guild_id}): {redis_err}")
         return False
@@ -1842,13 +1751,13 @@ async def set_custom_command_name(guild_id: int, original_command_name: str, cus
 async def set_custom_command_description(guild_id: int, original_command_name: str, custom_command_description: str | None) -> bool:
     """Sets a custom command description for a guild and updates the cache.
        Setting custom_command_description to None removes the description."""
-    if not pg_pool or not redis_pool:
-        log.error(f"Pools not initialized, cannot set custom command description for '{original_command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error(f"Pools not initialized in settings_manager, cannot set custom command description for '{original_command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_desc", original_command_name)
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
 
@@ -1879,7 +1788,7 @@ async def set_custom_command_description(guild_id: int, original_command_name: s
                         guild_id, original_command_name, custom_command_description
                     )
                 # Update cache
-                await redis_pool.set(cache_key, custom_command_description, ex=3600)
+                await _active_redis_pool.set(cache_key, custom_command_description, ex=3600)
                 log.info(f"Set custom command description for '{original_command_name}' for guild {guild_id}")
             else:
                 if exists:
@@ -1893,7 +1802,7 @@ async def set_custom_command_description(guild_id: int, original_command_name: s
                         guild_id, original_command_name
                     )
                     # Update cache to indicate no description
-                    await redis_pool.set(cache_key, "__NONE__", ex=3600)
+                    await _active_redis_pool.set(cache_key, "__NONE__", ex=3600)
                     log.info(f"Removed custom command description for '{original_command_name}' for guild {guild_id}")
 
         return True
@@ -1901,7 +1810,7 @@ async def set_custom_command_description(guild_id: int, original_command_name: s
         log.exception(f"Database or Redis error setting custom command description for '{original_command_name}' in guild {guild_id}: {e}")
         # Attempt to invalidate cache on error
         try:
-            await redis_pool.delete(cache_key)
+            await _active_redis_pool.delete(cache_key)
         except Exception as redis_err:
             log.exception(f"Failed to invalidate Redis cache for custom command description '{original_command_name}' (Guild: {guild_id}): {redis_err}")
         return False
@@ -1910,13 +1819,13 @@ async def set_custom_command_description(guild_id: int, original_command_name: s
 async def get_custom_group_name(guild_id: int, original_group_name: str) -> str | None:
     """Gets the custom command group name for a guild, checking cache first.
        Returns None if no custom name is set."""
-    if not pg_pool or not redis_pool:
-        log.warning(f"Pools not initialized, returning None for custom group name '{original_group_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.warning(f"Pools not initialized in settings_manager, returning None for custom group name '{original_group_name}'.")
         return None
 
     cache_key = _get_redis_key(guild_id, "group_custom", original_group_name)
     try:
-        cached_value = await redis_pool.get(cache_key)
+        cached_value = await _active_redis_pool.get(cache_key)
         if cached_value is not None:
             log.debug(f"Cache hit for custom group name '{original_group_name}' (Guild: {guild_id})")
             return None if cached_value == "__NONE__" else cached_value
@@ -1924,7 +1833,7 @@ async def get_custom_group_name(guild_id: int, original_group_name: str) -> str 
         log.exception(f"Redis error getting custom group name for '{original_group_name}' (Guild: {guild_id}): {e}")
 
     log.debug(f"Cache miss for custom group name '{original_group_name}' (Guild: {guild_id})")
-    async with pg_pool.acquire() as conn:
+    async with _active_pg_pool.acquire() as conn:
         custom_name = await conn.fetchval(
             "SELECT custom_group_name FROM command_group_customization WHERE guild_id = $1 AND original_group_name = $2",
             guild_id, original_group_name
@@ -1933,7 +1842,7 @@ async def get_custom_group_name(guild_id: int, original_group_name: str) -> str 
     # Cache the result (even if None)
     try:
         value_to_cache = custom_name if custom_name is not None else "__NONE__"
-        await redis_pool.set(cache_key, value_to_cache, ex=3600)  # Cache for 1 hour
+        await _active_redis_pool.set(cache_key, value_to_cache, ex=3600)  # Cache for 1 hour
     except Exception as e:
         log.exception(f"Redis error setting cache for custom group name '{original_group_name}' (Guild: {guild_id}): {e}")
 
@@ -1943,13 +1852,13 @@ async def get_custom_group_name(guild_id: int, original_group_name: str) -> str 
 async def set_custom_group_name(guild_id: int, original_group_name: str, custom_group_name: str | None) -> bool:
     """Sets a custom command group name for a guild and updates the cache.
        Setting custom_group_name to None removes the customization."""
-    if not pg_pool or not redis_pool:
-        log.error(f"Pools not initialized, cannot set custom group name for '{original_group_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error(f"Pools not initialized in settings_manager, cannot set custom group name for '{original_group_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "group_custom", original_group_name)
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
 
@@ -1964,7 +1873,7 @@ async def set_custom_group_name(guild_id: int, original_group_name: str, custom_
                     guild_id, original_group_name, custom_group_name
                 )
                 # Update cache
-                await redis_pool.set(cache_key, custom_group_name, ex=3600)
+                await _active_redis_pool.set(cache_key, custom_group_name, ex=3600)
                 log.info(f"Set custom group name for '{original_group_name}' to '{custom_group_name}' for guild {guild_id}")
             else:
                 # Delete the customization if value is None
@@ -1973,7 +1882,7 @@ async def set_custom_group_name(guild_id: int, original_group_name: str, custom_
                     guild_id, original_group_name
                 )
                 # Update cache to indicate no customization
-                await redis_pool.set(cache_key, "__NONE__", ex=3600)
+                await _active_redis_pool.set(cache_key, "__NONE__", ex=3600)
                 log.info(f"Removed custom group name for '{original_group_name}' for guild {guild_id}")
 
         return True
@@ -1981,7 +1890,7 @@ async def set_custom_group_name(guild_id: int, original_group_name: str, custom_
         log.exception(f"Database or Redis error setting custom group name for '{original_group_name}' in guild {guild_id}: {e}")
         # Attempt to invalidate cache on error
         try:
-            await redis_pool.delete(cache_key)
+            await _active_redis_pool.delete(cache_key)
         except Exception as redis_err:
             log.exception(f"Failed to invalidate Redis cache for custom group name '{original_group_name}' (Guild: {guild_id}): {redis_err}")
         return False
@@ -1989,13 +1898,13 @@ async def set_custom_group_name(guild_id: int, original_group_name: str, custom_
 
 async def add_command_alias(guild_id: int, original_command_name: str, alias_name: str) -> bool:
     """Adds an alias for a command in a guild and invalidates cache."""
-    if not pg_pool or not redis_pool:
-        log.error(f"Pools not initialized, cannot add alias for command '{original_command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error(f"Pools not initialized in settings_manager, cannot add alias for command '{original_command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_aliases", original_command_name)
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Ensure guild exists
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
             # Add the alias
@@ -2009,14 +1918,14 @@ async def add_command_alias(guild_id: int, original_command_name: str, alias_nam
             )
 
         # Invalidate cache after DB operation succeeds
-        await redis_pool.delete(cache_key)
+        await _active_redis_pool.delete(cache_key)
         log.info(f"Added alias '{alias_name}' for command '{original_command_name}' in guild {guild_id}")
         return True
     except Exception as e:
         log.exception(f"Database or Redis error adding alias for command '{original_command_name}' in guild {guild_id}: {e}")
         # Attempt to invalidate cache even on error
         try:
-            await redis_pool.delete(cache_key)
+            await _active_redis_pool.delete(cache_key)
         except Exception as redis_err:
             log.exception(f"Failed to invalidate Redis cache for command aliases '{original_command_name}' (Guild: {guild_id}): {redis_err}")
         return False
@@ -2024,13 +1933,13 @@ async def add_command_alias(guild_id: int, original_command_name: str, alias_nam
 
 async def remove_command_alias(guild_id: int, original_command_name: str, alias_name: str) -> bool:
     """Removes an alias for a command in a guild and invalidates cache."""
-    if not pg_pool or not redis_pool:
-        log.error(f"Pools not initialized, cannot remove alias for command '{original_command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.error(f"Pools not initialized in settings_manager, cannot remove alias for command '{original_command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_aliases", original_command_name)
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             # Remove the alias
             await conn.execute(
                 """
@@ -2041,14 +1950,14 @@ async def remove_command_alias(guild_id: int, original_command_name: str, alias_
             )
 
         # Invalidate cache after DB operation succeeds
-        await redis_pool.delete(cache_key)
+        await _active_redis_pool.delete(cache_key)
         log.info(f"Removed alias '{alias_name}' for command '{original_command_name}' in guild {guild_id}")
         return True
     except Exception as e:
         log.exception(f"Database or Redis error removing alias for command '{original_command_name}' in guild {guild_id}: {e}")
         # Attempt to invalidate cache even on error
         try:
-            await redis_pool.delete(cache_key)
+            await _active_redis_pool.delete(cache_key)
         except Exception as redis_err:
             log.exception(f"Failed to invalidate Redis cache for command aliases '{original_command_name}' (Guild: {guild_id}): {redis_err}")
         return False
@@ -2057,14 +1966,14 @@ async def remove_command_alias(guild_id: int, original_command_name: str, alias_
 async def get_command_aliases(guild_id: int, original_command_name: str) -> list[str] | None:
     """Gets the list of aliases for a command in a guild, checking cache first.
        Returns empty list if no aliases are set, None on error."""
-    if not pg_pool or not redis_pool:
-        log.warning(f"Pools not initialized, returning None for command aliases '{original_command_name}'.")
+    if not _active_pg_pool or not _active_redis_pool:
+        log.warning(f"Pools not initialized in settings_manager, returning None for command aliases '{original_command_name}'.")
         return None
 
     cache_key = _get_redis_key(guild_id, "cmd_aliases", original_command_name)
     try:
         # Check cache first
-        cached_aliases = await redis_pool.lrange(cache_key, 0, -1)
+        cached_aliases = await _active_redis_pool.lrange(cache_key, 0, -1)
         if cached_aliases is not None:
             if len(cached_aliases) == 1 and cached_aliases[0] == "__EMPTY_LIST__":
                 log.debug(f"Cache hit (empty list) for command aliases '{original_command_name}' (Guild: {guild_id}).")
@@ -2077,7 +1986,7 @@ async def get_command_aliases(guild_id: int, original_command_name: str) -> list
 
     log.debug(f"Cache miss for command aliases '{original_command_name}' (Guild: {guild_id})")
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             records = await conn.fetch(
                 "SELECT alias_name FROM command_aliases WHERE guild_id = $1 AND original_command_name = $2",
                 guild_id, original_command_name
@@ -2086,7 +1995,7 @@ async def get_command_aliases(guild_id: int, original_command_name: str) -> list
 
         # Cache the result
         try:
-            async with redis_pool.pipeline(transaction=True) as pipe:
+            async with _active_redis_pool.pipeline(transaction=True) as pipe:
                 pipe.delete(cache_key)  # Ensure clean state
                 if aliases:
                     pipe.rpush(cache_key, *aliases)
@@ -2107,11 +2016,11 @@ async def get_all_command_customizations(guild_id: int) -> dict[str, dict[str, s
     """Gets all command customizations for a guild.
        Returns a dictionary mapping original command names to a dict with 'name' and 'description' keys,
        or None on error."""
-    if not pg_pool:
-        log.error("Pools not initialized, cannot get command customizations.")
+    if not _active_pg_pool:
+        log.error("Pools not initialized in settings_manager, cannot get command customizations.")
         return None
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             records = await conn.fetch(
                 "SELECT original_command_name, custom_command_name, custom_command_description FROM command_customization WHERE guild_id = $1",
                 guild_id
@@ -2133,11 +2042,11 @@ async def get_all_command_customizations(guild_id: int) -> dict[str, dict[str, s
 async def get_all_group_customizations(guild_id: int) -> dict[str, str] | None:
     """Gets all command group customizations for a guild.
        Returns a dictionary mapping original group names to custom names, or None on error."""
-    if not pg_pool:
-        log.error("Pools not initialized, cannot get group customizations.")
+    if not _active_pg_pool:
+        log.error("Pools not initialized in settings_manager, cannot get group customizations.")
         return None
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             records = await conn.fetch(
                 "SELECT original_group_name, custom_group_name FROM command_group_customization WHERE guild_id = $1",
                 guild_id
@@ -2153,11 +2062,11 @@ async def get_all_group_customizations(guild_id: int) -> dict[str, str] | None:
 async def get_all_command_aliases(guild_id: int) -> dict[str, list[str]] | None:
     """Gets all command aliases for a guild.
        Returns a dictionary mapping original command names to lists of aliases, or None on error."""
-    if not pg_pool:
-        log.error("Pools not initialized, cannot get command aliases.")
+    if not _active_pg_pool:
+        log.error("Pools not initialized in settings_manager, cannot get command aliases.")
         return None
     try:
-        async with pg_pool.acquire() as conn:
+        async with _active_pg_pool.acquire() as conn:
             records = await conn.fetch(
                 "SELECT original_command_name, alias_name FROM command_aliases WHERE guild_id = $1",
                 guild_id

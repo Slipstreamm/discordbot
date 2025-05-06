@@ -536,13 +536,9 @@ class SettingsCog(commands.Cog, name="Settings"):
 
 async def setup(bot: commands.Bot):
     # Ensure pools are initialized before adding the cog
-    if settings_manager.pg_pool is None or settings_manager.redis_pool is None:
-        log.warning("Settings Manager pools not initialized before loading SettingsCog. Attempting initialization.")
-        try:
-            await settings_manager.initialize_pools()
-        except Exception as e:
-            log.exception("Failed to initialize Settings Manager pools during SettingsCog setup. Cog will not load.")
-            return # Prevent loading if pools fail
+    if getattr(bot, "pg_pool", None) is None or getattr(bot, "redis", None) is None:
+        log.warning("Bot pools not initialized before loading SettingsCog. Cog will not load.")
+        return # Prevent loading if pools are missing
 
     await bot.add_cog(SettingsCog(bot))
     log.info("SettingsCog loaded.")

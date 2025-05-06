@@ -14,6 +14,8 @@ import subprocess
 import importlib.util
 import argparse
 import logging # Add logging
+import asyncpg
+import redis.asyncio as aioredis
 from commands import load_all_cogs, reload_all_cogs
 from error_handler import handle_error, patch_discord_methods, store_interaction_content
 from utils import reload_script
@@ -66,31 +68,52 @@ class MyBot(commands.Bot):
         self.owner_id = int(os.getenv('OWNER_USER_ID'))
         self.core_cogs = CORE_COGS # Attach core cogs list to bot instance
         self.settings_manager = settings_manager # Attach settings manager instance
-        self.pool = None # Will be initialized in setup_hook
+        self.pg_pool = None # Will be initialized in setup_hook
+        self.redis = None   # Will be initialized in setup_hook
         self.ai_cogs_to_skip = [] # For --disable-ai flag
 
     async def setup_hook(self):
-        # This method is called before the bot logs in but after it's ready.
-        # Ideal place for async initialization.
         log.info("Running setup_hook...")
 
-        # Initialize pools
-        log.info("Initializing database/cache pools from setup_hook...")
-        # Pass the bot's event loop to initialize_pools
-        pools_initialized = await self.settings_manager.initialize_pools(event_loop=self.loop)
-        if not pools_initialized:
-            log.critical("Failed to initialize database/cache pools in setup_hook. Bot may not function correctly.")
-            # Depending on severity, you might want to prevent the bot from starting.
-            # For now, it will continue, but operations requiring pools will fail.
-            return
+        # Create Postgres pool on this loop
+        self.pg_pool = await asyncpg.create_pool(
+            dsn=os.environ["DATABASE_URL"],
+            min_size=1,
+            max_size=10,
+            loop=self.loop  # Explicitly use the bot's event loop
+        )
+        log.info("Postgres pool initialized and attached to bot.pg_pool.")
 
-        self.pool = self.settings_manager.pg_pool # Attach the pool to the bot instance
-        log.info("Database/cache pools initialized and pg_pool attached to bot instance.")
+        # Create Redis client on this loop
+        self.redis = await aioredis.from_url(
+            os.environ["REDIS_URL"],
+            max_connections=10,
+            decode_responses=True,
+        )
+        log.info("Redis client initialized and attached to bot.redis.")
+
+        # Pass the initialized pools to the settings_manager
+        if self.pg_pool and self.redis:
+            settings_manager.set_bot_pools(self.pg_pool, self.redis)
+            log.info("Bot's pg_pool and redis_client passed to settings_manager.")
+
+            # Initialize database schema and run migrations using settings_manager
+            # These functions will now use the pools provided by the bot.
+            try:
+                await settings_manager.initialize_database() # Uses the pool set via set_bot_pools
+                log.info("Database schema initialization called via settings_manager.")
+                await settings_manager.run_migrations() # Uses the pool set via set_bot_pools
+                log.info("Database migrations called via settings_manager.")
+            except Exception as e:
+                log.exception("CRITICAL: Failed during settings_manager database setup (init/migrations).")
+        else:
+            log.error("CRITICAL: pg_pool or redis_client not initialized in setup_hook. Cannot proceed with settings_manager setup.")
+
 
         # Setup the moderation log table *after* pool initialization
-        if self.pool:
+        if self.pg_pool:
             try:
-                await mod_log_db.setup_moderation_log_table(self.pool)
+                await mod_log_db.setup_moderation_log_table(self.pg_pool)
                 log.info("Moderation log table setup complete via setup_hook.")
             except Exception as e:
                 log.exception("CRITICAL: Failed to setup moderation log table in setup_hook.")
@@ -98,8 +121,6 @@ class MyBot(commands.Bot):
             log.warning("pg_pool not available in setup_hook, skipping mod_log_db setup.")
 
         # Load all cogs from the 'cogs' directory, skipping AI if requested
-        # ai_cogs_to_skip needs to be set based on args before bot.start is called.
-        # This is handled by setting bot.ai_cogs_to_skip in main() before bot.start().
         await load_all_cogs(self, skip_cogs=self.ai_cogs_to_skip)
         log.info(f"Cogs loaded in setup_hook. Skipped: {self.ai_cogs_to_skip or 'None'}")
 
@@ -156,10 +177,10 @@ async def on_ready():
     log.info("Bot status set to 'Listening to !help'")
 
     # --- Add current guilds to DB ---
-    if settings_manager and settings_manager.pg_pool:
+    if bot.pg_pool:
         log.info("Syncing guilds with database...")
         try:
-            async with settings_manager.pg_pool.acquire() as conn:
+            async with bot.pg_pool.acquire() as conn:
                 # Get guilds bot is currently in
                 current_guild_ids = {guild.id for guild in bot.guilds}
                 log.debug(f"Bot is currently in {len(current_guild_ids)} guilds.")
@@ -186,7 +207,7 @@ async def on_ready():
         except Exception as e:
             log.exception("Error syncing guilds with database on ready.")
     else:
-        log.warning("Settings manager not available or pool not initialized, skipping guild sync.")
+        log.warning("Bot Postgres pool not initialized, skipping guild sync.")
     # -----------------------------
 
     # Patch Discord methods to store message content
@@ -240,9 +261,9 @@ async def on_shard_disconnect(shard_id):
 async def on_guild_join(guild: discord.Guild):
     """Adds guild to database when bot joins and syncs commands."""
     log.info(f"Joined guild: {guild.name} ({guild.id})")
-    if settings_manager and settings_manager.pg_pool:
+    if bot.pg_pool:
         try:
-            async with settings_manager.pg_pool.acquire() as conn:
+            async with bot.pg_pool.acquire() as conn:
                  await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT DO NOTHING;", guild.id)
             log.info(f"Added guild {guild.id} to database.")
 
@@ -256,22 +277,22 @@ async def on_guild_join(guild: discord.Guild):
         except Exception as e:
             log.exception(f"Failed to add guild {guild.id} to database on join.")
     else:
-        log.warning("Settings manager not available or pool not initialized, cannot add guild on join.")
+        log.warning("Bot Postgres pool not initialized, cannot add guild on join.")
 
 @bot.event
 async def on_guild_remove(guild: discord.Guild):
     """Removes guild from database when bot leaves."""
     log.info(f"Left guild: {guild.name} ({guild.id})")
-    if settings_manager and settings_manager.pg_pool:
+    if bot.pg_pool:
         try:
-            async with settings_manager.pg_pool.acquire() as conn:
+            async with bot.pg_pool.acquire() as conn:
                 # Note: Cascading deletes should handle related settings in other tables
                 await conn.execute("DELETE FROM guilds WHERE guild_id = $1", guild.id)
             log.info(f"Removed guild {guild.id} from database.")
         except Exception as e:
             log.exception(f"Failed to remove guild {guild.id} from database on leave.")
     else:
-        log.warning("Settings manager not available or pool not initialized, cannot remove guild on leave.")
+        log.warning("Bot Postgres pool not initialized, cannot remove guild on leave.")
 
 
 # Error handling - Updated to handle custom check failures
@@ -553,10 +574,13 @@ async def main(args): # Pass parsed args
             log.info("Flask server process was not running or already terminated.")
 
         # Close database/cache pools if they were initialized
-        if settings_manager.pg_pool or settings_manager.redis_pool:
-            log.info("Closing database/cache pools in main finally block...")
-            await settings_manager.close_pools()
-        else:
+        if bot.pg_pool:
+            log.info("Closing Postgres pool in main finally block...")
+            await bot.pg_pool.close()
+        if bot.redis:
+            log.info("Closing Redis pool in main finally block...")
+            await bot.redis.close()
+        if not bot.pg_pool and not bot.redis:
             log.info("Pools were not initialized or already closed, skipping close_pools in main.")
 
 # Run the main async function
