@@ -35,6 +35,18 @@ class ModLogCog(commands.Cog):
     def register_commands(self):
         """Register all commands for this cog"""
 
+        # --- Set Channel Command ---
+        setchannel_command = app_commands.Command(
+            name="setchannel",
+            description="Set the channel for moderation logs and enable logging.",
+            callback=self.modlog_setchannel_callback,
+            parent=self.modlog_group
+        )
+        app_commands.describe(
+            channel="The text channel to send moderation logs to."
+        )(setchannel_command)
+        self.modlog_group.add_command(setchannel_command)
+
         # --- View Command ---
         view_command = app_commands.Command(
             name="view",
@@ -71,6 +83,63 @@ class ModLogCog(commands.Cog):
             new_reason="The new reason for the moderation action"
         )(reason_command)
         self.modlog_group.add_command(reason_command)
+
+    # --- Command Callbacks ---
+
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def modlog_setchannel_callback(self, interaction: Interaction, channel: discord.TextChannel):
+        """Callback for the /modlog setchannel command."""
+        await interaction.response.defer(ephemeral=True)
+        guild_id = interaction.guild_id
+
+        if not guild_id:
+            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        if not channel or not isinstance(channel, discord.TextChannel):
+            await interaction.followup.send("❌ Invalid channel provided. Please specify a valid text channel.", ephemeral=True)
+            return
+
+        # Check if the bot has permissions to send messages in the target channel
+        bot_member = interaction.guild.me
+        if not channel.permissions_for(bot_member).send_messages:
+            await interaction.followup.send(
+                f"❌ I don't have permission to send messages in {channel.mention}. Please grant me 'Send Messages' permission there.",
+                ephemeral=True
+            )
+            return
+        if not channel.permissions_for(bot_member).embed_links:
+            await interaction.followup.send(
+                f"❌ I don't have permission to send embeds in {channel.mention}. Please grant me 'Embed Links' permission there.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            # Set the mod log channel ID
+            set_channel_success = await sm.set_mod_log_channel_id(guild_id, channel.id)
+            # Enable mod logging
+            set_enabled_success = await sm.set_mod_log_enabled(guild_id, True)
+
+            if set_channel_success and set_enabled_success:
+                await interaction.followup.send(
+                    f"✅ Moderation logs will now be sent to {channel.mention} and logging is enabled.",
+                    ephemeral=True
+                )
+                log.info(f"Mod log channel set to {channel.id} and logging enabled for guild {guild_id} by {interaction.user.id}")
+            else:
+                await interaction.followup.send(
+                    "❌ Failed to save moderation log settings. Please check the bot logs for more details.",
+                    ephemeral=True
+                )
+                log.error(f"Failed to set mod log channel/enabled status for guild {guild_id}. Channel success: {set_channel_success}, Enabled success: {set_enabled_success}")
+
+        except Exception as e:
+            log.exception(f"Error setting mod log channel for guild {guild_id}: {e}")
+            await interaction.followup.send(
+                "❌ An unexpected error occurred while setting the moderation log channel. Please try again later.",
+                ephemeral=True
+            )
 
     # --- Core Logging Function ---
 
@@ -231,8 +300,7 @@ class ModLogCog(commands.Cog):
 
         return embed
 
-    # --- Command Callbacks ---
-
+    # --- View Command Callback ---
     @app_commands.checks.has_permissions(moderate_members=True) # Adjust permissions as needed
     async def modlog_view_callback(self, interaction: Interaction, user: Optional[discord.User] = None):
         """Callback for the /modlog view command."""
