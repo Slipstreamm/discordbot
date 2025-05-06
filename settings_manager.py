@@ -47,6 +47,8 @@ async def initialize_pools():
 
     # Initialize new pools
     try:
+        current_loop = asyncio.get_event_loop() # Get the currently running event loop
+
         # Create PostgreSQL pool with more conservative settings
         # Increase max_inactive_connection_lifetime to avoid connections being closed too quickly
         pg_pool = await asyncpg.create_pool(
@@ -54,9 +56,10 @@ async def initialize_pools():
             min_size=1,
             max_size=10,
             max_inactive_connection_lifetime=60.0,  # 60 seconds (default is 10 minutes)
-            command_timeout=30.0  # 30 seconds timeout for commands
+            command_timeout=30.0,  # 30 seconds timeout for commands
+            loop=current_loop # Explicitly pass the loop
         )
-        log.info(f"PostgreSQL pool connected to {POSTGRES_HOST}/{POSTGRES_DB}")
+        log.info(f"PostgreSQL pool connected to {POSTGRES_HOST}/{POSTGRES_DB} on loop {current_loop}")
 
         # Create Redis pool with connection_cls=None to avoid event loop issues
         # This creates a connection pool that doesn't bind to a specific event loop
