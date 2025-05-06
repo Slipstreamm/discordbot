@@ -76,7 +76,8 @@ class MyBot(commands.Bot):
 
         # Initialize pools
         log.info("Initializing database/cache pools from setup_hook...")
-        pools_initialized = await self.settings_manager.initialize_pools()
+        # Pass the bot's event loop to initialize_pools
+        pools_initialized = await self.settings_manager.initialize_pools(event_loop=self.loop)
         if not pools_initialized:
             log.critical("Failed to initialize database/cache pools in setup_hook. Bot may not function correctly.")
             # Depending on severity, you might want to prevent the bot from starting.
