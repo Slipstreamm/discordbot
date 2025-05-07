@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any, Union, Literal, Tuple
 
 # Configure logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO) # Ensure info messages are captured
 
 # Application statuses
 APPLICATION_STATUS = Literal["PENDING", "APPROVED", "REJECTED", "UNDER_REVIEW"]
@@ -231,6 +232,7 @@ class ModApplicationCog(commands.Cog):
     """Cog for handling moderator applications using Discord forms"""
 
     def __init__(self, bot):
+        logger.info(f"ModApplicationCog __init__ called. Bot instance ID: {id(bot)}")
         self.bot = bot
 
         # Create the main command group for this cog
@@ -294,85 +296,79 @@ class ModApplicationCog(commands.Cog):
         )(view_command)
         self.modapp_group.add_command(view_command)
 
-        # --- Configure Command Group ---
-        config_group = app_commands.Group(
-            name="configure",
-            description="Configure moderator application settings",
-            parent=self.modapp_group
-        )
-        self.modapp_group.add_command(config_group)
+        # --- Settings Commands (Direct children of modapp_group) ---
 
         # --- Enable/Disable Command ---
-        toggle_command = app_commands.Command(
-            name="toggle",
+        settings_toggle_command = app_commands.Command(
+            name="settings_toggle",
             description="Enable or disable the application system",
             callback=self.toggle_applications_callback,
-            parent=config_group
+            parent=self.modapp_group # Direct child of modapp
         )
         app_commands.describe(
             enabled="Whether applications should be enabled or disabled"
-        )(toggle_command)
-        config_group.add_command(toggle_command)
+        )(settings_toggle_command)
+        self.modapp_group.add_command(settings_toggle_command)
 
         # --- Set Review Channel Command ---
-        review_channel_command = app_commands.Command(
-            name="reviewchannel",
+        settings_review_channel_command = app_commands.Command(
+            name="settings_reviewchannel",
             description="Set the channel where new applications will be posted for review",
             callback=self.set_review_channel_callback,
-            parent=config_group
+            parent=self.modapp_group # Direct child of modapp
         )
         app_commands.describe(
             channel="The channel where applications will be posted for review"
-        )(review_channel_command)
-        config_group.add_command(review_channel_command)
+        )(settings_review_channel_command)
+        self.modapp_group.add_command(settings_review_channel_command)
 
         # --- Set Log Channel Command ---
-        log_channel_command = app_commands.Command(
-            name="logchannel",
+        settings_log_channel_command = app_commands.Command(
+            name="settings_logchannel",
             description="Set the channel where application activity will be logged",
             callback=self.set_log_channel_callback,
-            parent=config_group
+            parent=self.modapp_group # Direct child of modapp
         )
         app_commands.describe(
             channel="The channel where application activity will be logged"
-        )(log_channel_command)
-        config_group.add_command(log_channel_command)
+        )(settings_log_channel_command)
+        self.modapp_group.add_command(settings_log_channel_command)
 
         # --- Set Reviewer Role Command ---
-        reviewer_role_command = app_commands.Command(
-            name="reviewerrole",
+        settings_reviewer_role_command = app_commands.Command(
+            name="settings_reviewerrole",
             description="Set the role that can review applications",
             callback=self.set_reviewer_role_callback,
-            parent=config_group
+            parent=self.modapp_group # Direct child of modapp
         )
         app_commands.describe(
             role="The role that can review applications"
-        )(reviewer_role_command)
-        config_group.add_command(reviewer_role_command)
+        )(settings_reviewer_role_command)
+        self.modapp_group.add_command(settings_reviewer_role_command)
 
         # --- Set Required Role Command ---
-        required_role_command = app_commands.Command(
-            name="requiredrole",
+        settings_required_role_command = app_commands.Command(
+            name="settings_requiredrole",
             description="Set the role required to apply (optional)",
             callback=self.set_required_role_callback,
-            parent=config_group
+            parent=self.modapp_group # Direct child of modapp
         )
         app_commands.describe(
             role="The role required to apply (or None to allow anyone)"
-        )(required_role_command)
-        config_group.add_command(required_role_command)
+        )(settings_required_role_command)
+        self.modapp_group.add_command(settings_required_role_command)
 
         # --- Set Cooldown Command ---
-        cooldown_command = app_commands.Command(
-            name="cooldown",
+        settings_cooldown_command = app_commands.Command(
+            name="settings_cooldown",
             description="Set the cooldown period between rejected applications",
             callback=self.set_cooldown_callback,
-            parent=config_group
+            parent=self.modapp_group # Direct child of modapp
         )
         app_commands.describe(
             days="Number of days a user must wait after rejection before applying again"
-        )(cooldown_command)
-        config_group.add_command(cooldown_command)
+        )(settings_cooldown_command)
+        self.modapp_group.add_command(settings_cooldown_command)
 
     # --- Command Callbacks ---
 
@@ -542,7 +538,7 @@ class ModApplicationCog(commands.Cog):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     async def toggle_applications_callback(self, interaction: discord.Interaction, enabled: bool):
-        """Handle the /modapp configure toggle command"""
+        """Handle the /modapp config toggle command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -567,7 +563,7 @@ class ModApplicationCog(commands.Cog):
             )
 
     async def set_review_channel_callback(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        """Handle the /modapp configure reviewchannel command"""
+        """Handle the /modapp config reviewchannel command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -591,7 +587,7 @@ class ModApplicationCog(commands.Cog):
             )
 
     async def set_log_channel_callback(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        """Handle the /modapp configure logchannel command"""
+        """Handle the /modapp config logchannel command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -615,7 +611,7 @@ class ModApplicationCog(commands.Cog):
             )
 
     async def set_reviewer_role_callback(self, interaction: discord.Interaction, role: discord.Role):
-        """Handle the /modapp configure reviewerrole command"""
+        """Handle the /modapp config reviewerrole command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -639,7 +635,7 @@ class ModApplicationCog(commands.Cog):
             )
 
     async def set_required_role_callback(self, interaction: discord.Interaction, role: Optional[discord.Role] = None):
-        """Handle the /modapp configure requiredrole command"""
+        """Handle the /modapp settings requiredrole command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -670,7 +666,7 @@ class ModApplicationCog(commands.Cog):
             )
 
     async def set_cooldown_callback(self, interaction: discord.Interaction, days: int):
-        """Handle the /modapp configure cooldown command"""
+        """Handle the /modapp settings cooldown command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -1191,4 +1187,6 @@ class ModApplicationCog(commands.Cog):
                 )
 
 async def setup(bot: commands.Bot):
+    logger.info(f"ModApplicationCog setup function CALLED. Bot instance ID: {id(bot)}")
     await bot.add_cog(ModApplicationCog(bot))
+    logger.info(f"ModApplicationCog setup function COMPLETED and cog added. Bot instance ID: {id(bot)}")
