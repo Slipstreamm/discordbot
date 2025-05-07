@@ -401,6 +401,19 @@ async def handle_error(ctx_or_interaction, error):
     user_id = 452666956353503252  # Owner user ID
     
     # Handle missing required argument errors
+
+    if isinstance(error, commands.NotOwner):
+        message = "You are not the owner of this bot."
+        if isinstance(ctx_or_interaction, commands.Context):
+            await ctx_or_interaction.send(message)
+        else:
+            if not ctx_or_interaction.response.is_done():
+                await ctx_or_interaction.response.send_message(message, ephemeral=True)
+            else:
+                await ctx_or_interaction.followup.send(message, ephemeral=True)
+                
+        # Also send to owner in an embed
+
     if isinstance(error, commands.MissingRequiredArgument):
         missing_arg = error.param.name if hasattr(error, 'param') else 'an argument'
         message = f"Missing required argument: `{missing_arg}`. Please provide all required arguments."
