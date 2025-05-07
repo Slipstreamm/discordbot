@@ -251,12 +251,22 @@ class ModLogCog(commands.Cog):
             timestamp=discord.utils.utcnow()
         )
 
-        target_display = f"{getattr(target, 'mention', target.id)} ({target.id})"
+        # Handle target display - check if it's a Discord Object or User/Member
+        if isinstance(target, discord.Object):
+            # For Object, we only have the ID
+            target_display = f"<@{target.id}> ({target.id})"
+        else:
+            # For User/Member, we can use mention
+            target_display = f"{target.mention} ({target.id})"
 
         # Determine moderator display based on source
         if source == "AI_API":
             moderator_display = f"AI System (ID: {moderator_id_override or 'Unknown'})"
+        elif isinstance(moderator, discord.Object):
+            # For Object, we only have the ID
+            moderator_display = f"<@{moderator.id}> ({moderator.id})"
         else:
+            # For User/Member, we can use mention
             moderator_display = f"{moderator.mention} ({moderator.id})"
 
 
