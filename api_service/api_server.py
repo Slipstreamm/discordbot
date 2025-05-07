@@ -11,6 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 import aiohttp
 import asyncpg
+import discord
 from database import Database # Existing DB
 import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -2080,26 +2081,78 @@ async def ai_moderation_action(
     # Add to moderation log
     try:
         from discordbot.db import mod_log_db
+        from discordbot.cogs.mod_log_cog import ModLogCog
         bot = get_bot_instance()
 
-        # Use the thread-safe version of add_mod_log
-        case_id = await mod_log_db.add_mod_log_safe(
-            bot,  # Pass the bot instance, not just the pool
-            guild_id=action.guild_id,
-            moderator_id=AI_MODERATOR_ID,
-            target_user_id=action.user_id,
-            action_type=action_type,
-            reason=reason,
-            duration_seconds=None
-        )
-
-        if not case_id:
-            log.error(f"Failed to add mod log entry for guild {guild_id}, user {action.user_id}, action {action_type}")
+        # First, get the guild object from the bot
+        guild = bot.get_guild(action.guild_id)
+        if not guild:
+            log.error(f"Failed to get guild object for guild ID {action.guild_id}")
             return {
                 "success": False,
-                "error": "Failed to add moderation log entry to database",
-                "message": "The action was recorded but could not be added to the moderation logs"
+                "error": "Failed to get guild object",
+                "message": "The guild could not be found"
             }
+
+        # Get the ModLogCog instance
+        mod_log_cog = bot.get_cog('ModLogCog')
+        if not mod_log_cog:
+            log.error(f"ModLogCog not found, falling back to database-only logging")
+
+            # Use the thread-safe version of add_mod_log as fallback
+            case_id = await mod_log_db.add_mod_log_safe(
+                bot,  # Pass the bot instance, not just the pool
+                guild_id=action.guild_id,
+                moderator_id=AI_MODERATOR_ID,
+                target_user_id=action.user_id,
+                action_type=action_type,
+                reason=reason,
+                duration_seconds=None
+            )
+
+            if not case_id:
+                log.error(f"Failed to add mod log entry for guild {guild_id}, user {action.user_id}, action {action_type}")
+                return {
+                    "success": False,
+                    "error": "Failed to add moderation log entry to database",
+                    "message": "The action was recorded but could not be added to the moderation logs"
+                }
+        else:
+            # Use the ModLogCog to log the action and automatically post to the mod log channel
+            # Create a discord.Object for the target user since we only have the ID
+            target_user = discord.Object(id=action.user_id)
+
+            # Create a discord.Object for the AI moderator
+            ai_moderator = discord.Object(id=AI_MODERATOR_ID)
+
+            # Create AI details dictionary with all relevant information
+            ai_details = {
+                "rule_violated": action.rule_violated,
+                "reasoning": action.reasoning,
+                "ai_model": action.ai_model,
+                "message_content": action.message_content,
+                "message_link": action.message_link,
+                "channel_name": action.channel_name,
+                "attachments": action.attachments
+            }
+
+            # Log the action using the ModLogCog
+            await mod_log_cog.log_action(
+                guild=guild,
+                moderator=ai_moderator,
+                target=target_user,
+                action_type=action_type,
+                reason=reason,
+                duration=None,
+                source="AI_API",
+                ai_details=ai_details,
+                moderator_id_override=AI_MODERATOR_ID
+            )
+
+            # Get the case_id from the most recent log entry for this user
+            # This is a bit of a hack, but it should work in most cases
+            recent_logs = await mod_log_db.get_user_mod_logs(bot.pg_pool, action.guild_id, action.user_id, limit=1)
+            case_id = recent_logs[0]['case_id'] if recent_logs else None
 
         # If we have a case_id and message details, update the log entry
         if case_id and action.message_id and action.channel_id:

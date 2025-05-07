@@ -286,6 +286,14 @@ class ModLogCog(commands.Cog):
                      embed.add_field(name="Original Bot Reason", value=reason, inline=False)
             else:
                  embed.add_field(name="Reason", value=reason or "No reason provided.", inline=False)
+
+            # Add full message content if available
+            if 'message_content' in ai_details:
+                # Truncate if too long (Discord has a 1024 character limit for embed fields)
+                message_content = ai_details['message_content']
+                if len(message_content) > 1000:
+                    message_content = message_content[:997] + "..."
+                embed.add_field(name="Message Content", value=message_content, inline=False)
         else:
             embed.add_field(name="Reason", value=reason or "No reason provided.", inline=False)
 
