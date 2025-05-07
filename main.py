@@ -77,7 +77,7 @@ class MyBot(commands.Bot):
 
         # Create Postgres pool on this loop
         self.pg_pool = await asyncpg.create_pool(
-            dsn=os.environ["DATABASE_URL"],
+            dsn=settings_manager.DATABASE_URL, # Use DATABASE_URL from settings_manager
             min_size=1,
             max_size=10,
             loop=self.loop  # Explicitly use the bot's event loop
@@ -86,7 +86,7 @@ class MyBot(commands.Bot):
 
         # Create Redis client on this loop
         self.redis = await aioredis.from_url(
-            os.environ["REDIS_URL"],
+            settings_manager.REDIS_URL, # Use REDIS_URL from settings_manager
             max_connections=10,
             decode_responses=True,
         )
