@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 import aiohttp
+import asyncpg
 from database import Database # Existing DB
 import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -2080,6 +2081,8 @@ async def ai_moderation_action(
     try:
         from discordbot.db import mod_log_db
         bot = get_bot_instance()
+
+        # First attempt to add the mod log entry
         case_id = await mod_log_db.add_mod_log(
             bot.pg_pool,
             guild_id=action.guild_id,
@@ -2089,16 +2092,44 @@ async def ai_moderation_action(
             reason=reason,
             duration_seconds=None
         )
-        # Optionally update with message/channel info
+
+        if not case_id:
+            log.error(f"Failed to add mod log entry for guild {guild_id}, user {action.user_id}, action {action_type}")
+            return {
+                "success": False,
+                "error": "Failed to add moderation log entry to database",
+                "message": "The action was recorded but could not be added to the moderation logs"
+            }
+
+        # If we have a case_id and message details, update the log entry
         if case_id and action.message_id and action.channel_id:
-            await mod_log_db.update_mod_log_message_details(
+            update_success = await mod_log_db.update_mod_log_message_details(
                 bot.pg_pool,
                 case_id=case_id,
                 message_id=action.message_id,
                 channel_id=action.channel_id
             )
+
+            if not update_success:
+                log.warning(
+                    f"Added mod log entry (case_id: {case_id}) but failed to update message details "
+                    f"for guild {guild_id}, user {action.user_id}, action {action_type}"
+                )
+                # Continue anyway since the main entry was added successfully
+
         log.info(f"AI moderation action logged successfully for guild {guild_id}, user {action.user_id}, action {action_type}, case {case_id}")
         return {"success": True, "case_id": case_id}
+
+    except asyncpg.exceptions.PostgresError as e:
+        # Handle database-specific errors
+        import traceback
+        tb = traceback.format_exc()
+        log.error(
+            f"Database error logging AI moderation action for guild {guild_id}, user {action.user_id}, "
+            f"action {action_type}. Exception: {e}\nTraceback: {tb}"
+        )
+        return {"success": False, "error": f"Database error: {str(e)}", "traceback": tb}
+
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
