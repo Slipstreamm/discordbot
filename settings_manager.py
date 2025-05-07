@@ -250,8 +250,8 @@ async def initialize_database():
 async def get_starboard_settings(guild_id: int):
     """Gets the starboard settings for a guild."""
     log.debug(f"get_starboard_settings: _active_pg_pool is {id(_active_pg_pool)}, _active_redis_pool is {id(_active_redis_pool)}")
-    if not _active_pg_pool:
-        log.warning(f"PostgreSQL pool not initialized in settings_manager (ID: {id(_active_pg_pool)}), returning None for starboard settings for guild {guild_id}.")
+    if _active_pg_pool is None:
+        log.warning(f"PostgreSQL pool is None in settings_manager (ID: {id(_active_pg_pool)}), returning None for starboard settings for guild {guild_id}.")
         return None
 
     try:
@@ -302,8 +302,8 @@ async def update_starboard_settings(guild_id: int, **kwargs):
         bool: True if successful, False otherwise
     """
     log.info(f"update_starboard_settings called for guild {guild_id}. Current _active_pg_pool ID: {id(_active_pg_pool)}")
-    if not _active_pg_pool:
-        log.error(f"PostgreSQL pool not initialized in settings_manager (ID: {id(_active_pg_pool)}), cannot update starboard settings for guild {guild_id}.")
+    if _active_pg_pool is None:
+        log.error(f"PostgreSQL pool is None in settings_manager (ID: {id(_active_pg_pool)}), cannot update starboard settings for guild {guild_id}.")
         return False
 
     valid_keys = {'enabled', 'star_emoji', 'threshold', 'starboard_channel_id', 'ignore_bots', 'self_star'}
@@ -380,8 +380,8 @@ async def update_starboard_settings(guild_id: int, **kwargs):
 
 async def get_starboard_entry(guild_id: int, original_message_id: int):
     """Gets a starboard entry for a specific message."""
-    if not _active_pg_pool:
-        log.warning(f"PostgreSQL pool not initialized in settings_manager, returning None for starboard entry.")
+    if _active_pg_pool is None:
+        log.warning(f"PostgreSQL pool is None in settings_manager, returning None for starboard entry for guild {guild_id}.")
         return None
 
     try:
@@ -402,8 +402,8 @@ async def get_starboard_entry(guild_id: int, original_message_id: int):
 async def create_starboard_entry(guild_id: int, original_message_id: int, original_channel_id: int,
                                 starboard_message_id: int, author_id: int, star_count: int = 1):
     """Creates a new starboard entry."""
-    if not _active_pg_pool:
-        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot create starboard entry.")
+    if _active_pg_pool is None:
+        log.error(f"PostgreSQL pool is None in settings_manager, cannot create starboard entry for guild {guild_id}.")
         return False
 
     try:
@@ -430,8 +430,8 @@ async def create_starboard_entry(guild_id: int, original_message_id: int, origin
 
 async def update_starboard_entry(guild_id: int, original_message_id: int, star_count: int):
     """Updates the star count for an existing starboard entry."""
-    if not _active_pg_pool:
-        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot update starboard entry.")
+    if _active_pg_pool is None:
+        log.error(f"PostgreSQL pool is None in settings_manager, cannot update starboard entry for guild {guild_id}.")
         return False
 
     try:
@@ -464,8 +464,8 @@ async def update_starboard_entry(guild_id: int, original_message_id: int, star_c
 
 async def delete_starboard_entry(guild_id: int, original_message_id: int):
     """Deletes a starboard entry."""
-    if not _active_pg_pool:
-        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot delete starboard entry.")
+    if _active_pg_pool is None:
+        log.error(f"PostgreSQL pool is None in settings_manager, cannot delete starboard entry for guild {guild_id}.")
         return False
 
     try:
@@ -507,8 +507,8 @@ async def delete_starboard_entry(guild_id: int, original_message_id: int):
 
 async def clear_starboard_entries(guild_id: int):
     """Clears all starboard entries for a guild."""
-    if not _active_pg_pool:
-        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot clear starboard entries.")
+    if _active_pg_pool is None:
+        log.error(f"PostgreSQL pool is None in settings_manager, cannot clear starboard entries for guild {guild_id}.")
         return False
 
     try:
@@ -559,8 +559,8 @@ async def clear_starboard_entries(guild_id: int):
 
 async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
     """Records a user's star reaction to a message."""
-    if not _active_pg_pool:
-        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot add starboard reaction.")
+    if _active_pg_pool is None:
+        log.error(f"PostgreSQL pool is None in settings_manager, cannot add starboard reaction for guild {guild_id}.")
         return False
 
     # Use a timeout to prevent hanging on database operations
@@ -655,8 +655,8 @@ async def add_starboard_reaction(guild_id: int, message_id: int, user_id: int):
 
 async def remove_starboard_reaction(guild_id: int, message_id: int, user_id: int):
     """Removes a user's star reaction from a message."""
-    if not _active_pg_pool:
-        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot remove starboard reaction.")
+    if _active_pg_pool is None:
+        log.error(f"PostgreSQL pool is None in settings_manager, cannot remove starboard reaction for guild {guild_id}.")
         return False
 
     # Use a timeout to prevent hanging on database operations
@@ -737,8 +737,8 @@ async def remove_starboard_reaction(guild_id: int, message_id: int, user_id: int
 
 async def get_starboard_reaction_count(guild_id: int, message_id: int):
     """Gets the count of star reactions for a message."""
-    if not _active_pg_pool:
-        log.warning(f"PostgreSQL pool not initialized in settings_manager, returning 0 for starboard reaction count.")
+    if _active_pg_pool is None:
+        log.warning(f"PostgreSQL pool is None in settings_manager, returning 0 for starboard reaction count for guild {guild_id}.")
         return 0
 
     try:
@@ -758,8 +758,8 @@ async def get_starboard_reaction_count(guild_id: int, message_id: int):
 
 async def has_user_reacted(guild_id: int, message_id: int, user_id: int):
     """Checks if a user has already reacted to a message."""
-    if not _active_pg_pool:
-        log.warning(f"PostgreSQL pool not initialized in settings_manager, returning False for user reaction check.")
+    if _active_pg_pool is None:
+        log.warning(f"PostgreSQL pool is None in settings_manager, returning False for user reaction check for guild {guild_id}.")
         return False
 
     try:
@@ -791,8 +791,8 @@ def _get_redis_key(guild_id: int, key_type: str, identifier: str = None) -> str:
 
 async def get_guild_prefix(guild_id: int, default_prefix: str) -> str:
     """Gets the command prefix for a guild, checking cache first."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning("Pools not initialized in settings_manager, returning default prefix.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, returning default prefix.")
         return default_prefix
 
     cache_key = _get_redis_key(guild_id, "prefix")
@@ -849,8 +849,8 @@ async def get_guild_prefix(guild_id: int, default_prefix: str) -> str:
 
 async def set_guild_prefix(guild_id: int, prefix: str):
     """Sets the command prefix for a guild and updates the cache."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error("Pools not initialized in settings_manager, cannot set prefix.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot set prefix.")
         return False # Indicate failure
 
     cache_key = _get_redis_key(guild_id, "prefix")
@@ -885,8 +885,8 @@ async def set_guild_prefix(guild_id: int, prefix: str):
 
 async def get_setting(guild_id: int, key: str, default=None):
     """Gets a specific setting for a guild, checking cache first."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, returning default for setting '{key}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, returning default for setting '{key}'.")
         return default
 
     cache_key = _get_redis_key(guild_id, "setting", key)
@@ -974,8 +974,8 @@ async def get_setting(guild_id: int, key: str, default=None):
 async def set_setting(guild_id: int, key: str, value: str | None):
     """Sets a specific setting for a guild and updates/invalidates the cache.
        Setting value to None effectively deletes the setting."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot set setting '{key}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot set setting '{key}'.")
         return False # Indicate failure
 
     cache_key = _get_redis_key(guild_id, "setting", key)
@@ -1025,8 +1025,8 @@ async def set_setting(guild_id: int, key: str, value: str | None):
 async def is_cog_enabled(guild_id: int, cog_name: str, default_enabled: bool = True) -> bool:
     """Checks if a cog is enabled for a guild, checking cache first.
        Uses default_enabled if no specific setting is found."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, returning default for cog '{cog_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, returning default for cog '{cog_name}'.")
         return default_enabled
 
     cache_key = _get_redis_key(guild_id, "cog_enabled", cog_name)
@@ -1086,8 +1086,8 @@ async def is_cog_enabled(guild_id: int, cog_name: str, default_enabled: bool = T
 
 async def set_cog_enabled(guild_id: int, cog_name: str, enabled: bool):
     """Sets the enabled status for a cog in a guild and updates the cache."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot set cog enabled status for '{cog_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot set cog enabled status for '{cog_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cog_enabled", cog_name)
@@ -1122,8 +1122,8 @@ async def set_cog_enabled(guild_id: int, cog_name: str, enabled: bool):
 async def is_command_enabled(guild_id: int, command_name: str, default_enabled: bool = True) -> bool:
     """Checks if a command is enabled for a guild, checking cache first.
        Uses default_enabled if no specific setting is found."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, returning default for command '{command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, returning default for command '{command_name}'.")
         return default_enabled
 
     cache_key = _get_redis_key(guild_id, "cmd_enabled", command_name)
@@ -1183,8 +1183,8 @@ async def is_command_enabled(guild_id: int, command_name: str, default_enabled: 
 
 async def set_command_enabled(guild_id: int, command_name: str, enabled: bool):
     """Sets the enabled status for a command in a guild and updates the cache."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot set command enabled status for '{command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot set command enabled status for '{command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_enabled", command_name)
@@ -1219,8 +1219,8 @@ async def set_command_enabled(guild_id: int, command_name: str, enabled: bool):
 async def get_all_enabled_commands(guild_id: int) -> Dict[str, bool]:
     """Gets all command enabled statuses for a guild.
        Returns a dictionary of command_name -> enabled status."""
-    if not _active_pg_pool:
-        log.error(f"Database pool not initialized in settings_manager, cannot get command enabled statuses for guild {guild_id}.")
+    if _active_pg_pool is None:
+        log.error(f"Database pool is None in settings_manager, cannot get command enabled statuses for guild {guild_id}.")
         return {}
 
     try:
@@ -1238,8 +1238,8 @@ async def get_all_enabled_commands(guild_id: int) -> Dict[str, bool]:
 async def get_all_enabled_cogs(guild_id: int) -> Dict[str, bool]:
     """Gets all cog enabled statuses for a guild.
        Returns a dictionary of cog_name -> enabled status."""
-    if not _active_pg_pool:
-        log.error(f"Database pool not initialized in settings_manager, cannot get cog enabled statuses for guild {guild_id}.")
+    if _active_pg_pool is None:
+        log.error(f"Database pool is None in settings_manager, cannot get cog enabled statuses for guild {guild_id}.")
         return {}
 
     try:
@@ -1257,8 +1257,8 @@ async def get_all_enabled_cogs(guild_id: int) -> Dict[str, bool]:
 
 async def add_command_permission(guild_id: int, command_name: str, role_id: int) -> bool:
     """Adds permission for a role to use a command and invalidates cache."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot add permission for command '{command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot add permission for command '{command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
@@ -1292,8 +1292,8 @@ async def add_command_permission(guild_id: int, command_name: str, role_id: int)
 
 async def remove_command_permission(guild_id: int, command_name: str, role_id: int) -> bool:
     """Removes permission for a role to use a command and invalidates cache."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot remove permission for command '{command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot remove permission for command '{command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
@@ -1329,8 +1329,8 @@ async def check_command_permission(guild_id: int, command_name: str, member_role
        Returns True if allowed, False otherwise.
        If no permissions are set for the command in the DB, it defaults to allowed by this check.
     """
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, defaulting to allowed for command '{command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, defaulting to allowed for command '{command_name}'.")
         return True # Default to allowed if system isn't ready
 
     cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
@@ -1392,8 +1392,8 @@ async def check_command_permission(guild_id: int, command_name: str, member_role
 
 async def get_command_permissions(guild_id: int, command_name: str) -> set[int] | None:
     """Gets the set of allowed role IDs for a specific command, checking cache first. Returns None on error."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, cannot get permissions for command '{command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot get permissions for command '{command_name}'.")
         return None
 
     cache_key = _get_redis_key(guild_id, "cmd_perms", command_name)
@@ -1468,8 +1468,8 @@ def _get_log_toggle_cache_key(guild_id: int) -> str:
 
 async def get_all_log_event_toggles(guild_id: int) -> Dict[str, bool]:
     """Gets all logging event toggle settings for a guild, checking cache first."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, cannot get log toggles for guild {guild_id}.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager, cannot get log toggles for guild {guild_id}.")
         return {}
 
     cache_key = _get_log_toggle_cache_key(guild_id)
@@ -1521,8 +1521,8 @@ async def get_all_log_event_toggles(guild_id: int) -> Dict[str, bool]:
 
 async def is_log_event_enabled(guild_id: int, event_key: str, default_enabled: bool = True) -> bool:
     """Checks if a specific logging event is enabled for a guild."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, returning default for log event '{event_key}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, returning default for log event '{event_key}'.")
         return default_enabled
 
     cache_key = _get_log_toggle_cache_key(guild_id)
@@ -1574,8 +1574,8 @@ async def is_log_event_enabled(guild_id: int, event_key: str, default_enabled: b
 
 async def set_log_event_enabled(guild_id: int, event_key: str, enabled: bool) -> bool:
     """Sets the enabled status for a specific logging event type."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot set log event '{event_key}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot set log event '{event_key}'.")
         return False
 
     cache_key = _get_log_toggle_cache_key(guild_id)
@@ -1618,8 +1618,8 @@ async def get_bot_guild_ids() -> set[int] | None:
     Ensure set_bot_pools() has been called correctly.
     """
     global _active_pg_pool
-    if not _active_pg_pool:
-        log.error("PostgreSQL pool not initialized in settings_manager. Cannot get bot guild IDs.")
+    if _active_pg_pool is None:
+        log.error(f"PostgreSQL pool is None in settings_manager (ID: {id(_active_pg_pool)}). Cannot get bot guild IDs.")
         return None
 
     try:
@@ -1642,8 +1642,8 @@ async def get_bot_guild_ids() -> set[int] | None:
 async def get_custom_command_name(guild_id: int, original_command_name: str) -> str | None:
     """Gets the custom command name for a guild, checking cache first.
        Returns None if no custom name is set."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, returning None for custom command name '{original_command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, returning None for custom command name '{original_command_name}'.")
         return None
 
     cache_key = _get_redis_key(guild_id, "cmd_custom", original_command_name)
@@ -1675,8 +1675,8 @@ async def get_custom_command_name(guild_id: int, original_command_name: str) -> 
 async def get_custom_command_description(guild_id: int, original_command_name: str) -> str | None:
     """Gets the custom command description for a guild, checking cache first.
        Returns None if no custom description is set."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, returning None for custom command description '{original_command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, returning None for custom command description '{original_command_name}'.")
         return None
 
     cache_key = _get_redis_key(guild_id, "cmd_desc", original_command_name)
@@ -1708,8 +1708,8 @@ async def get_custom_command_description(guild_id: int, original_command_name: s
 async def set_custom_command_name(guild_id: int, original_command_name: str, custom_command_name: str | None) -> bool:
     """Sets a custom command name for a guild and updates the cache.
        Setting custom_command_name to None removes the customization."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot set custom command name for '{original_command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot set custom command name for '{original_command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_custom", original_command_name)
@@ -1755,8 +1755,8 @@ async def set_custom_command_name(guild_id: int, original_command_name: str, cus
 async def set_custom_command_description(guild_id: int, original_command_name: str, custom_command_description: str | None) -> bool:
     """Sets a custom command description for a guild and updates the cache.
        Setting custom_command_description to None removes the description."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot set custom command description for '{original_command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot set custom command description for '{original_command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_desc", original_command_name)
@@ -1823,8 +1823,8 @@ async def set_custom_command_description(guild_id: int, original_command_name: s
 async def get_custom_group_name(guild_id: int, original_group_name: str) -> str | None:
     """Gets the custom command group name for a guild, checking cache first.
        Returns None if no custom name is set."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, returning None for custom group name '{original_group_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, returning None for custom group name '{original_group_name}'.")
         return None
 
     cache_key = _get_redis_key(guild_id, "group_custom", original_group_name)
@@ -1856,8 +1856,8 @@ async def get_custom_group_name(guild_id: int, original_group_name: str) -> str 
 async def set_custom_group_name(guild_id: int, original_group_name: str, custom_group_name: str | None) -> bool:
     """Sets a custom command group name for a guild and updates the cache.
        Setting custom_group_name to None removes the customization."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot set custom group name for '{original_group_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot set custom group name for '{original_group_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "group_custom", original_group_name)
@@ -1902,8 +1902,8 @@ async def set_custom_group_name(guild_id: int, original_group_name: str, custom_
 
 async def add_command_alias(guild_id: int, original_command_name: str, alias_name: str) -> bool:
     """Adds an alias for a command in a guild and invalidates cache."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot add alias for command '{original_command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot add alias for command '{original_command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_aliases", original_command_name)
@@ -1937,8 +1937,8 @@ async def add_command_alias(guild_id: int, original_command_name: str, alias_nam
 
 async def remove_command_alias(guild_id: int, original_command_name: str, alias_name: str) -> bool:
     """Removes an alias for a command in a guild and invalidates cache."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.error(f"Pools not initialized in settings_manager, cannot remove alias for command '{original_command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, cannot remove alias for command '{original_command_name}'.")
         return False
 
     cache_key = _get_redis_key(guild_id, "cmd_aliases", original_command_name)
@@ -1970,8 +1970,8 @@ async def remove_command_alias(guild_id: int, original_command_name: str, alias_
 async def get_command_aliases(guild_id: int, original_command_name: str) -> list[str] | None:
     """Gets the list of aliases for a command in a guild, checking cache first.
        Returns empty list if no aliases are set, None on error."""
-    if not _active_pg_pool or not _active_redis_pool:
-        log.warning(f"Pools not initialized in settings_manager, returning None for command aliases '{original_command_name}'.")
+    if _active_pg_pool is None or _active_redis_pool is None:
+        log.warning(f"Pools not initialized (PG: {id(_active_pg_pool)}, Redis: {id(_active_redis_pool)}) in settings_manager for guild {guild_id}, returning None for command aliases '{original_command_name}'.")
         return None
 
     cache_key = _get_redis_key(guild_id, "cmd_aliases", original_command_name)
@@ -2020,8 +2020,8 @@ async def get_all_command_customizations(guild_id: int) -> dict[str, dict[str, s
     """Gets all command customizations for a guild.
        Returns a dictionary mapping original command names to a dict with 'name' and 'description' keys,
        or None on error."""
-    if not _active_pg_pool:
-        log.error("Pools not initialized in settings_manager, cannot get command customizations.")
+    if _active_pg_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}) in settings_manager for guild {guild_id}, cannot get command customizations.")
         return None
     try:
         async with _active_pg_pool.acquire() as conn:
@@ -2046,8 +2046,8 @@ async def get_all_command_customizations(guild_id: int) -> dict[str, dict[str, s
 async def get_all_group_customizations(guild_id: int) -> dict[str, str] | None:
     """Gets all command group customizations for a guild.
        Returns a dictionary mapping original group names to custom names, or None on error."""
-    if not _active_pg_pool:
-        log.error("Pools not initialized in settings_manager, cannot get group customizations.")
+    if _active_pg_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}) in settings_manager for guild {guild_id}, cannot get group customizations.")
         return None
     try:
         async with _active_pg_pool.acquire() as conn:
@@ -2066,8 +2066,8 @@ async def get_all_group_customizations(guild_id: int) -> dict[str, str] | None:
 async def get_all_command_aliases(guild_id: int) -> dict[str, list[str]] | None:
     """Gets all command aliases for a guild.
        Returns a dictionary mapping original command names to lists of aliases, or None on error."""
-    if not _active_pg_pool:
-        log.error("Pools not initialized in settings_manager, cannot get command aliases.")
+    if _active_pg_pool is None:
+        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}) in settings_manager for guild {guild_id}, cannot get command aliases.")
         return None
     try:
         async with _active_pg_pool.acquire() as conn:
