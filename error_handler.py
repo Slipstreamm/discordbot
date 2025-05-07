@@ -235,14 +235,193 @@ def patch_discord_methods():
 
     print("Discord Context methods patched successfully")
 
+async def send_error_embed_to_owner(ctx_or_interaction, error):
+    """Send an embed with error details to the bot owner."""
+    user_id = 452666956353503252  # Owner user ID
+    
+    try:
+        # Get the bot instance
+        bot_instance = None
+        if isinstance(ctx_or_interaction, commands.Context):
+            bot_instance = ctx_or_interaction.bot
+        elif hasattr(ctx_or_interaction, 'bot'):
+            bot_instance = ctx_or_interaction.bot
+        elif hasattr(ctx_or_interaction, 'client'):
+            bot_instance = ctx_or_interaction.client
+            
+        # Try to get from global accessor if not found
+        if not bot_instance:
+            try:
+                from global_bot_accessor import get_bot_instance
+                bot_instance = get_bot_instance()
+            except ImportError:
+                print("Failed to import global_bot_accessor")
+            except Exception as e:
+                print(f"Error getting bot instance from global_bot_accessor: {e}")
+        
+        if not bot_instance:
+            print("Failed to get bot instance for sending error embed to owner")
+            return
+            
+        # Get owner user
+        owner = await bot_instance.fetch_user(user_id)
+        if not owner:
+            print(f"Failed to fetch owner user with ID {user_id}")
+            return
+            
+        # Create the embed
+        embed = discord.Embed(
+            title="❌ Error Report",
+            description=f"**Error Type:** {type(error).__name__}\n**Message:** {str(error)}",
+            color=0xFF0000,  # Red color
+            timestamp=datetime.datetime.now()
+        )
+        
+        # Add command info
+        command_name = "Unknown"
+        if isinstance(ctx_or_interaction, commands.Context):
+            if hasattr(ctx_or_interaction, 'command') and ctx_or_interaction.command:
+                command_name = ctx_or_interaction.command.name
+            embed.add_field(
+                name="Command",
+                value=f"`{command_name}`",
+                inline=True
+            )
+        else:  # It's an interaction
+            if hasattr(ctx_or_interaction, 'command') and ctx_or_interaction.command:
+                command_name = ctx_or_interaction.command.name
+            embed.add_field(
+                name="Slash Command",
+                value=f"`/{command_name}`",
+                inline=True
+            )
+        
+        # Add user info
+        user_info = "Unknown"
+        if isinstance(ctx_or_interaction, commands.Context):
+            if ctx_or_interaction.author:
+                user_info = f"{ctx_or_interaction.author.name} (ID: {ctx_or_interaction.author.id})"
+        else:  # It's an interaction
+            if ctx_or_interaction.user:
+                user_info = f"{ctx_or_interaction.user.name} (ID: {ctx_or_interaction.user.id})"
+        
+        embed.add_field(
+            name="User",
+            value=user_info,
+            inline=True
+        )
+        
+        # Add guild and channel info
+        guild_info = "DM"
+        channel_info = "DM"
+        
+        if isinstance(ctx_or_interaction, commands.Context):
+            if ctx_or_interaction.guild:
+                guild_info = f"{ctx_or_interaction.guild.name} (ID: {ctx_or_interaction.guild.id})"
+            if ctx_or_interaction.channel:
+                channel_info = f"#{ctx_or_interaction.channel.name} (ID: {ctx_or_interaction.channel.id})"
+        else:  # It's an interaction
+            if ctx_or_interaction.guild:
+                guild_info = f"{ctx_or_interaction.guild.name} (ID: {ctx_or_interaction.guild.id})"
+            if ctx_or_interaction.channel:
+                channel_info = f"#{ctx_or_interaction.channel.name} (ID: {ctx_or_interaction.channel.id})"
+        
+        embed.add_field(
+            name="Server",
+            value=guild_info,
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Channel",
+            value=channel_info,
+            inline=True
+        )
+        
+        # Add timestamp field
+        embed.add_field(
+            name="Timestamp",
+            value=f"<t:{int(datetime.datetime.now().timestamp())}:F>",
+            inline=True
+        )
+        
+        # Add traceback as a field (truncated)
+        tb_str = traceback.format_exc()
+        if len(tb_str) > 1000:
+            tb_str = tb_str[:997] + "..."
+        
+        embed.add_field(
+            name="Traceback",
+            value=f"```python\n{tb_str}\n```",
+            inline=False
+        )
+        
+        # Add cause if available
+        if error.__cause__:
+            embed.add_field(
+                name="Cause",
+                value=f"```{type(error.__cause__).__name__}: {str(error.__cause__)}\n```",
+                inline=False
+            )
+        
+        # Extract content for context
+        try:
+            content = extract_message_content(ctx_or_interaction)
+            if content and len(content) > 1000:
+                content = content[:997] + "..."
+            if content:
+                embed.add_field(
+                    name="Message Content",
+                    value=f"```\n{content}\n```",
+                    inline=False
+                )
+        except Exception as e:
+            embed.add_field(
+                name="Content Extraction Error",
+                value=f"Failed to extract message content: {str(e)}",
+                inline=False
+            )
+        
+        # Set footer
+        embed.set_footer(text=f"Error ID: {datetime.datetime.now().strftime('%Y%m%d%H%M%S')}")
+        
+        # Send the embed to the owner
+        await owner.send(embed=embed)
+        
+    except Exception as e:
+        print(f"Error sending error embed to owner: {e}")
+        # Fall back to simple text message if embed fails
+        try:
+            if bot_instance and (owner := await bot_instance.fetch_user(user_id)):
+                await owner.send(f"Error occurred but failed to create embed: {str(error)}\nEmbed error: {str(e)}")
+        except:
+            print("Complete failure in error reporting system")
+
 async def handle_error(ctx_or_interaction, error):
-    user_id = 452666956353503252  # Replace with the specific user ID
+    user_id = 452666956353503252  # Owner user ID
+    
+    # Handle missing required argument errors
+    if isinstance(error, commands.MissingRequiredArgument):
+        missing_arg = error.param.name if hasattr(error, 'param') else 'an argument'
+        message = f"Missing required argument: `{missing_arg}`. Please provide all required arguments."
+        if isinstance(ctx_or_interaction, commands.Context):
+            await ctx_or_interaction.send(message)
+        else:
+            if not ctx_or_interaction.response.is_done():
+                await ctx_or_interaction.response.send_message(message, ephemeral=True)
+            else:
+                await ctx_or_interaction.followup.send(message, ephemeral=True)
+                
+        # Also send to owner in an embed
+        await send_error_embed_to_owner(ctx_or_interaction, error)
+        return
 
     # Special handling for interaction timeout errors (10062: Unknown interaction)
     if isinstance(error, commands.CommandInvokeError) and isinstance(error.original, discord.NotFound) and error.original.code == 10062:
         print(f"Interaction timeout error (10062): {error}")
         # This error occurs when Discord's interaction token expires (after 3 seconds)
-        # We can't respond to the interaction anymore, so we'll just log it
+        # We can't respond to the interaction anymore, so we'll just log it and notify the owner
+        await send_error_embed_to_owner(ctx_or_interaction, error)
         return
 
     error_message = f"An error occurred: {error}"
@@ -264,6 +443,8 @@ async def handle_error(ctx_or_interaction, error):
                 with open('ai_response.txt', 'w', encoding='utf-8') as f:
                     f.write(content)
                 await ctx_or_interaction.send("The AI response was too long. Here's the content as a file:", file=discord.File('ai_response.txt'))
+                # Also notify the owner
+                await send_error_embed_to_owner(ctx_or_interaction, error)
                 return
             elif hasattr(ctx_or_interaction, '_last_response_content'):
                 content = ctx_or_interaction._last_response_content
@@ -274,6 +455,8 @@ async def handle_error(ctx_or_interaction, error):
                     await ctx_or_interaction.response.send_message("The AI response was too long. Here's the content as a file:", file=discord.File('ai_response.txt'))
                 else:
                     await ctx_or_interaction.followup.send("The AI response was too long. Here's the content as a file:", file=discord.File('ai_response.txt'))
+                # Also notify the owner
+                await send_error_embed_to_owner(ctx_or_interaction, error)
                 return
 
     # Extract message content for logging
@@ -451,6 +634,9 @@ async def handle_error(ctx_or_interaction, error):
                 raise
         return
 
+    # Send embed to owner for all errors that reach this point
+    await send_error_embed_to_owner(ctx_or_interaction, error)
+    
     # Original error handling logic
     if isinstance(ctx_or_interaction, commands.Context):
         if ctx_or_interaction.author.id == user_id:
@@ -461,7 +647,13 @@ async def handle_error(ctx_or_interaction, error):
         else:
             await ctx_or_interaction.send("An error occurred while processing your command.")
     else:
-        if ctx_or_interaction.user.id == user_id:
-            await ctx_or_interaction.response.send_message(content=error_message, ephemeral=True)
+        if not ctx_or_interaction.response.is_done():
+            if ctx_or_interaction.user.id == user_id:
+                await ctx_or_interaction.response.send_message(content=error_message, ephemeral=True)
+            else:
+                await ctx_or_interaction.response.send_message("An error occurred while processing your command.", ephemeral=True)
         else:
-            await ctx_or_interaction.response.send_message("An error occurred while processing your command.")
+            if ctx_or_interaction.user.id == user_id:
+                await ctx_or_interaction.followup.send(content=error_message, ephemeral=True)
+            else:
+                await ctx_or_interaction.followup.send("An error occurred while processing your command.", ephemeral=True)
