@@ -23,6 +23,7 @@ from discordbot.api_service.dashboard_models import (
 
 # Import settings_manager for database access (use absolute path)
 from discordbot import settings_manager
+from discordbot.global_bot_accessor import get_bot_instance
 
 log = logging.getLogger(__name__)
 
@@ -40,10 +41,18 @@ async def get_command_customizations(
     """Get all command customizations for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        if not settings_manager:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
+            )
+
+        # Get the bot instance to check if pools are available
+        bot_instance = get_bot_instance()
+        if not bot_instance or not bot_instance.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
             )
 
         # Get command customizations
@@ -103,10 +112,18 @@ async def set_command_customization(
     """Set a custom name and/or description for a command in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        if not settings_manager:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
+            )
+
+        # Get the bot instance to check if pools are available
+        bot_instance = get_bot_instance()
+        if not bot_instance or not bot_instance.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
             )
 
         # Validate custom name format if provided
@@ -179,10 +196,18 @@ async def set_group_customization(
     """Set a custom name for a command group in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        if not settings_manager:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
+            )
+
+        # Get the bot instance to check if pools are available
+        bot_instance = get_bot_instance()
+        if not bot_instance or not bot_instance.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
             )
 
         # Validate custom name format if provided
@@ -233,10 +258,18 @@ async def add_command_alias(
     """Add an alias for a command in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        if not settings_manager:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
+            )
+
+        # Get the bot instance to check if pools are available
+        bot_instance = get_bot_instance()
+        if not bot_instance or not bot_instance.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
             )
 
         # Validate alias format
@@ -286,10 +319,18 @@ async def remove_command_alias(
     """Remove an alias for a command in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        if not settings_manager:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
+            )
+
+        # Get the bot instance to check if pools are available
+        bot_instance = get_bot_instance()
+        if not bot_instance or not bot_instance.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
             )
 
         # Remove the command alias

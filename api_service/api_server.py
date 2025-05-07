@@ -1043,10 +1043,19 @@ async def update_cog_status_direct(
     """Enable or disable a cog for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        if not settings_manager:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
+            )
+
+        # Get the bot instance to check if pools are available
+        from discordbot.global_bot_accessor import get_bot_instance
+        bot_instance = get_bot_instance()
+        if not bot_instance or not bot_instance.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
             )
 
         # Try to get the bot instance, but don't require it
@@ -1108,10 +1117,19 @@ async def update_command_status_direct(
     """Enable or disable a command for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        if not settings_manager:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
+            )
+
+        # Get the bot instance to check if pools are available
+        from discordbot.global_bot_accessor import get_bot_instance
+        bot_instance = get_bot_instance()
+        if not bot_instance or not bot_instance.pg_pool:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection not available"
             )
 
         # Try to get the bot instance, but don't require it

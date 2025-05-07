@@ -7,6 +7,7 @@ import os
 # Add the parent directory to sys.path to ensure settings_manager is accessible
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import settings_manager
+from global_bot_accessor import get_bot_instance
 
 log = logging.getLogger(__name__)
 
@@ -226,18 +227,12 @@ class WelcomeCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    # Ensure pools are initialized before adding the cog
+    # Ensure bot has pools initialized before adding the cog
     print("WelcomeCog setup function called!")
-    if settings_manager.get_pg_pool() is None or settings_manager.get_redis_pool() is None:
-        log.warning("Settings Manager pools not initialized before loading WelcomeCog. Attempting initialization.")
-        print("WelcomeCog: Settings Manager pools not initialized, attempting initialization...")
-        try:
-            await settings_manager.initialize_pools()
-            print("WelcomeCog: Settings Manager pools initialized successfully.")
-        except Exception as e:
-            log.exception("Failed to initialize Settings Manager pools during WelcomeCog setup. Cog will not load.")
-            print(f"WelcomeCog: Failed to initialize Settings Manager pools: {e}")
-            return # Prevent loading if pools fail
+    if not hasattr(bot, 'pg_pool') or not hasattr(bot, 'redis') or bot.pg_pool is None or bot.redis is None:
+        log.warning("Bot pools not initialized before loading WelcomeCog. Cog will not load.")
+        print("WelcomeCog: Bot pools not initialized. Cannot load cog.")
+        return # Prevent loading if pools are missing
 
     welcome_cog = WelcomeCog(bot)
     await bot.add_cog(welcome_cog)

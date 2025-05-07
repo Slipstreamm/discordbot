@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import settings manager for database operations
 import discordbot.settings_manager as settings_manager
+from discordbot.global_bot_accessor import get_bot_instance
 
 # Set up logging
 log = logging.getLogger(__name__)
@@ -513,8 +514,14 @@ class StarboardCog(commands.Cog):
                 await ctx.send("❌ Failed to retrieve starboard settings.")
                 return
 
+            # Get the bot instance and its pg_pool
+            bot_instance = get_bot_instance()
+            if not bot_instance or not bot_instance.pg_pool:
+                await ctx.send("❌ Database connection not available.")
+                return
+
             # Get a connection to the database
-            conn = await asyncio.wait_for(settings_manager.get_pg_pool().acquire(), timeout=5.0)
+            conn = await asyncio.wait_for(bot_instance.pg_pool.acquire(), timeout=5.0)
             try:
                 # Get the total number of entries
                 total_entries = await conn.fetchval(
@@ -566,7 +573,7 @@ class StarboardCog(commands.Cog):
                 await ctx.send(embed=embed)
             finally:
                 # Release the connection
-                await settings_manager.get_pg_pool().release(conn)
+                await bot_instance.pg_pool.release(conn)
         except Exception as e:
             log.exception(f"Error getting starboard statistics: {e}")
             await ctx.send(f"❌ An error occurred while getting starboard statistics: {str(e)}")
