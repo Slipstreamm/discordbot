@@ -324,11 +324,12 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
         import asyncpg
         import redis.asyncio as redis
 
-        pg_pool = None
-        redis_pool = None
+        # These will be stored in app.state
+        # pg_pool = None # No longer module/lifespan local like this for app.state version
+        # redis_pool = None
 
         try:
-            pg_pool = await asyncpg.create_pool(
+            app.state.pg_pool = await asyncpg.create_pool(
                 user=settings.POSTGRES_USER,
                 password=settings.POSTGRES_PASSWORD,
                 host=settings.POSTGRES_HOST,
@@ -336,27 +337,29 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
                 min_size=1,
                 max_size=10,
             )
-            log.info("PostgreSQL pool created.")
+            log.info("PostgreSQL pool created and stored in app.state.pg_pool.")
 
             redis_url = f"redis://{':' + settings.REDIS_PASSWORD + '@' if settings.REDIS_PASSWORD else ''}{settings.REDIS_HOST}:{settings.REDIS_PORT}/0"
-            redis_pool = await redis.from_url(
+            app.state.redis_pool = await redis.from_url(
                 redis_url,
                 decode_responses=True,
             )
-            log.info("Redis pool created.")
+            log.info("Redis pool created and stored in app.state.redis_pool.")
 
-            # if settings_manager:
-            #     settings_manager.set_bot_pools(pg_pool, redis_pool) # DO NOT set global pools from API server
-            #     log.info("Database and cache connection pools set in settings_manager.")
-            # else:
-            #     log.error("settings_manager not available to set pools.")
+            # DO NOT call settings_manager.set_bot_pools from API server.
+            # The bot (main.py) is responsible for setting the global pools in settings_manager.
+            # API server will use its own pools from app.state and pass them explicitly if needed.
             if not settings_manager:
-                 log.error("settings_manager not available. API endpoints requiring it may fail or need pool passing.")
+                 log.error("settings_manager not imported. API endpoints requiring it may fail.")
 
         except Exception as e:
-            log.exception(f"Failed to initialize or set connection pools: {e}")
+            log.exception(f"Failed to initialize API server's connection pools: {e}")
+            # Ensure app.state pools are None if creation failed
+            app.state.pg_pool = None
+            app.state.redis_pool = None
 
-        yield
+
+        yield # Lifespan part 1 ends here
 
         # Shutdown: Clean up resources
         log.info("Shutting down API server...")
@@ -365,13 +368,15 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
         db.save_data()
         log.info("Existing database saved.")
 
-        # Close database/cache pools if they were initialized
-        if pg_pool:
-            await pg_pool.close()
-            log.info("PostgreSQL pool closed.")
-        if redis_pool:
-            await redis_pool.close()
-            log.info("Redis pool closed.")
+        # Close API server's database/cache pools
+        if app.state.pg_pool:
+            await app.state.pg_pool.close()
+            log.info("API Server's PostgreSQL pool closed.")
+            app.state.pg_pool = None
+        if app.state.redis_pool:
+            await app.state.redis_pool.close() # Assuming redis pool has a close method
+            log.info("API Server's Redis pool closed.")
+            app.state.redis_pool = None
 
         # Close aiohttp session
         if http_session:
