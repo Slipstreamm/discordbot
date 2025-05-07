@@ -997,12 +997,12 @@ class LoggingCog(commands.Cog):
         if changes:
             embed = self._create_log_embed(
                 # title="⚙️ Guild Updated", # Removed duplicate title
-            title="⚙️ Guild Updated (Event)",
-            description="Server settings were updated.\n*Audit log may contain updater.*\n" + "\n".join(changes),
-            color=discord.Color.dark_purple()
-        )
-        self._add_id_footer(embed, after, id_name="Guild ID")
-        await self._send_log_embed(after, embed)
+                title="⚙️ Guild Updated (Event)",
+                description="Server settings were updated.\n*Audit log may contain updater.*\n" + "\n".join(changes),
+                color=discord.Color.dark_purple()
+            )
+            self._add_id_footer(embed, after, id_name="Guild ID")
+            await self._send_log_embed(after, embed)
 
     @commands.Cog.listener()
     async def on_guild_emojis_update(self, guild: discord.Guild, before: tuple[discord.Emoji, ...], after: tuple[discord.Emoji, ...]):
@@ -1034,12 +1034,12 @@ class LoggingCog(commands.Cog):
         if desc:
             embed = self._create_log_embed(
                 # title="😀 Emojis Updated", # Removed duplicate title
-            title="😀 Emojis Updated (Event)",
-            description=f"*Audit log may contain updater.*\n{desc.strip()}",
-            color=discord.Color.magenta()
-        )
-        self._add_id_footer(embed, guild, id_name="Guild ID")
-        await self._send_log_embed(guild, embed)
+                title="😀 Emojis Updated (Event)",
+                description=f"*Audit log may contain updater.*\n{desc.strip()}",
+                color=discord.Color.magenta()
+            )
+            self._add_id_footer(embed, guild, id_name="Guild ID")
+            await self._send_log_embed(guild, embed)
 
 
     # --- Invite Events ---
@@ -1354,11 +1354,16 @@ class LoggingCog(commands.Cog):
              role = target
              changes = []
              # Simple diffing for common properties
-             if entry.before.name != entry.after.name: changes.append(f"Name: `{entry.before.name}` → `{entry.after.name}`")
-             if entry.before.color != entry.after.color: changes.append(f"Color: `{entry.before.color}` → `{entry.after.color}`")
-             if entry.before.hoist != entry.after.hoist: changes.append(f"Hoisted: `{entry.before.hoist}` → `{entry.after.hoist}`")
-             if entry.before.mentionable != entry.after.mentionable: changes.append(f"Mentionable: `{entry.before.mentionable}` → `{entry.after.mentionable}`")
-             if entry.before.permissions != entry.after.permissions: changes.append("Permissions Updated (See Audit Log for details)") # Permissions are complex
+             if hasattr(entry.before, 'name') and hasattr(entry.after, 'name') and entry.before.name != entry.after.name:
+                 changes.append(f"Name: `{entry.before.name}` → `{entry.after.name}`")
+             if hasattr(entry.before, 'color') and hasattr(entry.after, 'color') and entry.before.color != entry.after.color:
+                 changes.append(f"Color: `{entry.before.color}` → `{entry.after.color}`")
+             if hasattr(entry.before, 'hoist') and hasattr(entry.after, 'hoist') and entry.before.hoist != entry.after.hoist:
+                 changes.append(f"Hoisted: `{entry.before.hoist}` → `{entry.after.hoist}`")
+             if hasattr(entry.before, 'mentionable') and hasattr(entry.after, 'mentionable') and entry.before.mentionable != entry.after.mentionable:
+                 changes.append(f"Mentionable: `{entry.before.mentionable}` → `{entry.after.mentionable}`")
+             if hasattr(entry.before, 'permissions') and hasattr(entry.after, 'permissions') and entry.before.permissions != entry.after.permissions:
+                 changes.append("Permissions Updated (See Audit Log for details)") # Permissions are complex
              if changes:
                  action_desc = f"{user.mention} updated role {role.mention} ({role.id}):\n" + "\n".join(f"- {c}" for c in changes)
                  color = discord.Color.blue()
@@ -1396,11 +1401,16 @@ class LoggingCog(commands.Cog):
              ch_type = str(channel.type).capitalize()
              changes = []
              # Simple diffing
-             if entry.before.name != entry.after.name: changes.append(f"Name: `{entry.before.name}` → `{entry.after.name}`")
-             if hasattr(entry.before, 'topic') and entry.before.topic != entry.after.topic: changes.append(f"Topic Changed") # Keep it simple
-             if hasattr(entry.before, 'nsfw') and entry.before.nsfw != entry.after.nsfw: changes.append(f"NSFW: `{entry.before.nsfw}` → `{entry.after.nsfw}`")
-             if hasattr(entry.before, 'slowmode_delay') and entry.before.slowmode_delay != entry.after.slowmode_delay: changes.append(f"Slowmode: `{entry.before.slowmode_delay}s` → `{entry.after.slowmode_delay}s`")
-             if hasattr(entry.before, 'bitrate') and entry.before.bitrate != entry.after.bitrate: changes.append(f"Bitrate: `{entry.before.bitrate}` → `{entry.after.bitrate}`")
+             if hasattr(entry.before, 'name') and hasattr(entry.after, 'name') and entry.before.name != entry.after.name:
+                 changes.append(f"Name: `{entry.before.name}` → `{entry.after.name}`")
+             if hasattr(entry.before, 'topic') and hasattr(entry.after, 'topic') and entry.before.topic != entry.after.topic:
+                 changes.append(f"Topic Changed") # Keep it simple
+             if hasattr(entry.before, 'nsfw') and hasattr(entry.after, 'nsfw') and entry.before.nsfw != entry.after.nsfw:
+                 changes.append(f"NSFW: `{entry.before.nsfw}` → `{entry.after.nsfw}`")
+             if hasattr(entry.before, 'slowmode_delay') and hasattr(entry.after, 'slowmode_delay') and entry.before.slowmode_delay != entry.after.slowmode_delay:
+                 changes.append(f"Slowmode: `{entry.before.slowmode_delay}s` → `{entry.after.slowmode_delay}s`")
+             if hasattr(entry.before, 'bitrate') and hasattr(entry.after, 'bitrate') and entry.before.bitrate != entry.after.bitrate:
+                 changes.append(f"Bitrate: `{entry.before.bitrate}` → `{entry.after.bitrate}`")
              # Process detailed changes from entry.changes
              detailed_changes = []
              for change in entry.changes:
@@ -1485,7 +1495,7 @@ class LoggingCog(commands.Cog):
              if not await self._check_log_enabled(guild.id, audit_event_key): return
              title = "🛡️ Audit Log: Emoji Updated"
              emoji = target
-             if entry.before.name != entry.after.name:
+             if hasattr(entry.before, 'name') and hasattr(entry.after, 'name') and entry.before.name != entry.after.name:
                  action_desc = f"{user.mention} renamed emoji `{entry.before.name}` to {emoji} (`{emoji.name}`)"
                  color = discord.Color.magenta()
                  # self._add_id_footer(embed, emoji, id_name="Emoji ID") # Footer set later
@@ -1528,15 +1538,23 @@ class LoggingCog(commands.Cog):
              if not await self._check_log_enabled(guild.id, audit_event_key): return
              title = "🛡️ Audit Log: Guild Updated"
              changes = []
-             # Diffing guild properties
-             if entry.before.name != entry.after.name: changes.append(f"Name: `{entry.before.name}` → `{entry.after.name}`")
-             if entry.before.description != entry.after.description: changes.append(f"Description Changed")
-             if entry.before.icon != entry.after.icon: changes.append(f"Icon Changed")
-             if entry.before.banner != entry.after.banner: changes.append(f"Banner Changed")
-             if entry.before.owner != entry.after.owner: changes.append(f"Owner: {entry.before.owner.mention if entry.before.owner else 'None'} → {entry.after.owner.mention if entry.after.owner else 'None'}")
-             if entry.before.verification_level != entry.after.verification_level: changes.append(f"Verification Level: `{entry.before.verification_level}` → `{entry.after.verification_level}`")
-             if entry.before.explicit_content_filter != entry.after.explicit_content_filter: changes.append(f"Explicit Content Filter: `{entry.before.explicit_content_filter}` → `{entry.after.explicit_content_filter}`")
-             if entry.before.system_channel != entry.after.system_channel: changes.append(f"System Channel Changed")
+             # Diffing guild properties - safely check attributes exist before comparing
+             if hasattr(entry.before, 'name') and hasattr(entry.after, 'name') and entry.before.name != entry.after.name:
+                 changes.append(f"Name: `{entry.before.name}` → `{entry.after.name}`")
+             if hasattr(entry.before, 'description') and hasattr(entry.after, 'description') and entry.before.description != entry.after.description:
+                 changes.append(f"Description Changed")
+             if hasattr(entry.before, 'icon') and hasattr(entry.after, 'icon') and entry.before.icon != entry.after.icon:
+                 changes.append(f"Icon Changed")
+             if hasattr(entry.before, 'banner') and hasattr(entry.after, 'banner') and entry.before.banner != entry.after.banner:
+                 changes.append(f"Banner Changed")
+             if hasattr(entry.before, 'owner') and hasattr(entry.after, 'owner') and entry.before.owner != entry.after.owner:
+                 changes.append(f"Owner: {entry.before.owner.mention if entry.before.owner else 'None'} → {entry.after.owner.mention if entry.after.owner else 'None'}")
+             if hasattr(entry.before, 'verification_level') and hasattr(entry.after, 'verification_level') and entry.before.verification_level != entry.after.verification_level:
+                 changes.append(f"Verification Level: `{entry.before.verification_level}` → `{entry.after.verification_level}`")
+             if hasattr(entry.before, 'explicit_content_filter') and hasattr(entry.after, 'explicit_content_filter') and entry.before.explicit_content_filter != entry.after.explicit_content_filter:
+                 changes.append(f"Explicit Content Filter: `{entry.before.explicit_content_filter}` → `{entry.after.explicit_content_filter}`")
+             if hasattr(entry.before, 'system_channel') and hasattr(entry.after, 'system_channel') and entry.before.system_channel != entry.after.system_channel:
+                 changes.append(f"System Channel Changed")
              # Add more properties as needed
 
              if changes:

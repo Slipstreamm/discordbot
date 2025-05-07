@@ -571,6 +571,14 @@ async def verify_discord_token(authorization: str = Header(None)) -> str:
 async def root():
     return RedirectResponse(url="https://www.youtube.com/watch?v=dQw4w9WgXcQ", status_code=301)
 
+@app.get("/discord")
+async def root():
+    return RedirectResponse(url="https://discord.gg/gebDRq6u", status_code=301)
+
+@app.get("/discordbot")
+async def root():
+    return RedirectResponse(url="https://discord.gg/gebDRq6u", status_code=301)
+
 @app.get("/ip")
 async def ip(request: Request):
     return Response(content=request.client.host, media_type="text/plain")
