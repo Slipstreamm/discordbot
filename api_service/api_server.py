@@ -2082,9 +2082,9 @@ async def ai_moderation_action(
         from discordbot.db import mod_log_db
         bot = get_bot_instance()
 
-        # First attempt to add the mod log entry
-        case_id = await mod_log_db.add_mod_log(
-            bot.pg_pool,
+        # Use the thread-safe version of add_mod_log
+        case_id = await mod_log_db.add_mod_log_safe(
+            bot,  # Pass the bot instance, not just the pool
             guild_id=action.guild_id,
             moderator_id=AI_MODERATOR_ID,
             target_user_id=action.user_id,
@@ -2103,8 +2103,9 @@ async def ai_moderation_action(
 
         # If we have a case_id and message details, update the log entry
         if case_id and action.message_id and action.channel_id:
-            update_success = await mod_log_db.update_mod_log_message_details(
-                bot.pg_pool,
+            # Use the thread-safe version of update_mod_log_message_details
+            update_success = await mod_log_db.update_mod_log_message_details_safe(
+                bot,  # Pass the bot instance, not just the pool
                 case_id=case_id,
                 message_id=action.message_id,
                 channel_id=action.channel_id
