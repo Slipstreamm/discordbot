@@ -255,7 +255,12 @@ class ModApplicationCog(commands.Cog):
                 async with self.bot.pg_pool.acquire() as conn:
                     await conn.execute(CREATE_MOD_APPLICATIONS_TABLE)
                     await conn.execute(CREATE_MOD_APPLICATION_SETTINGS_TABLE)
-                logger.info("Moderator application tables created successfully")
+                    # Add the missing column if it doesn't exist
+                    await conn.execute("""
+                        ALTER TABLE mod_application_settings
+                        ADD COLUMN IF NOT EXISTS log_new_applications BOOLEAN NOT NULL DEFAULT FALSE;
+                    """)
+                logger.info("Moderator application tables created and/or updated successfully")
             except Exception as e:
                 logger.error(f"Error creating moderator application tables: {e}")
         else:
