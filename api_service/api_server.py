@@ -320,54 +320,61 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
         retry_count = 0
         success = False
 
-        while retry_count < max_retries and not success:
-            try:
-                # Initialize the pools in the settings_manager module
-                # Close any existing pools first to ensure clean state
-                if settings_manager.get_pg_pool() or settings_manager.get_redis_pool():
-                    log.info("Closing existing database pools before reinitializing...")
-                    await settings_manager.close_pools()
+        # --- New pool initialization logic ---
+        import asyncpg
+        import redis.asyncio as redis
 
-                # Initialize new pools
-                await settings_manager.initialize_pools()
-                log.info("Database and cache connection pools initialized for API server.")
-                success = True
-            except Exception as e:
-                retry_count += 1
-                log.warning(f"Failed to initialize connection pools (attempt {retry_count}/{max_retries}): {e}")
-                if retry_count < max_retries:
-                    # Wait before retrying with exponential backoff
-                    wait_time = 2 ** retry_count  # 2, 4, 8 seconds
-                    log.info(f"Waiting {wait_time} seconds before retrying...")
-                    await asyncio.sleep(wait_time)
-                else:
-                    log.exception(f"Failed to initialize connection pools after {max_retries} attempts")
-                    log.error("Dashboard endpoints requiring DB/cache will fail.")
+        pg_pool = None
+        redis_pool = None
 
-        if not success:
-            log.error("Failed to initialize database pools after all retries.")
-    else:
-        log.error("settings_manager not imported. Dashboard endpoints requiring DB/cache will fail.")
+        try:
+            pg_pool = await asyncpg.create_pool(
+                user=settings.POSTGRES_USER,
+                password=settings.POSTGRES_PASSWORD,
+                host=settings.POSTGRES_HOST,
+                database=settings.POSTGRES_SETTINGS_DB,
+                min_size=1,
+                max_size=10,
+            )
+            log.info("PostgreSQL pool created.")
 
-    yield
+            redis_url = f"redis://{':' + settings.REDIS_PASSWORD + '@' if settings.REDIS_PASSWORD else ''}{settings.REDIS_HOST}:{settings.REDIS_PORT}/0"
+            redis_pool = await redis.from_url(
+                redis_url,
+                decode_responses=True,
+            )
+            log.info("Redis pool created.")
 
-    # Shutdown: Clean up resources
-    log.info("Shutting down API server...")
+            if settings_manager:
+                settings_manager.set_bot_pools(pg_pool, redis_pool)
+                log.info("Database and cache connection pools set in settings_manager.")
+            else:
+                log.error("settings_manager not available to set pools.")
 
-    # Save existing database data
-    db.save_data()
-    log.info("Existing database saved.")
+        except Exception as e:
+            log.exception(f"Failed to initialize or set connection pools: {e}")
 
-    # Close database/cache pools if they were initialized
-    if settings_manager and (settings_manager.get_pg_pool() or settings_manager.get_redis_pool()):
-        log.info("Closing database and cache connection pools for API server...")
-        await settings_manager.close_pools()
-        log.info("Database and cache connection pools closed for API server.")
+        yield
 
-    # Close aiohttp session
-    if http_session:
-        await http_session.close()
-        log.info("aiohttp session closed.")
+        # Shutdown: Clean up resources
+        log.info("Shutting down API server...")
+
+        # Save existing database data
+        db.save_data()
+        log.info("Existing database saved.")
+
+        # Close database/cache pools if they were initialized
+        if pg_pool:
+            await pg_pool.close()
+            log.info("PostgreSQL pool closed.")
+        if redis_pool:
+            await redis_pool.close()
+            log.info("Redis pool closed.")
+
+        # Close aiohttp session
+        if http_session:
+            await http_session.close()
+            log.info("aiohttp session closed.")
 
 # Create the FastAPI app with lifespan
 app = FastAPI(title="Unified API Service", lifespan=lifespan, debug=True)
