@@ -1048,10 +1048,12 @@ async def update_cog_status_redirect(
 
                 # Fall back to direct implementation
                 # Check if settings_manager is available
-                if not settings_manager or not settings_manager.get_pg_pool():
+                from global_bot_accessor import get_bot_instance
+                bot = get_bot_instance()
+                if not settings_manager or not bot or not bot.pg_pool:
                     raise HTTPException(
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail="Settings manager not available"
+                        detail="Settings manager or database connection not available"
                     )
 
                 # Check if the cog exists
@@ -1139,10 +1141,12 @@ async def update_command_status_redirect(
 
                 # Fall back to direct implementation
                 # Check if settings_manager is available
-                if not settings_manager or not settings_manager.get_pg_pool():
+                from global_bot_accessor import get_bot_instance
+                bot = get_bot_instance()
+                if not settings_manager or not bot or not bot.pg_pool:
                     raise HTTPException(
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail="Settings manager not available"
+                        detail="Settings manager or database connection not available"
                     )
 
                 # Check if the command exists

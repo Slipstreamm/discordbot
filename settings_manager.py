@@ -1626,17 +1626,16 @@ async def set_log_event_enabled(guild_id: int, event_key: str, enabled: bool) ->
 async def get_bot_guild_ids() -> set[int] | None:
     """
     Gets the set of all guild IDs known to the bot from the guilds table.
-    Uses the _active_pg_pool. Returns None on error or if pool not initialized.
-    Ensure set_bot_pools() has been called correctly.
+    Returns None on error or if pool not initialized.
     """
-    global _active_pg_pool
-    if _active_pg_pool is None:
-        log.error(f"PostgreSQL pool is None in settings_manager (ID: {id(_active_pg_pool)}). Cannot get bot guild IDs.")
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.error("Bot instance or PostgreSQL pool not available in settings_manager. Cannot get bot guild IDs.")
         return None
 
     try:
-        # Use the module-level connection pool.
-        async with _active_pg_pool.acquire() as conn:
+        # Use the bot's connection pool
+        async with bot.pg_pool.acquire() as conn:
             records = await conn.fetch("SELECT guild_id FROM guilds")
             guild_ids = {record['guild_id'] for record in records}
             log.debug(f"Fetched {len(guild_ids)} guild IDs from database using pool.")
@@ -2041,11 +2040,12 @@ async def get_all_command_customizations(guild_id: int) -> dict[str, dict[str, s
     """Gets all command customizations for a guild.
        Returns a dictionary mapping original command names to a dict with 'name' and 'description' keys,
        or None on error."""
-    if _active_pg_pool is None:
-        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}) in settings_manager for guild {guild_id}, cannot get command customizations.")
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.error(f"Bot instance or PostgreSQL pool not available in settings_manager for guild {guild_id}, cannot get command customizations.")
         return None
     try:
-        async with _active_pg_pool.acquire() as conn:
+        async with bot.pg_pool.acquire() as conn:
             records = await conn.fetch(
                 "SELECT original_command_name, custom_command_name, custom_command_description FROM command_customization WHERE guild_id = $1",
                 guild_id
@@ -2064,14 +2064,15 @@ async def get_all_command_customizations(guild_id: int) -> dict[str, dict[str, s
         return None
 
 
-async def get_all_group_customizations(guild_id: int) -> dict[str, str] | None:
+async def get_all_group_customizations(guild_id: int) -> dict[str, dict[str, str]] | None:
     """Gets all command group customizations for a guild.
        Returns a dictionary mapping original group names to custom names, or None on error."""
-    if _active_pg_pool is None:
-        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}) in settings_manager for guild {guild_id}, cannot get group customizations.")
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.error(f"Bot instance or PostgreSQL pool not available in settings_manager for guild {guild_id}, cannot get group customizations.")
         return None
     try:
-        async with _active_pg_pool.acquire() as conn:
+        async with bot.pg_pool.acquire() as conn:
             records = await conn.fetch(
                 "SELECT original_group_name, custom_group_name FROM command_group_customization WHERE guild_id = $1",
                 guild_id
@@ -2087,11 +2088,12 @@ async def get_all_group_customizations(guild_id: int) -> dict[str, str] | None:
 async def get_all_command_aliases(guild_id: int) -> dict[str, list[str]] | None:
     """Gets all command aliases for a guild.
        Returns a dictionary mapping original command names to lists of aliases, or None on error."""
-    if _active_pg_pool is None:
-        log.error(f"Pools not initialized (PG: {id(_active_pg_pool)}) in settings_manager for guild {guild_id}, cannot get command aliases.")
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.error(f"Bot instance or PostgreSQL pool not available in settings_manager for guild {guild_id}, cannot get command aliases.")
         return None
     try:
-        async with _active_pg_pool.acquire() as conn:
+        async with bot.pg_pool.acquire() as conn:
             records = await conn.fetch(
                 "SELECT original_command_name, alias_name FROM command_aliases WHERE guild_id = $1",
                 guild_id
