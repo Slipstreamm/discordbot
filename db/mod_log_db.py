@@ -488,3 +488,40 @@ async def delete_mod_log(pool: asyncpg.Pool, case_id: int, guild_id: int) -> boo
             await pool.release(connection)
         except Exception as e:
             log.warning(f"Error releasing connection back to pool after deleting mod log: {e}")
+
+async def clear_user_mod_logs(pool: asyncpg.Pool, guild_id: int, target_user_id: int) -> int:
+    """Deletes all moderation log entries for a specific user in a guild. Returns the number of deleted logs."""
+    query = """
+        DELETE FROM moderation_logs
+        WHERE guild_id = $1 AND target_user_id = $2;
+    """
+    connection, success = await create_connection_with_retry(pool)
+    if not success or not connection:
+        log.error(f"Failed to acquire database connection for clearing mod logs for user {target_user_id} in guild {guild_id}")
+        return 0
+
+    try:
+        async with connection.transaction():
+            # Execute the delete command and get the status (e.g., "DELETE 5")
+            result_status = await connection.execute(query, guild_id, target_user_id)
+            # Parse the number of deleted rows from the status string
+            deleted_count = 0
+            if result_status and result_status.startswith("DELETE"):
+                try:
+                    deleted_count = int(result_status.split(" ")[1])
+                except (IndexError, ValueError) as e:
+                    log.warning(f"Could not parse deleted count from status: {result_status} - {e}")
+            
+            if deleted_count > 0:
+                log.info(f"Cleared {deleted_count} mod log entries for user {target_user_id} in guild {guild_id}")
+            else:
+                log.info(f"No mod log entries found to clear for user {target_user_id} in guild {guild_id}")
+            return deleted_count
+    except Exception as e:
+        log.exception(f"Error clearing mod log entries for user {target_user_id} in guild {guild_id}: {e}")
+        return 0
+    finally:
+        try:
+            await pool.release(connection)
+        except Exception as e:
+            log.warning(f"Error releasing connection back to pool after clearing user mod logs: {e}")

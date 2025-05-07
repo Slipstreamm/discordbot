@@ -164,6 +164,19 @@ class ModerationCog(commands.Cog):
         )(remove_infraction_command)
         self.moderate_group.add_command(remove_infraction_command)
 
+        # --- Clear Infractions Command ---
+        clear_infractions_command = app_commands.Command(
+            name="clearinfractions",
+            description="Clear all moderation infractions for a user",
+            callback=self.moderate_clear_infractions_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            member="The member whose infractions to clear",
+            reason="The reason for clearing all infractions"
+        )(clear_infractions_command)
+        self.moderate_group.add_command(clear_infractions_command)
+
     # Helper method for parsing duration strings
     def _parse_duration(self, duration_str: str) -> Optional[datetime.timedelta]:
         """Parse a duration string like '1d', '2h', '30m' into a timedelta."""
@@ -826,6 +839,68 @@ class ModerationCog(commands.Cog):
             await interaction.response.send_message(f"✅ Infraction with Case ID {case_id} has been removed. Reason: {reason or 'Not specified'}", ephemeral=True)
         else:
             await interaction.response.send_message(f"❌ Failed to remove infraction with Case ID {case_id}. It might have already been removed or an error occurred.", ephemeral=True)
+
+    async def moderate_clear_infractions_callback(self, interaction: discord.Interaction, member: discord.Member, reason: str = None):
+        """Clear all moderation infractions for a user."""
+        # This is a destructive action, so require ban_members permission
+        if not interaction.user.guild_permissions.ban_members:
+            await interaction.response.send_message("❌ You don't have permission to clear all infractions for a user.", ephemeral=True)
+            return
+
+        if not self.bot.pg_pool:
+            await interaction.response.send_message("❌ Database connection is not available.", ephemeral=True)
+            logger.error("Cannot clear infractions: pg_pool is None.")
+            return
+
+        # Confirmation step
+        view = discord.ui.View()
+        confirm_button = discord.ui.Button(label="Confirm Clear All", style=discord.ButtonStyle.danger, custom_id="confirm_clear_all")
+        cancel_button = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="cancel_clear_all")
+
+        async def confirm_callback(interaction_confirm: discord.Interaction):
+            if interaction_confirm.user.id != interaction.user.id:
+                await interaction_confirm.response.send_message("❌ You are not authorized to confirm this action.", ephemeral=True)
+                return
+
+            deleted_count = await mod_log_db.clear_user_mod_logs(self.bot.pg_pool, interaction.guild.id, member.id)
+
+            if deleted_count > 0:
+                logger.info(f"{deleted_count} infractions for user {member} (ID: {member.id}) cleared by {interaction.user} (ID: {interaction.user.id}) in guild {interaction.guild.id}. Reason: {reason}")
+                
+                # Log the clear all action
+                mod_log_cog: ModLogCog = self.bot.get_cog('ModLogCog')
+                if mod_log_cog:
+                    await mod_log_cog.log_action(
+                        guild=interaction.guild,
+                        moderator=interaction.user,
+                        target=member,
+                        action_type="CLEAR_INFRACTIONS",
+                        reason=f"Cleared {deleted_count} infractions. Reason: {reason or 'Not specified'}",
+                        duration=None
+                    )
+                await interaction_confirm.response.edit_message(content=f"✅ Successfully cleared {deleted_count} infractions for {member.mention}. Reason: {reason or 'Not specified'}", view=None)
+            elif deleted_count == 0:
+                await interaction_confirm.response.edit_message(content=f"ℹ️ No infractions found for {member.mention} to clear.", view=None)
+            else: # Should not happen if 0 is returned for no logs
+                await interaction_confirm.response.edit_message(content=f"❌ Failed to clear infractions for {member.mention}. An error occurred.", view=None)
+
+        async def cancel_callback(interaction_cancel: discord.Interaction):
+            if interaction_cancel.user.id != interaction.user.id:
+                await interaction_cancel.response.send_message("❌ You are not authorized to cancel this action.", ephemeral=True)
+                return
+            await interaction_cancel.response.edit_message(content="🚫 Infraction clearing cancelled.", view=None)
+
+        confirm_button.callback = confirm_callback
+        cancel_button.callback = cancel_callback
+        view.add_item(confirm_button)
+        view.add_item(cancel_button)
+
+        await interaction.response.send_message(
+            f"⚠️ Are you sure you want to clear **ALL** infractions for {member.mention}?\n"
+            f"This action is irreversible. Reason: {reason or 'Not specified'}",
+            view=view,
+            ephemeral=True
+        )
 
     # --- Legacy Command Handlers (for prefix commands) ---
 
