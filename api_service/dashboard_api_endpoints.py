@@ -213,10 +213,12 @@ async def get_command_customizations(
     """Get all command customizations for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        from global_bot_accessor import get_bot_instance
+        bot = get_bot_instance()
+        if not settings_manager or not bot or not bot.pg_pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Settings manager not available"
+                detail="Settings manager or database connection not available"
             )
 
         # Get command customizations
@@ -268,10 +270,12 @@ async def set_command_customization(
     """Set a custom name for a command in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        from global_bot_accessor import get_bot_instance
+        bot = get_bot_instance()
+        if not settings_manager or not bot or not bot.pg_pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Settings manager not available"
+                detail="Settings manager or database connection not available"
             )
 
         # Validate custom name format if provided
@@ -322,10 +326,12 @@ async def set_group_customization(
     """Set a custom name for a command group in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        from global_bot_accessor import get_bot_instance
+        bot = get_bot_instance()
+        if not settings_manager or not bot or not bot.pg_pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Settings manager not available"
+                detail="Settings manager or database connection not available"
             )
 
         # Validate custom name format if provided
@@ -376,10 +382,12 @@ async def add_command_alias(
     """Add an alias for a command in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        from global_bot_accessor import get_bot_instance
+        bot = get_bot_instance()
+        if not settings_manager or not bot or not bot.pg_pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Settings manager not available"
+                detail="Settings manager or database connection not available"
             )
 
         # Validate alias format
@@ -429,10 +437,12 @@ async def remove_command_alias(
     """Remove an alias for a command in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        from global_bot_accessor import get_bot_instance
+        bot = get_bot_instance()
+        if not settings_manager or not bot or not bot.pg_pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Settings manager not available"
+                detail="Settings manager or database connection not available"
             )
 
         # Remove the command alias
@@ -468,10 +478,12 @@ async def get_guild_settings(
     """Get settings for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        from global_bot_accessor import get_bot_instance
+        bot = get_bot_instance()
+        if not settings_manager or not bot or not bot.pg_pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Settings manager not available"
+                detail="Settings manager or database connection not available"
             )
 
         # Initialize settings with defaults
@@ -563,10 +575,12 @@ async def update_guild_settings(
     """Update settings for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        from global_bot_accessor import get_bot_instance
+        bot = get_bot_instance()
+        if not settings_manager or not bot or not bot.pg_pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Settings manager not available"
+                detail="Settings manager or database connection not available"
             )
 
         log.info(f"Updating settings for guild {guild_id} requested by user {_user.get('user_id')}")

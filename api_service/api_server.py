@@ -282,9 +282,10 @@ if discordbot_path not in sys.path:
 
 try:
     from discordbot import settings_manager
-    log.info("Successfully imported settings_manager module")
+    from global_bot_accessor import get_bot_instance
+    log.info("Successfully imported settings_manager module and get_bot_instance")
 except ImportError as e:
-    log.error(f"Could not import discordbot.settings_manager: {e}")
+    log.error(f"Could not import discordbot.settings_manager or get_bot_instance: {e}")
     log.error("Ensure the API is run from the project root or discordbot is in PYTHONPATH.")
     settings_manager = None # Set to None to indicate failure
 
@@ -591,8 +592,9 @@ async def get_guild_cogs_no_deps(guild_id: int):
             log.warning(f"Could not import bot instance: {e}")
 
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
-            return {"error": "Settings manager not available", "cogs": []}
+        bot = get_bot_instance()
+        if not settings_manager or not bot or not bot.pg_pool:
+            return {"error": "Settings manager or database connection not available", "cogs": []}
 
         # Get cogs from the database directly if bot is not available
         cogs_list = []
@@ -889,10 +891,11 @@ async def get_guild_cogs_direct(
             log.warning(f"Could not import bot instance: {e}")
 
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.get_pg_pool():
+        bot = get_bot_instance()
+        if not settings_manager or not bot or not bot.pg_pool:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Settings manager not available"
+                detail="Settings manager or database connection not available"
             )
 
         # Get cogs from the database directly if bot is not available
@@ -1847,14 +1850,15 @@ async def dashboard_get_guild_settings(
 
     known_cogs_in_db = {}
     try:
-        # Need to acquire connection from pool managed by settings_manager
-        if settings_manager.get_pg_pool():
-             async with settings_manager.get_pg_pool().acquire() as conn:
+        # Need to acquire connection from pool
+        bot = get_bot_instance()
+        if bot and bot.pg_pool:
+             async with bot.pg_pool.acquire() as conn:
                 records = await conn.fetch("SELECT cog_name, enabled FROM enabled_cogs WHERE guild_id = $1", guild_id)
                 for record in records:
                     known_cogs_in_db[record['cog_name']] = record['enabled']
         else:
-             log.error("Dashboard: settings_manager pg_pool not initialized.")
+             log.error("Dashboard: Bot instance or pg_pool not initialized.")
              # Decide how to handle - return empty or error?
     except Exception as e:
         log.exception(f"Dashboard: Failed to fetch cog statuses from DB for guild {guild_id}: {e}")
@@ -1862,8 +1866,9 @@ async def dashboard_get_guild_settings(
     # Fetch command permissions
     permissions_map: Dict[str, List[str]] = {}
     try:
-        if settings_manager.get_pg_pool():
-            async with settings_manager.get_pg_pool().acquire() as conn:
+        bot = get_bot_instance()
+        if bot and bot.pg_pool:
+            async with bot.pg_pool.acquire() as conn:
                 records = await conn.fetch(
                     "SELECT command_name, allowed_role_id FROM command_permissions WHERE guild_id = $1 ORDER BY command_name, allowed_role_id",
                     guild_id
@@ -1958,8 +1963,9 @@ async def dashboard_get_all_guild_command_permissions_map(
     log.info(f"Dashboard: Fetching all command permissions map for guild {guild_id} requested by user {current_user['user_id']}")
     permissions_map: Dict[str, List[str]] = {}
     try:
-        if settings_manager.get_pg_pool():
-            async with settings_manager.get_pg_pool().acquire() as conn:
+        bot = get_bot_instance()
+        if bot and bot.pg_pool:
+            async with bot.pg_pool.acquire() as conn:
                 records = await conn.fetch(
                     "SELECT command_name, allowed_role_id FROM command_permissions WHERE guild_id = $1 ORDER BY command_name, allowed_role_id",
                     guild_id
@@ -1971,7 +1977,7 @@ async def dashboard_get_all_guild_command_permissions_map(
                     permissions_map[cmd] = []
                 permissions_map[cmd].append(role_id_str)
         else:
-             log.error("Dashboard: settings_manager pg_pool not initialized.")
+             log.error("Dashboard: Bot instance or pg_pool not initialized.")
 
         return CommandPermissionsResponse(permissions=permissions_map)
 
@@ -1992,8 +1998,9 @@ async def dashboard_get_all_guild_command_permissions(
     log.info(f"Dashboard: Fetching all command permissions for guild {guild_id} requested by user {current_user['user_id']}")
     permissions_list = []
     try:
-        if settings_manager.get_pg_pool():
-            async with settings_manager.get_pg_pool().acquire() as conn:
+        bot = get_bot_instance()
+        if bot and bot.pg_pool:
+            async with bot.pg_pool.acquire() as conn:
                 records = await conn.fetch(
                     "SELECT command_name, allowed_role_id FROM command_permissions WHERE guild_id = $1 ORDER BY command_name, allowed_role_id",
                     guild_id
@@ -2057,8 +2064,9 @@ async def ai_moderation_action(
         raise HTTPException(status_code=400, detail="guild_id in path does not match payload")
 
     # Insert into moderation log
-    if not settings_manager or not settings_manager.get_pg_pool():
-        log.error("settings_manager or pg_pool not available for AI moderation logging.")
+    bot = get_bot_instance()
+    if not settings_manager or not bot or not bot.pg_pool:
+        log.error("settings_manager, bot instance, or pg_pool not available for AI moderation logging.")
         raise HTTPException(status_code=503, detail="Moderation logging unavailable")
 
     # Use bot ID 0 for AI actions (or a reserved ID)
@@ -2071,8 +2079,9 @@ async def ai_moderation_action(
     # Add to moderation log
     try:
         from discordbot.db import mod_log_db
+        bot = get_bot_instance()
         case_id = await mod_log_db.add_mod_log(
-            settings_manager.get_pg_pool(),
+            bot.pg_pool,
             guild_id=action.guild_id,
             moderator_id=AI_MODERATOR_ID,
             target_user_id=action.user_id,
@@ -2083,7 +2092,7 @@ async def ai_moderation_action(
         # Optionally update with message/channel info
         if case_id and action.message_id and action.channel_id:
             await mod_log_db.update_mod_log_message_details(
-                settings_manager.get_pg_pool(),
+                bot.pg_pool,
                 case_id=case_id,
                 message_id=action.message_id,
                 channel_id=action.channel_id
