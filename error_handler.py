@@ -465,6 +465,3 @@ async def handle_error(ctx_or_interaction, error):
             await ctx_or_interaction.response.send_message(content=error_message, ephemeral=True)
         else:
             await ctx_or_interaction.response.send_message("An error occurred while processing your command.")
-
-
-
