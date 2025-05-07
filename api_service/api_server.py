@@ -858,6 +858,74 @@ class AIModerationAction(BaseModel):
     ai_model: str
     result: str
 
+# Helper function to execute a warning
+async def execute_warning(bot, guild_id: int, user_id: int, reason: str) -> dict:
+    """
+    Execute a warning action using the bot's moderation system.
+
+    Args:
+        bot: The bot instance
+        guild_id: The Discord guild ID
+        user_id: The target user's Discord ID
+        reason: The reason for the warning
+
+    Returns:
+        A dictionary with the result of the warning operation
+    """
+    try:
+        # Get the guild and member objects
+        guild = bot.get_guild(guild_id)
+        if not guild:
+            log.error(f"Could not find guild with ID {guild_id}")
+            return {"success": False, "error": "Guild not found"}
+
+        # Get the member object
+        member = guild.get_member(user_id)
+        if not member:
+            try:
+                # Try to fetch the member if not in cache
+                member = await guild.fetch_member(user_id)
+            except discord.NotFound:
+                log.error(f"Could not find member with ID {user_id} in guild {guild_id}")
+                return {"success": False, "error": "Member not found"}
+            except Exception as e:
+                log.error(f"Error fetching member with ID {user_id} in guild {guild_id}: {e}")
+                return {"success": False, "error": f"Error fetching member: {str(e)}"}
+
+        # Get the moderation cog
+        moderation_cog = bot.get_cog('ModerationCog')
+        if not moderation_cog:
+            log.error(f"ModerationCog not found")
+            return {"success": False, "error": "ModerationCog not found"}
+
+        # Create a fake interaction for the warning
+        # We'll use the bot as the "user" who issued the warning
+        class FakeInteraction:
+            def __init__(self, guild, bot_user):
+                self.guild = guild
+                self.user = bot_user
+                self.response = self
+
+            async def send_message(self, content, ephemeral=False):
+                # Log the message but don't actually send it
+                log.info(f"AI Warning message: {content}")
+                return None
+
+        # Create the fake interaction
+        interaction = FakeInteraction(guild, bot.user)
+
+        # Call the warn method
+        await moderation_cog.moderate_warn_callback(interaction, member, reason)
+
+        log.info(f"Successfully executed warning for user {user_id} in guild {guild_id}")
+        return {"success": True, "message": "Warning executed successfully"}
+
+    except Exception as e:
+        log.error(f"Error executing warning for user {user_id} in guild {guild_id}: {e}")
+        import traceback
+        tb = traceback.format_exc()
+        return {"success": False, "error": str(e), "traceback": tb}
+
 # ============= Dashboard API Routes =============
 # (Mounted under /dashboard/api)
 # Dependencies are imported from dependencies.py
@@ -2094,6 +2162,16 @@ async def ai_moderation_action(
             "attachments": action.attachments
         }
 
+        # Check if this is a warning action and execute it if needed
+        warning_result = None
+        if action_type == "WARN":
+            log.info(f"Executing warning action for user {action.user_id} in guild {action.guild_id}")
+            warning_result = await execute_warning(bot, action.guild_id, action.user_id, reason)
+            if warning_result and warning_result.get("success"):
+                log.info(f"Warning executed successfully for user {action.user_id} in guild {action.guild_id}")
+            else:
+                log.warning(f"Warning execution failed for user {action.user_id} in guild {action.guild_id}: {warning_result.get('error', 'Unknown error')}")
+
         # Use our new thread-safe function to log the action
         case_id = await mod_log_db.log_action_safe(
             bot_instance=bot,
@@ -2120,13 +2198,31 @@ async def ai_moderation_action(
                 duration_seconds=None
             )
 
+            # If this was a warning action but we didn't execute it yet (due to the first log_action_safe failing),
+            # try to execute it now
+            if action_type == "WARN" and warning_result is None:
+                log.info(f"Executing warning action after fallback for user {action.user_id} in guild {action.guild_id}")
+                warning_result = await execute_warning(bot, action.guild_id, action.user_id, reason)
+                if warning_result and warning_result.get("success"):
+                    log.info(f"Warning executed successfully after fallback for user {action.user_id} in guild {action.guild_id}")
+                else:
+                    log.warning(f"Warning execution failed after fallback for user {action.user_id} in guild {action.guild_id}: {warning_result.get('error', 'Unknown error')}")
+
             if not case_id:
                 log.error(f"Failed to add mod log entry for guild {guild_id}, user {action.user_id}, action {action_type}")
-                return {
+                response = {
                     "success": False,
                     "error": "Failed to add moderation log entry to database",
                     "message": "The action was recorded but could not be added to the moderation logs"
                 }
+
+                # Include warning execution result in the response if applicable
+                if action_type == "WARN" and warning_result:
+                    response["warning_executed"] = warning_result.get("success", False)
+                    if not warning_result.get("success", False):
+                        response["warning_error"] = warning_result.get("error", "Unknown error")
+
+                return response
 
         # If we have a case_id and message details, update the log entry
         if case_id and action.message_id and action.channel_id:
@@ -2146,7 +2242,15 @@ async def ai_moderation_action(
                 # Continue anyway since the main entry was added successfully
 
         log.info(f"AI moderation action logged successfully for guild {guild_id}, user {action.user_id}, action {action_type}, case {case_id}")
-        return {"success": True, "case_id": case_id}
+
+        # Include warning execution result in the response if applicable
+        response = {"success": True, "case_id": case_id}
+        if action_type == "WARN" and warning_result:
+            response["warning_executed"] = warning_result.get("success", False)
+            if not warning_result.get("success", False):
+                response["warning_error"] = warning_result.get("error", "Unknown error")
+
+        return response
 
     except asyncpg.exceptions.PostgresError as e:
         # Handle database-specific errors
@@ -2156,7 +2260,16 @@ async def ai_moderation_action(
             f"Database error logging AI moderation action for guild {guild_id}, user {action.user_id}, "
             f"action {action_type}. Exception: {e}\nTraceback: {tb}"
         )
-        return {"success": False, "error": f"Database error: {str(e)}", "traceback": tb}
+
+        response = {"success": False, "error": f"Database error: {str(e)}", "traceback": tb}
+
+        # Include warning execution result in the response if applicable
+        if action_type == "WARN" and 'warning_result' in locals() and warning_result:
+            response["warning_executed"] = warning_result.get("success", False)
+            if not warning_result.get("success", False):
+                response["warning_error"] = warning_result.get("error", "Unknown error")
+
+        return response
 
     except Exception as e:
         import traceback
@@ -2165,7 +2278,16 @@ async def ai_moderation_action(
             f"Error logging AI moderation action for guild {guild_id}, user {action.user_id}, "
             f"action {action_type}, reason: {reason}. Exception: {e}\nTraceback: {tb}"
         )
-        return {"success": False, "error": str(e), "traceback": tb}
+
+        response = {"success": False, "error": str(e), "traceback": tb}
+
+        # Include warning execution result in the response if applicable
+        if action_type == "WARN" and 'warning_result' in locals() and warning_result:
+            response["warning_executed"] = warning_result.get("success", False)
+            if not warning_result.get("success", False):
+                response["warning_error"] = warning_result.get("error", "Unknown error")
+
+        return response
 
 @dashboard_api_app.post("/guilds/{guild_id}/test-goodbye", status_code=status.HTTP_200_OK, tags=["Dashboard Guild Settings"])
 async def dashboard_test_goodbye_message(
