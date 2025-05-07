@@ -93,17 +93,17 @@ class MyBot(commands.Bot):
         )
         log.info("Redis client initialized and attached to bot.redis.")
 
-        # Pass the initialized pools to the settings_manager
-        if self.pg_pool and self.redis:
-            settings_manager.set_bot_pools(self.pg_pool, self.redis)
-            log.info("Bot's pg_pool and redis_client passed to settings_manager.")
+        # Make sure the bot instance is set in the global_bot_accessor
+        # This ensures settings_manager can access the pools via get_bot_instance()
+        set_bot_instance(self)
+        log.info("Bot instance set in global_bot_accessor from setup_hook.")
 
-            # Initialize database schema and run migrations using settings_manager
-            # These functions will now use the pools provided by the bot.
+        # Initialize database schema and run migrations using settings_manager
+        if self.pg_pool and self.redis:
             try:
-                await settings_manager.initialize_database() # Uses the pool set via set_bot_pools
+                await settings_manager.initialize_database() # Uses the bot instance via get_bot_instance()
                 log.info("Database schema initialization called via settings_manager.")
-                await settings_manager.run_migrations() # Uses the pool set via set_bot_pools
+                await settings_manager.run_migrations() # Uses the bot instance via get_bot_instance()
                 log.info("Database migrations called via settings_manager.")
             except Exception as e:
                 log.exception("CRITICAL: Failed during settings_manager database setup (init/migrations).")
