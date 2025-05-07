@@ -459,3 +459,32 @@ async def log_action_safe(bot_instance, guild_id: int, target_user_id: int, acti
 
     # Otherwise, use the helper function to run in the bot's loop
     return run_in_bot_loop(bot_instance, _log_action_coro)
+
+async def delete_mod_log(pool: asyncpg.Pool, case_id: int, guild_id: int) -> bool:
+    """Deletes a specific moderation log entry by case_id, ensuring it belongs to the guild."""
+    query = """
+        DELETE FROM moderation_logs
+        WHERE case_id = $1 AND guild_id = $2;
+    """
+    connection, success = await create_connection_with_retry(pool)
+    if not success or not connection:
+        log.error(f"Failed to acquire database connection for deleting mod log for case_id {case_id} in guild {guild_id}")
+        return False
+
+    try:
+        async with connection.transaction():
+            result = await connection.execute(query, case_id, guild_id)
+            if result == "DELETE 1":
+                log.info(f"Deleted mod log entry for case_id {case_id} in guild {guild_id}")
+                return True
+            else:
+                log.warning(f"Could not delete mod log entry for case_id {case_id} in guild {guild_id}. Case might not exist or not belong to this guild.")
+                return False
+    except Exception as e:
+        log.exception(f"Error deleting mod log entry for case_id {case_id} in guild {guild_id}: {e}")
+        return False
+    finally:
+        try:
+            await pool.release(connection)
+        except Exception as e:
+            log.warning(f"Error releasing connection back to pool after deleting mod log: {e}")

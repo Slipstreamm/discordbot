@@ -7,6 +7,7 @@ from typing import Optional, Union, List
 
 # Use absolute import for ModLogCog
 from discordbot.cogs.mod_log_cog import ModLogCog
+from discordbot.db import mod_log_db # Import the database functions
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -137,6 +138,31 @@ class ModerationCog(commands.Cog):
             message="The message to send to the banned user"
         )(dm_banned_command)
         self.moderate_group.add_command(dm_banned_command)
+
+        # --- View Infractions Command ---
+        view_infractions_command = app_commands.Command(
+            name="infractions",
+            description="View moderation infractions for a user",
+            callback=self.moderate_view_infractions_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            member="The member whose infractions to view"
+        )(view_infractions_command)
+        self.moderate_group.add_command(view_infractions_command)
+
+        # --- Remove Infraction Command ---
+        remove_infraction_command = app_commands.Command(
+            name="removeinfraction",
+            description="Remove a specific infraction by its case ID",
+            callback=self.moderate_remove_infraction_callback,
+            parent=self.moderate_group
+        )
+        app_commands.describe(
+            case_id="The case ID of the infraction to remove",
+            reason="The reason for removing the infraction"
+        )(remove_infraction_command)
+        self.moderate_group.add_command(remove_infraction_command)
 
     # Helper method for parsing duration strings
     def _parse_duration(self, duration_str: str) -> Optional[datetime.timedelta]:
@@ -711,6 +737,95 @@ class ModerationCog(commands.Cog):
         except Exception as e:
             logger.error(f"Error sending DM to banned user {banned_user} (ID: {banned_user.id}): {e}")
             await interaction.response.send_message(f"❌ An unexpected error occurred: {e}", ephemeral=True)
+
+    async def moderate_view_infractions_callback(self, interaction: discord.Interaction, member: discord.Member):
+        """View moderation infractions for a user."""
+        if not interaction.user.guild_permissions.kick_members: # Using kick_members as a general mod permission
+            await interaction.response.send_message("❌ You don't have permission to view infractions.", ephemeral=True)
+            return
+
+        if not self.bot.pg_pool:
+            await interaction.response.send_message("❌ Database connection is not available.", ephemeral=True)
+            logger.error("Cannot view infractions: pg_pool is None.")
+            return
+
+        infractions = await mod_log_db.get_user_mod_logs(self.bot.pg_pool, interaction.guild.id, member.id)
+
+        if not infractions:
+            await interaction.response.send_message(f"No infractions found for {member.mention}.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title=f"Infractions for {member.display_name}",
+            color=discord.Color.orange()
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+
+        for infraction in infractions[:25]: # Display up to 25 infractions
+            action_type = infraction['action_type']
+            reason = infraction['reason'] or "No reason provided"
+            moderator_id = infraction['moderator_id']
+            timestamp = infraction['timestamp']
+            case_id = infraction['case_id']
+            duration_seconds = infraction['duration_seconds']
+
+            moderator = interaction.guild.get_member(moderator_id) or f"ID: {moderator_id}"
+            
+            value = f"**Case ID:** {case_id}\n"
+            value += f"**Action:** {action_type}\n"
+            value += f"**Moderator:** {moderator}\n"
+            if duration_seconds:
+                duration_str = str(datetime.timedelta(seconds=duration_seconds))
+                value += f"**Duration:** {duration_str}\n"
+            value += f"**Reason:** {reason}\n"
+            value += f"**Date:** {discord.utils.format_dt(timestamp, style='f')}"
+            
+            embed.add_field(name=f"Infraction #{case_id}", value=value, inline=False)
+
+        if len(infractions) > 25:
+            embed.set_footer(text=f"Showing 25 of {len(infractions)} infractions.")
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    async def moderate_remove_infraction_callback(self, interaction: discord.Interaction, case_id: int, reason: str = None):
+        """Remove a specific infraction by its case ID."""
+        if not interaction.user.guild_permissions.ban_members: # Higher permission for removing infractions
+            await interaction.response.send_message("❌ You don't have permission to remove infractions.", ephemeral=True)
+            return
+
+        if not self.bot.pg_pool:
+            await interaction.response.send_message("❌ Database connection is not available.", ephemeral=True)
+            logger.error("Cannot remove infraction: pg_pool is None.")
+            return
+
+        # Fetch the infraction to ensure it exists and to log details
+        infraction_to_remove = await mod_log_db.get_mod_log(self.bot.pg_pool, case_id)
+        if not infraction_to_remove or infraction_to_remove['guild_id'] != interaction.guild.id:
+            await interaction.response.send_message(f"❌ Infraction with Case ID {case_id} not found in this server.", ephemeral=True)
+            return
+
+        deleted = await mod_log_db.delete_mod_log(self.bot.pg_pool, case_id, interaction.guild.id)
+
+        if deleted:
+            logger.info(f"Infraction (Case ID: {case_id}) removed by {interaction.user} (ID: {interaction.user.id}) in guild {interaction.guild.id}. Reason: {reason}")
+            
+            # Log the removal action itself
+            mod_log_cog: ModLogCog = self.bot.get_cog('ModLogCog')
+            if mod_log_cog:
+                target_user_id = infraction_to_remove['target_user_id']
+                target_user = await self.bot.fetch_user(target_user_id) # Fetch user for logging
+                
+                await mod_log_cog.log_action(
+                    guild=interaction.guild,
+                    moderator=interaction.user,
+                    target=target_user if target_user else Object(id=target_user_id),
+                    action_type="REMOVE_INFRACTION",
+                    reason=f"Removed Case ID {case_id}. Original reason: {infraction_to_remove['reason']}. Removal reason: {reason or 'Not specified'}",
+                    duration=None 
+                )
+            await interaction.response.send_message(f"✅ Infraction with Case ID {case_id} has been removed. Reason: {reason or 'Not specified'}", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Failed to remove infraction with Case ID {case_id}. It might have already been removed or an error occurred.", ephemeral=True)
 
     # --- Legacy Command Handlers (for prefix commands) ---
 

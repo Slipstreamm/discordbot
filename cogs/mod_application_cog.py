@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS mod_application_settings (
     required_role_id BIGINT NULL,
     reviewer_role_id BIGINT NULL,
     custom_questions JSONB NULL,
-    cooldown_days INTEGER NOT NULL DEFAULT 30
+    cooldown_days INTEGER NOT NULL DEFAULT 30,
+    log_new_applications BOOLEAN NOT NULL DEFAULT FALSE
 );
 """
 
@@ -369,6 +370,18 @@ class ModApplicationCog(commands.Cog):
             days="Number of days a user must wait after rejection before applying again"
         )(settings_cooldown_command)
         self.modapp_group.add_command(settings_cooldown_command)
+
+        # --- Toggle Log New Applications Command ---
+        settings_log_new_apps_command = app_commands.Command(
+            name="settings_lognewapps",
+            description="Toggle whether new applications are automatically logged in the log channel",
+            callback=self.toggle_log_new_applications_callback,
+            parent=self.modapp_group # Direct child of modapp
+        )
+        app_commands.describe(
+            enabled="Whether new applications should be logged automatically"
+        )(settings_log_new_apps_command)
+        self.modapp_group.add_command(settings_log_new_apps_command)
 
     # --- Command Callbacks ---
 
@@ -703,6 +716,50 @@ class ModApplicationCog(commands.Cog):
                 ephemeral=True
             )
 
+    async def toggle_log_new_applications_callback(self, interaction: discord.Interaction, enabled: bool):
+        """Handle the /modapp settings lognewapps command"""
+        # Check if user has permission to manage applications
+        if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
+            await interaction.response.send_message(
+                "❌ You don't have permission to manage application settings.",
+                ephemeral=True
+            )
+            return
+
+        # Get current settings to check if log channel is set
+        settings = await self.get_application_settings(interaction.guild_id)
+        log_channel_id = settings.get("log_channel_id")
+
+        if enabled and not log_channel_id:
+            await interaction.response.send_message(
+                "❌ You need to set a log channel first using `/modapp settings_logchannel` before enabling this feature.",
+                ephemeral=True
+            )
+            return
+
+        # Update setting in database
+        success = await self.update_application_setting(interaction.guild_id, "log_new_applications", enabled)
+
+        if success:
+            status = "enabled" if enabled else "disabled"
+            if enabled:
+                log_channel = interaction.guild.get_channel(log_channel_id)
+                channel_mention = log_channel.mention if log_channel else "the configured log channel"
+                await interaction.response.send_message(
+                    f"✅ New applications will now be automatically logged in {channel_mention}.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "✅ New applications will no longer be automatically logged.",
+                    ephemeral=True
+                )
+        else:
+            await interaction.response.send_message(
+                "❌ Failed to update application settings.",
+                ephemeral=True
+            )
+
     # --- Database Helper Methods ---
 
     async def submit_application(self, guild_id: int, user_id: int, form_data: Dict[str, str]) -> bool:
@@ -846,7 +903,8 @@ class ModApplicationCog(commands.Cog):
                         "required_role_id": None,
                         "reviewer_role_id": None,
                         "custom_questions": None,
-                        "cooldown_days": 30
+                        "cooldown_days": 30,
+                        "log_new_applications": False
                     }
 
                 # Convert row to dictionary and parse custom_questions JSON if it exists
@@ -1012,6 +1070,8 @@ class ModApplicationCog(commands.Cog):
         # Get application settings
         settings = await self.get_application_settings(guild.id)
         review_channel_id = settings.get("review_channel_id")
+        log_channel_id = settings.get("log_channel_id")
+        log_new_applications = settings.get("log_new_applications", False)
 
         if not review_channel_id:
             return
@@ -1080,7 +1140,7 @@ class ModApplicationCog(commands.Cog):
             custom_id=f"view_application_{application['application_id']}"
         ))
 
-        # Send the notification
+        # Send the notification to the review channel
         try:
             await review_channel.send(
                 content=f"📝 New moderator application from {user.mention}",
@@ -1088,7 +1148,28 @@ class ModApplicationCog(commands.Cog):
                 view=view
             )
         except Exception as e:
-            logger.error(f"Error sending application notification: {e}")
+            logger.error(f"Error sending application notification to review channel: {e}")
+
+        # If log_new_applications is enabled and log_channel_id is set, also log to the log channel
+        if log_new_applications and log_channel_id:
+            log_channel = guild.get_channel(log_channel_id)
+            if log_channel:
+                try:
+                    # Create a simpler embed for the log channel
+                    log_embed = discord.Embed(
+                        title="New Moderator Application Submitted",
+                        description=f"A new moderator application has been submitted by {user.mention}.",
+                        color=discord.Color.blue(),
+                        timestamp=datetime.datetime.now()
+                    )
+                    log_embed.set_author(name=f"{user.name}", icon_url=user.display_avatar.url)
+                    log_embed.add_field(name="Application ID", value=application["application_id"], inline=True)
+                    log_embed.add_field(name="Status", value="PENDING", inline=True)
+                    log_embed.add_field(name="Submission Time", value=discord.utils.format_dt(datetime.datetime.now()), inline=True)
+
+                    await log_channel.send(embed=log_embed)
+                except Exception as e:
+                    logger.error(f"Error sending application notification to log channel: {e}")
 
     async def notify_application_status_change(self, guild: discord.Guild, user_id: int, status: APPLICATION_STATUS, reason: Optional[str] = None) -> None:
         """Notify the applicant about a status change"""
