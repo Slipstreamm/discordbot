@@ -3,6 +3,7 @@ import logging
 import asyncio
 import functools
 import concurrent.futures
+import discord
 from typing import Optional, List, Tuple, Any, Callable
 
 log = logging.getLogger(__name__)
@@ -381,3 +382,80 @@ async def get_guild_mod_logs(pool: asyncpg.Pool, guild_id: int, limit: int = 50)
             await pool.release(connection)
         except Exception as e:
             log.warning(f"Error releasing connection back to pool: {e}")
+
+async def log_action_safe(bot_instance, guild_id: int, target_user_id: int, action_type: str,
+                         reason: str, ai_details: dict, source: str = "AI_API") -> Optional[int]:
+    """
+    Thread-safe version of ModLogCog.log_action that ensures the operation runs in the bot's event loop.
+    This should be used when calling from API routes or other threads.
+
+    Args:
+        bot_instance: The bot instance
+        guild_id: The Discord guild ID
+        target_user_id: The target user's Discord ID
+        action_type: The type of moderation action (e.g., "BAN", "WARN")
+        reason: The reason for the action
+        ai_details: Dictionary containing AI-specific details
+        source: The source of the action (default: "AI_API")
+
+    Returns:
+        The case_id if successful, None otherwise
+    """
+    # Import here to avoid circular imports
+    from global_bot_accessor import get_bot_instance
+
+    # If bot_instance is not provided, try to get it from the global accessor
+    if bot_instance is None:
+        bot_instance = get_bot_instance()
+        if bot_instance is None:
+            log.error("Cannot log action safely: bot_instance is None and global accessor returned None")
+            return None
+
+    # Define the coroutine to run in the bot's event loop
+    async def _log_action_coro():
+        try:
+            # Get the guild object
+            guild = bot_instance.get_guild(guild_id)
+            if not guild:
+                log.error(f"Guild {guild_id} not found")
+                return None
+
+            # Get the ModLogCog instance
+            mod_log_cog = bot_instance.get_cog('ModLogCog')
+            if not mod_log_cog:
+                log.error("ModLogCog not found")
+                return None
+
+            # Create Discord objects for the users
+            AI_MODERATOR_ID = 0
+            target_user = discord.Object(id=target_user_id)
+            ai_moderator = discord.Object(id=AI_MODERATOR_ID)
+
+            # Call the log_action method
+            await mod_log_cog.log_action(
+                guild=guild,
+                moderator=ai_moderator,
+                target=target_user,
+                action_type=action_type,
+                reason=reason,
+                duration=None,
+                source=source,
+                ai_details=ai_details,
+                moderator_id_override=AI_MODERATOR_ID
+            )
+
+            # Get the case_id from the most recent log entry for this user
+            recent_logs = await get_user_mod_logs(bot_instance.pg_pool, guild_id, target_user_id, limit=1)
+            case_id = recent_logs[0]['case_id'] if recent_logs else None
+            return case_id
+
+        except Exception as e:
+            log.exception(f"Error in _log_action_coro: {e}")
+            return None
+
+    # If we're already in the bot's event loop, just run the coroutine directly
+    if asyncio.get_running_loop() == bot_instance.loop:
+        return await _log_action_coro()
+
+    # Otherwise, use the helper function to run in the bot's loop
+    return run_in_bot_loop(bot_instance, _log_action_coro)

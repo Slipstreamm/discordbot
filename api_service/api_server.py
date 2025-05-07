@@ -2081,23 +2081,33 @@ async def ai_moderation_action(
     # Add to moderation log
     try:
         from discordbot.db import mod_log_db
-        from discordbot.cogs.mod_log_cog import ModLogCog
         bot = get_bot_instance()
 
-        # First, get the guild object from the bot
-        guild = bot.get_guild(action.guild_id)
-        if not guild:
-            log.error(f"Failed to get guild object for guild ID {action.guild_id}")
-            return {
-                "success": False,
-                "error": "Failed to get guild object",
-                "message": "The guild could not be found"
-            }
+        # Create AI details dictionary with all relevant information
+        ai_details = {
+            "rule_violated": action.rule_violated,
+            "reasoning": action.reasoning,
+            "ai_model": action.ai_model,
+            "message_content": action.message_content,
+            "message_link": action.message_link,
+            "channel_name": action.channel_name,
+            "attachments": action.attachments
+        }
 
-        # Get the ModLogCog instance
-        mod_log_cog = bot.get_cog('ModLogCog')
-        if not mod_log_cog:
-            log.error(f"ModLogCog not found, falling back to database-only logging")
+        # Use our new thread-safe function to log the action
+        case_id = await mod_log_db.log_action_safe(
+            bot_instance=bot,
+            guild_id=action.guild_id,
+            target_user_id=action.user_id,
+            action_type=action_type,
+            reason=reason,
+            ai_details=ai_details,
+            source="AI_API"
+        )
+
+        # If the thread-safe function failed, fall back to just adding to the database
+        if case_id is None:
+            log.warning(f"Failed to log action using thread-safe function, falling back to database-only logging")
 
             # Use the thread-safe version of add_mod_log as fallback
             case_id = await mod_log_db.add_mod_log_safe(
@@ -2117,42 +2127,6 @@ async def ai_moderation_action(
                     "error": "Failed to add moderation log entry to database",
                     "message": "The action was recorded but could not be added to the moderation logs"
                 }
-        else:
-            # Use the ModLogCog to log the action and automatically post to the mod log channel
-            # Create a discord.Object for the target user since we only have the ID
-            target_user = discord.Object(id=action.user_id)
-
-            # Create a discord.Object for the AI moderator
-            ai_moderator = discord.Object(id=AI_MODERATOR_ID)
-
-            # Create AI details dictionary with all relevant information
-            ai_details = {
-                "rule_violated": action.rule_violated,
-                "reasoning": action.reasoning,
-                "ai_model": action.ai_model,
-                "message_content": action.message_content,
-                "message_link": action.message_link,
-                "channel_name": action.channel_name,
-                "attachments": action.attachments
-            }
-
-            # Log the action using the ModLogCog
-            await mod_log_cog.log_action(
-                guild=guild,
-                moderator=ai_moderator,
-                target=target_user,
-                action_type=action_type,
-                reason=reason,
-                duration=None,
-                source="AI_API",
-                ai_details=ai_details,
-                moderator_id_override=AI_MODERATOR_ID
-            )
-
-            # Get the case_id from the most recent log entry for this user
-            # This is a bit of a hack, but it should work in most cases
-            recent_logs = await mod_log_db.get_user_mod_logs(bot.pg_pool, action.guild_id, action.user_id, limit=1)
-            case_id = recent_logs[0]['case_id'] if recent_logs else None
 
         # If we have a case_id and message details, update the log entry
         if case_id and action.message_id and action.channel_id:
