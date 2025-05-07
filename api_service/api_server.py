@@ -416,8 +416,7 @@ async def teapot_override(request: Request, exc: StarletteHTTPException):
 
 @app.get("/robots.txt", response_class=PlainTextResponse)
 async def robots_txt():
-    return """
-User-agent: *
+    return """User-agent: *
 Disallow: /
 """
 
