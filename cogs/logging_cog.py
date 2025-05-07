@@ -868,7 +868,7 @@ class LoggingCog(commands.Cog):
         await self._send_log_embed(guild, embed)
 
     @commands.Cog.listener()
-    async def on_reaction_clear(self, message: discord.Message, reactions: list[discord.Reaction]):
+    async def on_reaction_clear(self, message: discord.Message, _: list[discord.Reaction]):
         guild = message.guild
         if not guild: return # Should not happen in guilds but safety check
 
@@ -1056,7 +1056,9 @@ class LoggingCog(commands.Cog):
         channel = invite.channel
         desc = f"Invite `{invite.code}` created for {channel.mention if channel else 'Unknown Channel'}"
         if invite.max_age:
-            expires_at = invite.created_at + datetime.timedelta(seconds=invite.max_age)
+            # Use invite.created_at if available, otherwise fall back to current time
+            created_time = invite.created_at if invite.created_at is not None else discord.utils.utcnow()
+            expires_at = created_time + datetime.timedelta(seconds=invite.max_age)
             desc += f"\nExpires: {discord.utils.format_dt(expires_at, style='R')}"
         if invite.max_uses:
             desc += f"\nMax Uses: {invite.max_uses}"
@@ -1251,7 +1253,6 @@ class LoggingCog(commands.Cog):
         target = entry.target # User/Channel/Role/Message affected
         reason = entry.reason
         action_desc = ""
-        target_desc = ""
         color = discord.Color.dark_grey()
         title = f"🛡️ Audit Log: {str(entry.action).replace('_', ' ').title()}"
 
@@ -1501,7 +1502,9 @@ class LoggingCog(commands.Cog):
              channel = invite.channel
              desc = f"Invite `{invite.code}` created for {channel.mention if channel else 'Unknown Channel'}"
              if invite.max_age:
-                 expires_at = invite.created_at + datetime.timedelta(seconds=invite.max_age)
+                 # Use invite.created_at if available, otherwise fall back to current time
+                 created_time = invite.created_at if invite.created_at is not None else discord.utils.utcnow()
+                 expires_at = created_time + datetime.timedelta(seconds=invite.max_age)
                  desc += f"\nExpires: {discord.utils.format_dt(expires_at, style='R')}"
              if invite.max_uses: desc += f"\nMax Uses: {invite.max_uses}"
              action_desc = f"{user.mention} created an invite:\n{desc}"
