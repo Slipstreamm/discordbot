@@ -371,8 +371,23 @@ class ModLogCog(commands.Cog):
              return
 
         # Fetch user objects if possible to show names
-        moderator = await self.bot.fetch_user(record['moderator_id'])
-        target = await self.bot.fetch_user(record['target_user_id'])
+        # Special handling for AI moderator (ID 0) to avoid Discord API 404 error
+        if record['moderator_id'] == 0:
+            # AI moderator uses ID 0, which is not a valid Discord user ID
+            moderator = None
+        else:
+            try:
+                moderator = await self.bot.fetch_user(record['moderator_id'])
+            except discord.NotFound:
+                log.warning(f"Moderator with ID {record['moderator_id']} not found when viewing case {case_id}")
+                moderator = None
+
+        try:
+            target = await self.bot.fetch_user(record['target_user_id'])
+        except discord.NotFound:
+            log.warning(f"Target user with ID {record['target_user_id']} not found when viewing case {case_id}")
+            target = None
+
         duration = datetime.timedelta(seconds=record['duration_seconds']) if record['duration_seconds'] else None
 
         embed = self._format_log_embed(
@@ -424,8 +439,23 @@ class ModLogCog(commands.Cog):
                     log_message = await log_channel.fetch_message(original_record['log_message_id'])
                     if log_message and log_message.author == self.bot.user and log_message.embeds:
                         # Re-fetch users/duration to reconstruct embed accurately
-                        moderator = await self.bot.fetch_user(original_record['moderator_id'])
-                        target = await self.bot.fetch_user(original_record['target_user_id'])
+                        # Special handling for AI moderator (ID 0) to avoid Discord API 404 error
+                        if original_record['moderator_id'] == 0:
+                            # AI moderator uses ID 0, which is not a valid Discord user ID
+                            moderator = None
+                        else:
+                            try:
+                                moderator = await self.bot.fetch_user(original_record['moderator_id'])
+                            except discord.NotFound:
+                                log.warning(f"Moderator with ID {original_record['moderator_id']} not found when updating case {case_id}")
+                                moderator = None
+
+                        try:
+                            target = await self.bot.fetch_user(original_record['target_user_id'])
+                        except discord.NotFound:
+                            log.warning(f"Target user with ID {original_record['target_user_id']} not found when updating case {case_id}")
+                            target = None
+
                         duration = datetime.timedelta(seconds=original_record['duration_seconds']) if original_record['duration_seconds'] else None
 
                         new_embed = self._format_log_embed(

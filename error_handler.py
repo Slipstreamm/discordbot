@@ -292,7 +292,33 @@ async def handle_error(ctx_or_interaction, error):
     # Only send detailed error DM if the command runner is the owner
     if is_owner:
         try:
-            owner = await ctx_or_interaction.bot.fetch_user(user_id)
+            # Get the bot instance - handle both Context and Interaction objects
+            bot_instance = None
+            if isinstance(ctx_or_interaction, commands.Context):
+                bot_instance = ctx_or_interaction.bot
+            elif hasattr(ctx_or_interaction, 'bot'):
+                bot_instance = ctx_or_interaction.bot
+            elif hasattr(ctx_or_interaction, 'client'):
+                bot_instance = ctx_or_interaction.client
+
+            # If we couldn't get the bot instance, try to get it from the global accessor
+            if not bot_instance:
+                try:
+                    # Import here to avoid circular imports
+                    from global_bot_accessor import get_bot_instance
+                    bot_instance = get_bot_instance()
+                except ImportError:
+                    print("Failed to import global_bot_accessor")
+                except Exception as e:
+                    print(f"Error getting bot instance from global_bot_accessor: {e}")
+
+            # If we still don't have a bot instance, we can't send a DM
+            if not bot_instance:
+                print(f"Failed to send error DM to owner: No bot instance available")
+                return
+
+            # Now fetch the owner user
+            owner = await bot_instance.fetch_user(user_id)
             if owner:
                 full_error = f"Full error details:\n```\n{str(error)}\n"
                 if hasattr(error, '__dict__'):
