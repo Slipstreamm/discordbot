@@ -18,7 +18,7 @@ class ModLogCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         # Settings manager functions are used directly from the imported module
-        self.pool: asyncpg.Pool = bot.pool # Assuming pool is attached to bot
+        self.pool: asyncpg.Pool = bot.pg_pool # Assuming pool is attached to bot
 
         # Create the main command group for this cog
         self.modlog_group = app_commands.Group(
@@ -455,8 +455,8 @@ class ModLogCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         # Ensure the pool and settings_manager are available
-        if not hasattr(self.bot, 'pool') or not self.bot.pool:
-            log.error("Database pool not found on bot object. ModLogCog requires bot.pool.")
+        if not hasattr(self.bot, 'pg_pool') or not self.bot.pg_pool:
+            log.error("Database pool not found on bot object. ModLogCog requires bot.pg_pool.")
             # Consider preventing the cog from loading fully or raising an error
         # Settings manager is imported directly, no need to check on bot object
 
@@ -466,7 +466,7 @@ class ModLogCog(commands.Cog):
 async def setup(bot: commands.Bot):
     # Ensure dependencies (pool) are ready before adding cog
     # Settings manager is imported directly within the cog
-    if hasattr(bot, 'pool'):
+    if hasattr(bot, 'pg_pool') and bot.pg_pool:
         await bot.add_cog(ModLogCog(bot))
     else:
-        log.error("Failed to load ModLogCog: bot.pool not initialized.")
+        log.error("Failed to load ModLogCog: bot.pg_pool not initialized.")
