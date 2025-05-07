@@ -234,16 +234,16 @@ class ModApplicationCog(commands.Cog):
         self.bot = bot
 
         # Create the main command group for this cog
-        self.applications_group = app_commands.Group(
-            name="applications",
-            description="Commands for managing moderator applications"
+        self.modapp_group = app_commands.Group(
+            name="modapp",
+            description="Moderator application system commands"
         )
 
         # Register commands
         self.register_commands()
 
         # Add command group to the bot's tree
-        self.bot.tree.add_command(self.applications_group)
+        self.bot.tree.add_command(self.modapp_group)
 
     async def cog_load(self):
         """Setup database tables when cog is loaded"""
@@ -261,117 +261,118 @@ class ModApplicationCog(commands.Cog):
     def register_commands(self):
         """Register all commands for this cog"""
 
-        # --- Apply Command (Standalone) ---
+        # --- Apply Command ---
         apply_command = app_commands.Command(
             name="apply",
             description="Apply to become a moderator for this server",
-            callback=self.apply_callback
+            callback=self.apply_callback,
+            parent=self.modapp_group
         )
-        self.bot.tree.add_command(apply_command)
+        self.modapp_group.add_command(apply_command)
 
         # --- List Applications Command ---
         list_command = app_commands.Command(
             name="list",
             description="List all moderator applications",
             callback=self.list_applications_callback,
-            parent=self.applications_group
+            parent=self.modapp_group
         )
         app_commands.describe(
             status="Filter applications by status"
         )(list_command)
-        self.applications_group.add_command(list_command)
+        self.modapp_group.add_command(list_command)
 
         # --- View Application Command ---
         view_command = app_commands.Command(
             name="view",
             description="View details of a specific application",
             callback=self.view_application_callback,
-            parent=self.applications_group
+            parent=self.modapp_group
         )
         app_commands.describe(
             application_id="The ID of the application to view"
         )(view_command)
-        self.applications_group.add_command(view_command)
+        self.modapp_group.add_command(view_command)
 
-        # --- Settings Command Group ---
-        settings_group = app_commands.Group(
-            name="settings",
+        # --- Config Command Group ---
+        config_group = app_commands.Group(
+            name="config",
             description="Configure moderator application settings",
-            parent=self.applications_group
+            parent=self.modapp_group
         )
-        self.applications_group.add_command(settings_group)
+        self.modapp_group.add_command(config_group)
 
         # --- Enable/Disable Command ---
         toggle_command = app_commands.Command(
             name="toggle",
             description="Enable or disable the application system",
             callback=self.toggle_applications_callback,
-            parent=settings_group
+            parent=config_group
         )
         app_commands.describe(
             enabled="Whether applications should be enabled or disabled"
         )(toggle_command)
-        settings_group.add_command(toggle_command)
+        config_group.add_command(toggle_command)
 
         # --- Set Review Channel Command ---
         review_channel_command = app_commands.Command(
             name="reviewchannel",
             description="Set the channel where new applications will be posted for review",
             callback=self.set_review_channel_callback,
-            parent=settings_group
+            parent=config_group
         )
         app_commands.describe(
             channel="The channel where applications will be posted for review"
         )(review_channel_command)
-        settings_group.add_command(review_channel_command)
+        config_group.add_command(review_channel_command)
 
         # --- Set Log Channel Command ---
         log_channel_command = app_commands.Command(
             name="logchannel",
             description="Set the channel where application activity will be logged",
             callback=self.set_log_channel_callback,
-            parent=settings_group
+            parent=config_group
         )
         app_commands.describe(
             channel="The channel where application activity will be logged"
         )(log_channel_command)
-        settings_group.add_command(log_channel_command)
+        config_group.add_command(log_channel_command)
 
         # --- Set Reviewer Role Command ---
         reviewer_role_command = app_commands.Command(
             name="reviewerrole",
             description="Set the role that can review applications",
             callback=self.set_reviewer_role_callback,
-            parent=settings_group
+            parent=config_group
         )
         app_commands.describe(
             role="The role that can review applications"
         )(reviewer_role_command)
-        settings_group.add_command(reviewer_role_command)
+        config_group.add_command(reviewer_role_command)
 
         # --- Set Required Role Command ---
         required_role_command = app_commands.Command(
             name="requiredrole",
             description="Set the role required to apply (optional)",
             callback=self.set_required_role_callback,
-            parent=settings_group
+            parent=config_group
         )
         app_commands.describe(
             role="The role required to apply (or None to allow anyone)"
         )(required_role_command)
-        settings_group.add_command(required_role_command)
+        config_group.add_command(required_role_command)
 
         # --- Set Cooldown Command ---
         cooldown_command = app_commands.Command(
             name="cooldown",
             description="Set the cooldown period between rejected applications",
             callback=self.set_cooldown_callback,
-            parent=settings_group
+            parent=config_group
         )
         app_commands.describe(
             days="Number of days a user must wait after rejection before applying again"
         )(cooldown_command)
-        settings_group.add_command(cooldown_command)
+        config_group.add_command(cooldown_command)
 
     # --- Command Callbacks ---
 

@@ -5,7 +5,7 @@ import asyncio
 from typing import Dict, List, Optional, Any
 from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response, status, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -413,6 +413,13 @@ async def teapot_override(request: Request, exc: StarletteHTTPException):
         """
         return HTMLResponse(content=html_content, status_code=418)
     raise exc
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots_txt():
+    return """
+User-agent: *
+Disallow: /
+"""
 
 # Add Session Middleware for Dashboard Auth
 # Uses DASHBOARD_SECRET_KEY from settings
