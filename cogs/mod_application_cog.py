@@ -54,14 +54,14 @@ DEFAULT_QUESTIONS = [
     },
     {
         "id": "experience",
-        "label": "Do you have any previous moderation experience?",
+        "label": "Previous moderation experience?",
         "style": discord.TextStyle.paragraph,
         "required": True,
         "max_length": 1000
     },
     {
         "id": "time_available",
-        "label": "How many hours per week can you dedicate to moderating?",
+        "label": "Hours per week available for moderation?",
         "style": discord.TextStyle.short,
         "required": True,
         "max_length": 50
@@ -1075,7 +1075,7 @@ class ModApplicationCog(commands.Cog):
         # Add view details button
         view = discord.ui.View()
         view.add_item(discord.ui.Button(
-            label="View Full Application",
+            label="View Application",
             style=discord.ButtonStyle.primary,
             custom_id=f"view_application_{application['application_id']}"
         ))
