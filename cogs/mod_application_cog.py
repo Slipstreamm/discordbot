@@ -294,9 +294,9 @@ class ModApplicationCog(commands.Cog):
         )(view_command)
         self.modapp_group.add_command(view_command)
 
-        # --- Settings Command Group ---
+        # --- Configure Command Group ---
         config_group = app_commands.Group(
-            name="settings",
+            name="configure",
             description="Configure moderator application settings",
             parent=self.modapp_group
         )
@@ -425,7 +425,7 @@ class ModApplicationCog(commands.Cog):
         await interaction.response.send_modal(ModApplicationModal(self, questions))
 
     async def list_applications_callback(self, interaction: discord.Interaction, status: Optional[str] = None):
-        """Handle the /applications list command"""
+        """Handle the /modapp list command"""
         # Check if user has permission to view applications
         if not await self.check_reviewer_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -470,14 +470,14 @@ class ModApplicationCog(commands.Cog):
             # Add field for this application
             embed.add_field(
                 name=f"Application #{app['application_id']} - {app['status']}",
-                value=f"From: {user_display}\nSubmitted: {submission_date}\nUse `/applications view {app['application_id']}` to view details",
+                value=f"From: {user_display}\nSubmitted: {submission_date}\nUse `/modapp view {app['application_id']}` to view details",
                 inline=False
             )
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     async def view_application_callback(self, interaction: discord.Interaction, application_id: int):
-        """Handle the /applications view command"""
+        """Handle the /modapp view command"""
         # Check if user has permission to view applications
         if not await self.check_reviewer_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -542,7 +542,7 @@ class ModApplicationCog(commands.Cog):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     async def toggle_applications_callback(self, interaction: discord.Interaction, enabled: bool):
-        """Handle the /applications settings toggle command"""
+        """Handle the /modapp configure toggle command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -567,7 +567,7 @@ class ModApplicationCog(commands.Cog):
             )
 
     async def set_review_channel_callback(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        """Handle the /applications settings reviewchannel command"""
+        """Handle the /modapp configure reviewchannel command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -591,7 +591,7 @@ class ModApplicationCog(commands.Cog):
             )
 
     async def set_log_channel_callback(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        """Handle the /applications settings logchannel command"""
+        """Handle the /modapp configure logchannel command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -615,7 +615,7 @@ class ModApplicationCog(commands.Cog):
             )
 
     async def set_reviewer_role_callback(self, interaction: discord.Interaction, role: discord.Role):
-        """Handle the /applications settings reviewerrole command"""
+        """Handle the /modapp configure reviewerrole command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -639,7 +639,7 @@ class ModApplicationCog(commands.Cog):
             )
 
     async def set_required_role_callback(self, interaction: discord.Interaction, role: Optional[discord.Role] = None):
-        """Handle the /applications settings requiredrole command"""
+        """Handle the /modapp configure requiredrole command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
@@ -670,7 +670,7 @@ class ModApplicationCog(commands.Cog):
             )
 
     async def set_cooldown_callback(self, interaction: discord.Interaction, days: int):
-        """Handle the /applications settings cooldown command"""
+        """Handle the /modapp configure cooldown command"""
         # Check if user has permission to manage applications
         if not await self.check_admin_permission(interaction.guild_id, interaction.user.id):
             await interaction.response.send_message(
