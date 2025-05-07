@@ -345,11 +345,13 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
             )
             log.info("Redis pool created.")
 
-            if settings_manager:
-                settings_manager.set_bot_pools(pg_pool, redis_pool)
-                log.info("Database and cache connection pools set in settings_manager.")
-            else:
-                log.error("settings_manager not available to set pools.")
+            # if settings_manager:
+            #     settings_manager.set_bot_pools(pg_pool, redis_pool) # DO NOT set global pools from API server
+            #     log.info("Database and cache connection pools set in settings_manager.")
+            # else:
+            #     log.error("settings_manager not available to set pools.")
+            if not settings_manager:
+                 log.error("settings_manager not available. API endpoints requiring it may fail or need pool passing.")
 
         except Exception as e:
             log.exception(f"Failed to initialize or set connection pools: {e}")
