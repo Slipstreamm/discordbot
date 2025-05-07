@@ -22,7 +22,7 @@ from utils import reload_script
 import settings_manager # Import the settings manager
 from db import mod_log_db # Import the new mod log db functions
 import command_customization # Import command customization utilities
-from discordbot.global_bot_accessor import set_bot_instance # Import the new accessor
+from global_bot_accessor import set_bot_instance # Import the new accessor
 
 # Import the unified API service runner and the sync API module
 import sys
