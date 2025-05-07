@@ -294,9 +294,9 @@ class ModApplicationCog(commands.Cog):
         )(view_command)
         self.modapp_group.add_command(view_command)
 
-        # --- Config Command Group ---
+        # --- Settings Command Group ---
         config_group = app_commands.Group(
-            name="config",
+            name="settings",
             description="Configure moderator application settings",
             parent=self.modapp_group
         )
