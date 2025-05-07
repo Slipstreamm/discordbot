@@ -36,16 +36,18 @@ def set_bot_pools(pg_pool_instance, redis_pool_instance):
     after it has initialized the pools on the correct event loop.
     """
     global _active_pg_pool, _active_redis_pool
+    log.info(f"settings_manager.set_bot_pools called. PG Pool Instance: {pg_pool_instance}, Redis Pool Instance: {redis_pool_instance}")
     _active_pg_pool = pg_pool_instance
     _active_redis_pool = redis_pool_instance
+    current_loop = asyncio.get_event_loop()
     if _active_pg_pool:
-        log.info(f"settings_manager: PostgreSQL pool set (Loop: {asyncio.get_event_loop()}).")
+        log.info(f"settings_manager: Global PostgreSQL pool set. ID: {id(_active_pg_pool)}, Loop: {current_loop}, Pool Loop: {getattr(_active_pg_pool, '_loop', 'N/A')}")
     else:
-        log.warning("settings_manager: PostgreSQL pool was not set.")
+        log.warning("settings_manager: Global PostgreSQL pool was NOT set (received None).")
     if _active_redis_pool:
-        log.info(f"settings_manager: Redis pool set (Loop: {asyncio.get_event_loop()}).")
+        log.info(f"settings_manager: Global Redis pool set. ID: {id(_active_redis_pool)}, Loop: {current_loop}") # Redis pool might not have _loop
     else:
-        log.warning("settings_manager: Redis pool was not set.")
+        log.warning("settings_manager: Global Redis pool was NOT set (received None).")
 
 # initialize_pools and close_pools are removed as pool lifecycle is managed by the bot.
 
@@ -247,8 +249,9 @@ async def initialize_database():
 
 async def get_starboard_settings(guild_id: int):
     """Gets the starboard settings for a guild."""
+    log.debug(f"get_starboard_settings: _active_pg_pool is {id(_active_pg_pool)}, _active_redis_pool is {id(_active_redis_pool)}")
     if not _active_pg_pool:
-        log.warning(f"PostgreSQL pool not initialized in settings_manager, returning None for starboard settings.")
+        log.warning(f"PostgreSQL pool not initialized in settings_manager (ID: {id(_active_pg_pool)}), returning None for starboard settings for guild {guild_id}.")
         return None
 
     try:
@@ -298,8 +301,9 @@ async def update_starboard_settings(guild_id: int, **kwargs):
     Returns:
         bool: True if successful, False otherwise
     """
+    log.info(f"update_starboard_settings called for guild {guild_id}. Current _active_pg_pool ID: {id(_active_pg_pool)}")
     if not _active_pg_pool:
-        log.error(f"PostgreSQL pool not initialized in settings_manager, cannot update starboard settings.")
+        log.error(f"PostgreSQL pool not initialized in settings_manager (ID: {id(_active_pg_pool)}), cannot update starboard settings for guild {guild_id}.")
         return False
 
     valid_keys = {'enabled', 'star_emoji', 'threshold', 'starboard_channel_id', 'ignore_bots', 'self_star'}
@@ -2117,8 +2121,10 @@ async def set_mod_log_channel_id(guild_id: int, channel_id: int | None) -> bool:
 # --- Getter functions for direct pool access if absolutely needed ---
 def get_pg_pool():
     """Returns the active PostgreSQL pool instance."""
+    log.debug(f"get_pg_pool called. Returning _active_pg_pool with ID: {id(_active_pg_pool)}")
     return _active_pg_pool
 
 def get_redis_pool():
     """Returns the active Redis pool instance."""
+    log.debug(f"get_redis_pool called. Returning _active_redis_pool with ID: {id(_active_redis_pool)}")
     return _active_redis_pool
