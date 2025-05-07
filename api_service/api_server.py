@@ -577,7 +577,7 @@ async def root():
 
 @app.get("/discordbot")
 async def root():
-    return RedirectResponse(url="https://discord.gg/gebDRq6u", status_code=301)
+    return RedirectResponse(url="https://discord.com/oauth2/authorize?client_id=1360717457852993576", status_code=301)
 
 @app.get("/ip")
 async def ip(request: Request):
