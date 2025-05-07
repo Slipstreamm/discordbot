@@ -2113,3 +2113,12 @@ async def set_mod_log_channel_id(guild_id: int, channel_id: int | None) -> bool:
     """Sets the channel ID for the integrated moderation log. Set to None to disable."""
     value_to_set = str(channel_id) if channel_id is not None else None
     return await set_setting(guild_id, 'mod_log_channel_id', value_to_set)
+
+# --- Getter functions for direct pool access if absolutely needed ---
+def get_pg_pool():
+    """Returns the active PostgreSQL pool instance."""
+    return _active_pg_pool
+
+def get_redis_pool():
+    """Returns the active Redis pool instance."""
+    return _active_redis_pool

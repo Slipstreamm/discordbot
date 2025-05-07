@@ -324,7 +324,7 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
             try:
                 # Initialize the pools in the settings_manager module
                 # Close any existing pools first to ensure clean state
-                if settings_manager.pg_pool or settings_manager.redis_pool:
+                if settings_manager.get_pg_pool() or settings_manager.get_redis_pool():
                     log.info("Closing existing database pools before reinitializing...")
                     await settings_manager.close_pools()
 
@@ -359,7 +359,7 @@ async def lifespan(_: FastAPI):  # Underscore indicates unused but required para
     log.info("Existing database saved.")
 
     # Close database/cache pools if they were initialized
-    if settings_manager and (settings_manager.pg_pool or settings_manager.redis_pool):
+    if settings_manager and (settings_manager.get_pg_pool() or settings_manager.get_redis_pool()):
         log.info("Closing database and cache connection pools for API server...")
         await settings_manager.close_pools()
         log.info("Database and cache connection pools closed for API server.")
@@ -577,7 +577,7 @@ async def get_guild_cogs_no_deps(guild_id: int):
             log.warning(f"Could not import bot instance: {e}")
 
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             return {"error": "Settings manager not available", "cogs": []}
 
         # Get cogs from the database directly if bot is not available
@@ -875,7 +875,7 @@ async def get_guild_cogs_direct(
             log.warning(f"Could not import bot instance: {e}")
 
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -1029,7 +1029,7 @@ async def update_cog_status_direct(
     """Enable or disable a cog for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -1094,7 +1094,7 @@ async def update_command_status_direct(
     """Enable or disable a command for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -1816,8 +1816,8 @@ async def dashboard_get_guild_settings(
     known_cogs_in_db = {}
     try:
         # Need to acquire connection from pool managed by settings_manager
-        if settings_manager.pg_pool:
-             async with settings_manager.pg_pool.acquire() as conn:
+        if settings_manager.get_pg_pool():
+             async with settings_manager.get_pg_pool().acquire() as conn:
                 records = await conn.fetch("SELECT cog_name, enabled FROM enabled_cogs WHERE guild_id = $1", guild_id)
                 for record in records:
                     known_cogs_in_db[record['cog_name']] = record['enabled']
@@ -1830,8 +1830,8 @@ async def dashboard_get_guild_settings(
     # Fetch command permissions
     permissions_map: Dict[str, List[str]] = {}
     try:
-        if settings_manager.pg_pool:
-            async with settings_manager.pg_pool.acquire() as conn:
+        if settings_manager.get_pg_pool():
+            async with settings_manager.get_pg_pool().acquire() as conn:
                 records = await conn.fetch(
                     "SELECT command_name, allowed_role_id FROM command_permissions WHERE guild_id = $1 ORDER BY command_name, allowed_role_id",
                     guild_id
@@ -1926,8 +1926,8 @@ async def dashboard_get_all_guild_command_permissions_map(
     log.info(f"Dashboard: Fetching all command permissions map for guild {guild_id} requested by user {current_user['user_id']}")
     permissions_map: Dict[str, List[str]] = {}
     try:
-        if settings_manager.pg_pool:
-            async with settings_manager.pg_pool.acquire() as conn:
+        if settings_manager.get_pg_pool():
+            async with settings_manager.get_pg_pool().acquire() as conn:
                 records = await conn.fetch(
                     "SELECT command_name, allowed_role_id FROM command_permissions WHERE guild_id = $1 ORDER BY command_name, allowed_role_id",
                     guild_id
@@ -1960,8 +1960,8 @@ async def dashboard_get_all_guild_command_permissions(
     log.info(f"Dashboard: Fetching all command permissions for guild {guild_id} requested by user {current_user['user_id']}")
     permissions_list = []
     try:
-        if settings_manager.pg_pool:
-            async with settings_manager.pg_pool.acquire() as conn:
+        if settings_manager.get_pg_pool():
+            async with settings_manager.get_pg_pool().acquire() as conn:
                 records = await conn.fetch(
                     "SELECT command_name, allowed_role_id FROM command_permissions WHERE guild_id = $1 ORDER BY command_name, allowed_role_id",
                     guild_id
@@ -2025,7 +2025,7 @@ async def ai_moderation_action(
         raise HTTPException(status_code=400, detail="guild_id in path does not match payload")
 
     # Insert into moderation log
-    if not settings_manager or not settings_manager.pg_pool:
+    if not settings_manager or not settings_manager.get_pg_pool():
         log.error("settings_manager or pg_pool not available for AI moderation logging.")
         raise HTTPException(status_code=503, detail="Moderation logging unavailable")
 
@@ -2040,7 +2040,7 @@ async def ai_moderation_action(
     try:
         from discordbot.db import mod_log_db
         case_id = await mod_log_db.add_mod_log(
-            settings_manager.pg_pool,
+            settings_manager.get_pg_pool(),
             guild_id=action.guild_id,
             moderator_id=AI_MODERATOR_ID,
             target_user_id=action.user_id,
@@ -2051,7 +2051,7 @@ async def ai_moderation_action(
         # Optionally update with message/channel info
         if case_id and action.message_id and action.channel_id:
             await mod_log_db.update_mod_log_message_details(
-                settings_manager.pg_pool,
+                settings_manager.get_pg_pool(),
                 case_id=case_id,
                 message_id=action.message_id,
                 channel_id=action.channel_id

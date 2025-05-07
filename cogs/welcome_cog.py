@@ -228,7 +228,7 @@ class WelcomeCog(commands.Cog):
 async def setup(bot: commands.Bot):
     # Ensure pools are initialized before adding the cog
     print("WelcomeCog setup function called!")
-    if settings_manager.pg_pool is None or settings_manager.redis_pool is None:
+    if settings_manager.get_pg_pool() is None or settings_manager.get_redis_pool() is None:
         log.warning("Settings Manager pools not initialized before loading WelcomeCog. Attempting initialization.")
         print("WelcomeCog: Settings Manager pools not initialized, attempting initialization...")
         try:

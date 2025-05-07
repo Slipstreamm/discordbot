@@ -213,7 +213,7 @@ async def get_command_customizations(
     """Get all command customizations for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -268,7 +268,7 @@ async def set_command_customization(
     """Set a custom name for a command in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -322,7 +322,7 @@ async def set_group_customization(
     """Set a custom name for a command group in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -376,7 +376,7 @@ async def add_command_alias(
     """Add an alias for a command in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -429,7 +429,7 @@ async def remove_command_alias(
     """Remove an alias for a command in a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -468,7 +468,7 @@ async def get_guild_settings(
     """Get settings for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -563,7 +563,7 @@ async def update_guild_settings(
     """Update settings for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -1034,7 +1034,7 @@ async def update_cog_status_redirect(
 
                 # Fall back to direct implementation
                 # Check if settings_manager is available
-                if not settings_manager or not settings_manager.pg_pool:
+                if not settings_manager or not settings_manager.get_pg_pool():
                     raise HTTPException(
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         detail="Settings manager not available"
@@ -1125,7 +1125,7 @@ async def update_command_status_redirect(
 
                 # Fall back to direct implementation
                 # Check if settings_manager is available
-                if not settings_manager or not settings_manager.pg_pool:
+                if not settings_manager or not settings_manager.get_pg_pool():
                     raise HTTPException(
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         detail="Settings manager not available"

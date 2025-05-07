@@ -514,7 +514,7 @@ class StarboardCog(commands.Cog):
                 return
 
             # Get a connection to the database
-            conn = await asyncio.wait_for(settings_manager.pg_pool.acquire(), timeout=5.0)
+            conn = await asyncio.wait_for(settings_manager.get_pg_pool().acquire(), timeout=5.0)
             try:
                 # Get the total number of entries
                 total_entries = await conn.fetchval(
@@ -566,7 +566,7 @@ class StarboardCog(commands.Cog):
                 await ctx.send(embed=embed)
             finally:
                 # Release the connection
-                await settings_manager.pg_pool.release(conn)
+                await settings_manager.get_pg_pool().release(conn)
         except Exception as e:
             log.exception(f"Error getting starboard statistics: {e}")
             await ctx.send(f"❌ An error occurred while getting starboard statistics: {str(e)}")

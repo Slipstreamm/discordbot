@@ -106,7 +106,7 @@ async def update_cog_status(
     """Enable or disable a cog for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
@@ -168,7 +168,7 @@ async def update_command_status(
     """Enable or disable a command for a guild."""
     try:
         # Check if settings_manager is available
-        if not settings_manager or not settings_manager.pg_pool:
+        if not settings_manager or not settings_manager.get_pg_pool():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Settings manager not available"
