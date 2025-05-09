@@ -33,7 +33,7 @@ def run_unified_api():
         if ssl_available:
             print(f"Using SSL with certificates at {ssl_cert} and {ssl_key}")
             uvicorn.run(
-                "api_server:app",
+                "api_service.api_server:app",
                 host=bind_host,
                 port=api_port,
                 log_level="debug",
@@ -43,7 +43,7 @@ def run_unified_api():
         else:
             print("SSL certificates not found or not configured. Starting without SSL (development mode)")
             uvicorn.run(
-                "api_server:app",
+                "api_service.api_server:app",
                 host=bind_host,
                 port=api_port,
                 log_level="debug"
