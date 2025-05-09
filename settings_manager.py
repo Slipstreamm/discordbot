@@ -2254,6 +2254,7 @@ async def get_monitored_repository_by_id(repo_db_id: int) -> Dict | None:
                 "SELECT * FROM git_monitored_repositories WHERE id = $1",
                 repo_db_id
             )
+            print(f"Grep this line: {dict(record)}")
             return dict(record) if record else None
     except Exception as e:
         log.exception(f"Database error getting monitored repository by ID {repo_db_id}: {e}")
