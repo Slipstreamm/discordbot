@@ -1413,36 +1413,67 @@ class LoggingCog(commands.Cog):
                  changes.append(f"Bitrate: `{entry.before.bitrate}` → `{entry.after.bitrate}`")
              # Process detailed changes from entry.changes
              detailed_changes = []
-             for change in entry.changes:
-                 attr = change.attribute
-                 before_val = change.before
-                 after_val = change.after
-                 if attr == 'name': detailed_changes.append(f"Name: `{before_val}` → `{after_val}`")
-                 elif attr == 'topic': detailed_changes.append(f"Topic: `{before_val or 'None'}` → `{after_val or 'None'}`")
-                 elif attr == 'nsfw': detailed_changes.append(f"NSFW: `{before_val}` → `{after_val}`")
-                 elif attr == 'slowmode_delay': detailed_changes.append(f"Slowmode: `{before_val}s` → `{after_val}s`")
-                 elif attr == 'bitrate': detailed_changes.append(f"Bitrate: `{before_val}` → `{after_val}`")
-                 elif attr == 'user_limit': detailed_changes.append(f"User Limit: `{before_val}` → `{after_val}`")
-                 elif attr == 'position': detailed_changes.append(f"Position: `{before_val}` → `{after_val}`")
-                 elif attr == 'category': detailed_changes.append(f"Category: {getattr(before_val, 'mention', 'None')} → {getattr(after_val, 'mention', 'None')}")
-                 elif attr == 'permission_overwrites':
-                     # Audit log gives overwrite target ID and type directly in the change object
-                     ow_target_id = getattr(change.target, 'id', None) # Target of the overwrite change
-                     ow_target_type = getattr(change.target, 'type', None) # 'role' or 'member'
-                     if ow_target_id and ow_target_type:
-                         target_mention = f"<@&{ow_target_id}>" if ow_target_type == 'role' else f"<@{ow_target_id}>"
-                         # Determine if added, removed, or updated (before/after values are PermissionOverwrite objects)
-                         if before_val is None and after_val is not None:
-                             detailed_changes.append(f"Added overwrite for {target_mention}")
-                         elif before_val is not None and after_val is None:
-                             detailed_changes.append(f"Removed overwrite for {target_mention}")
+
+             # AuditLogChanges is not directly iterable, so we need to handle it differently
+             try:
+                 # Check if entry.changes has the __iter__ attribute (is iterable)
+                 if hasattr(entry.changes, '__iter__'):
+                     for change in entry.changes:
+                         attr = change.attribute
+                         before_val = change.before
+                         after_val = change.after
+                         if attr == 'name': detailed_changes.append(f"Name: `{before_val}` → `{after_val}`")
+                         elif attr == 'topic': detailed_changes.append(f"Topic: `{before_val or 'None'}` → `{after_val or 'None'}`")
+                         elif attr == 'nsfw': detailed_changes.append(f"NSFW: `{before_val}` → `{after_val}`")
+                         elif attr == 'slowmode_delay': detailed_changes.append(f"Slowmode: `{before_val}s` → `{after_val}s`")
+                         elif attr == 'bitrate': detailed_changes.append(f"Bitrate: `{before_val}` → `{after_val}`")
+                         elif attr == 'user_limit': detailed_changes.append(f"User Limit: `{before_val}` → `{after_val}`")
+                         elif attr == 'position': detailed_changes.append(f"Position: `{before_val}` → `{after_val}`")
+                         elif attr == 'category': detailed_changes.append(f"Category: {getattr(before_val, 'mention', 'None')} → {getattr(after_val, 'mention', 'None')}")
+                         elif attr == 'permission_overwrites':
+                             # Audit log gives overwrite target ID and type directly in the change object
+                             ow_target_id = getattr(change.target, 'id', None) # Target of the overwrite change
+                             ow_target_type = getattr(change.target, 'type', None) # 'role' or 'member'
+                             if ow_target_id and ow_target_type:
+                                 target_mention = f"<@&{ow_target_id}>" if ow_target_type == 'role' else f"<@{ow_target_id}>"
+                                 # Determine if added, removed, or updated (before/after values are PermissionOverwrite objects)
+                                 if before_val is None and after_val is not None:
+                                     detailed_changes.append(f"Added overwrite for {target_mention}")
+                                 elif before_val is not None and after_val is None:
+                                     detailed_changes.append(f"Removed overwrite for {target_mention}")
+                                 else:
+                                     detailed_changes.append(f"Updated overwrite for {target_mention}")
+                             else:
+                                  detailed_changes.append("Permission Overwrites Updated (Target details unavailable)") # Fallback
                          else:
-                             detailed_changes.append(f"Updated overwrite for {target_mention}")
-                     else:
-                          detailed_changes.append("Permission Overwrites Updated (Target details unavailable)") # Fallback
+                             # Log other unhandled changes generically
+                             detailed_changes.append(f"{attr.replace('_', ' ').title()} changed: `{before_val}` → `{after_val}`")
                  else:
-                     # Log other unhandled changes generically
-                     detailed_changes.append(f"{attr.replace('_', ' ').title()} changed: `{before_val}` → `{after_val}`")
+                     # Handle AuditLogChanges as a non-iterable object
+                     # We can access the before and after attributes directly
+                     if hasattr(entry.changes, 'before') and hasattr(entry.changes, 'after'):
+                         before = entry.changes.before
+                         after = entry.changes.after
+
+                         # Compare attributes between before and after
+                         if hasattr(before, 'name') and hasattr(after, 'name') and before.name != after.name:
+                             detailed_changes.append(f"Name: `{before.name}` → `{after.name}`")
+                         if hasattr(before, 'topic') and hasattr(after, 'topic') and before.topic != after.topic:
+                             detailed_changes.append(f"Topic: `{before.topic or 'None'}` → `{after.topic or 'None'}`")
+                         if hasattr(before, 'nsfw') and hasattr(after, 'nsfw') and before.nsfw != after.nsfw:
+                             detailed_changes.append(f"NSFW: `{before.nsfw}` → `{after.nsfw}`")
+                         if hasattr(before, 'slowmode_delay') and hasattr(after, 'slowmode_delay') and before.slowmode_delay != after.slowmode_delay:
+                             detailed_changes.append(f"Slowmode: `{before.slowmode_delay}s` → `{after.slowmode_delay}s`")
+                         if hasattr(before, 'bitrate') and hasattr(after, 'bitrate') and before.bitrate != after.bitrate:
+                             detailed_changes.append(f"Bitrate: `{before.bitrate}` → `{after.bitrate}`")
+                         if hasattr(before, 'user_limit') and hasattr(after, 'user_limit') and before.user_limit != after.user_limit:
+                             detailed_changes.append(f"User Limit: `{before.user_limit}` → `{after.user_limit}`")
+                         if hasattr(before, 'position') and hasattr(after, 'position') and before.position != after.position:
+                             detailed_changes.append(f"Position: `{before.position}` → `{after.position}`")
+                         # Add more attribute comparisons as needed
+             except Exception as e:
+                 log.error(f"Error processing audit log changes: {e}", exc_info=True)
+                 detailed_changes.append(f"Error processing changes: {e}")
 
              if detailed_changes:
                  action_desc = f"{user.mention} updated {ch_type} channel {channel.mention} ({channel.id}):\n" + "\n".join(f"- {c}" for c in detailed_changes)

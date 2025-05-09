@@ -16,6 +16,8 @@ import logging # For logging
 CACHE_FILE = "rule34_cache.json"
 # Subscriptions file path
 SUBSCRIPTIONS_FILE = "rule34_subscriptions.json"
+# Pending requests file path
+PENDING_REQUESTS_FILE = "rule34_pending_requests.json"
 
 # Setup logger for this cog
 log = logging.getLogger(__name__)
@@ -27,6 +29,7 @@ class Rule34Cog(commands.Cog, name="Rule34"): # Added name for clarity
         self.bot = bot
         self.cache_data = self._load_cache()
         self.subscriptions_data = self._load_subscriptions()
+        self.pending_requests_data = self._load_pending_requests()
         self.session: typing.Optional[aiohttp.ClientSession] = None
         # Start the task if the bot is ready, otherwise wait
         if bot.is_ready():
@@ -105,7 +108,7 @@ class Rule34Cog(commands.Cog, name="Rule34"): # Added name for clarity
                     return json.load(f)
             except Exception as e:
                 log.error(f"Failed to load Rule34 subscriptions file ({SUBSCRIPTIONS_FILE}): {e}")
-        return {} # { "guild_id": [ {sub_data}, ... ], ... }
+        return {} 
 
     def _save_subscriptions(self):
         """Saves the Rule34 subscriptions to a JSON file."""
@@ -116,7 +119,26 @@ class Rule34Cog(commands.Cog, name="Rule34"): # Added name for clarity
         except Exception as e:
             log.error(f"Failed to save Rule34 subscriptions file ({SUBSCRIPTIONS_FILE}): {e}")
 
-    async def _get_or_create_webhook(self, channel: discord.TextChannel) -> typing.Optional[str]:
+    def _load_pending_requests(self):
+        """Loads pending Rule34 watch requests from a JSON file."""
+        if os.path.exists(PENDING_REQUESTS_FILE):
+            try:
+                with open(PENDING_REQUESTS_FILE, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                log.error(f"Failed to load Rule34 pending requests file ({PENDING_REQUESTS_FILE}): {e}")
+        return {}
+
+    def _save_pending_requests(self):
+        """Saves pending Rule34 watch requests to a JSON file."""
+        try:
+            with open(PENDING_REQUESTS_FILE, "w") as f:
+                json.dump(self.pending_requests_data, f, indent=4)
+            log.debug(f"Saved Rule34 pending requests to {PENDING_REQUESTS_FILE}")
+        except Exception as e:
+            log.error(f"Failed to save Rule34 pending requests file ({PENDING_REQUESTS_FILE}): {e}")
+
+    async def _get_or_create_webhook(self, channel: typing.Union[discord.TextChannel, discord.ForumChannel]) -> typing.Optional[str]:
         """Gets an existing webhook URL or creates a new one for the bot in the channel."""
         if not self.session or self.session.closed:
             self.session = aiohttp.ClientSession()
@@ -705,128 +727,390 @@ class Rule34Cog(commands.Cog, name="Rule34"): # Added name for clarity
     @r34watch.command(name="add", description="Watch for new rule34 posts with specific tags in a channel or thread.")
     @app_commands.describe(
         tags="The tags to search for (e.g., 'kasane_teto rating:safe').",
-        channel="The parent channel for the subscription (and webhook).",
-        thread_target="Optional: Name or ID of a thread within the channel to send messages to."
+        channel="The parent channel for the subscription (and webhook). Must be a Forum Channel if using forum mode.",
+        thread_target="Optional: Name or ID of a thread within the channel (for TextChannels only)."
     )
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def r34watch_add(self, interaction: discord.Interaction, tags: str, channel: discord.TextChannel, thread_target: typing.Optional[str] = None):
-        """Adds a new Rule34 tag watch subscription, optionally targeting a thread."""
+    @app_commands.checks.has_permissions(manage_guild=True) # Admin command
+    async def r34watch_add(self, interaction: discord.Interaction, tags: str, channel: typing.Union[discord.TextChannel, discord.ForumChannel], thread_target: typing.Optional[str] = None, post_title: typing.Optional[str] = None):
+        """Adds a new Rule34 tag watch directly (Admin). For ForumChannels, post_title is used for the new forum post."""
         if not interaction.guild:
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
             return
 
-        # NSFW Check for the target channel itself before setting up
-        # This is a basic check; the command user should ensure the channel is appropriate.
-        # The `rating:safe` tag is the primary content filter.
-        if not channel.is_nsfw() and 'rating:safe' not in tags.lower():
-            await interaction.response.send_message(
-                f"⚠️ The channel {channel.mention} is not marked as NSFW. "
-                f"Subscriptions without 'rating:safe' in tags are only recommended for NSFW channels. "
-                f"Please ensure this is intended or add 'rating:safe' to your tags.",
-                ephemeral=True
-            )
-            # Allowing setup to proceed but with a warning. Could be made stricter.
-
-        await interaction.response.defer(ephemeral=True)
-
-        target_thread_id: typing.Optional[str] = None
-        target_thread_mention: str = ""
-
-        if thread_target:
-            found_thread: typing.Optional[discord.Thread] = None
-            # Try to find by ID first
-            try:
-                # Ensure guild object is available
-                if not channel.guild: # Should not happen if interaction.guild is checked, but defensive
-                    await interaction.followup.send("Error: Guild context not found for channel.")
-                    return
-
-                thread_as_obj = await channel.guild.fetch_channel(int(thread_target))
-                if isinstance(thread_as_obj, discord.Thread) and thread_as_obj.parent_id == channel.id:
-                    found_thread = thread_as_obj
-            except (ValueError, discord.NotFound, discord.Forbidden): # Not an ID or not found/accessible
-                pass # Try by name next
-            except Exception as e: # Catch other potential errors during fetch_channel
-                log.error(f"Error fetching thread by ID '{thread_target}': {e}")
-                pass
-
-
-            if not found_thread: # Try by name
-                # Ensure channel.threads is accessible and correct type
-                if hasattr(channel, 'threads'):
-                    for t in channel.threads:
-                        if t.name.lower() == thread_target.lower():
-                            found_thread = t
-                            break
-                else:
-                    log.warning(f"Channel {channel.mention} does not appear to support threads or threads attribute is missing.")
-
-            if found_thread:
-                target_thread_id = str(found_thread.id)
-                target_thread_mention = found_thread.mention
-            else:
-                await interaction.followup.send(f"❌ Could not find an accessible thread named or with ID `{thread_target}` in {channel.mention}.")
-                return
-
-        webhook_url = await self._get_or_create_webhook(channel) # Webhook is on parent channel
-        if not webhook_url:
-            await interaction.followup.send(
-                f"❌ Failed to get or create a webhook for {channel.mention}. "
-                "I might be missing 'Manage Webhooks' permission, or the channel webhook limit (15) is reached."
-            )
             return
+
+        if isinstance(channel, discord.TextChannel) and post_title:
+            await interaction.response.send_message("`post_title` is only applicable when the target channel is a Forum Channel.", ephemeral=True)
+            return
+        if isinstance(channel, discord.ForumChannel) and thread_target:
+            await interaction.response.send_message("`thread_target` is only applicable when the target channel is a Text Channel. For Forum Channels, a new post (thread) will be created.", ephemeral=True)
+            return
+
+        # Actual logic to create subscription, potentially creating a forum post.
+        # This will be refactored into a helper method _create_new_subscription
+        response_message = await self._create_new_subscription(
+            guild_id=interaction.guild_id,
+            user_id=interaction.user.id,
+            tags=tags,
+            target_channel=channel,
+            requested_thread_target=thread_target, # For TextChannel threads
+            requested_post_title=post_title # For ForumChannel posts
+        )
+        
+        if interaction.response.is_done():
+            await interaction.followup.send(response_message, ephemeral=True)
+        else:
+            # This case should ideally not be hit if we defer properly or if _create_new_subscription is fast
+            # However, as a fallback:
+            await interaction.response.send_message(response_message, ephemeral=True)
+
+
+    async def _create_new_subscription(self, guild_id: int, user_id: int, tags: str, 
+                                       target_channel: typing.Union[discord.TextChannel, discord.ForumChannel], 
+                                       requested_thread_target: typing.Optional[str] = None,
+                                       requested_post_title: typing.Optional[str] = None,
+                                       is_request_approval: bool = False,
+                                       requester_mention: typing.Optional[str] = None) -> str:
+        """
+        Core logic to create a new subscription.
+        If target_channel is a ForumChannel, it creates a new post (thread).
+        If target_channel is a TextChannel and requested_thread_target is given, it targets that thread.
+        Returns a confirmation or error message string.
+        """
+        await asyncio.sleep(0) # Placeholder for defer if called from non-interaction context
+
+        actual_target_thread_id: typing.Optional[str] = None
+        actual_target_thread_mention: str = ""
+        actual_post_title = requested_post_title or f"R34 Watch: {tags[:50]}" # Default title for forums
+
+        # Handle TextChannel with optional thread target
+        if isinstance(target_channel, discord.TextChannel):
+            if requested_thread_target:
+                found_thread: typing.Optional[discord.Thread] = None
+                try:
+                    if not target_channel.guild: # Should exist
+                         return "Error: Guild context not found for text channel."
+                    thread_as_obj = await target_channel.guild.fetch_channel(int(requested_thread_target))
+                    if isinstance(thread_as_obj, discord.Thread) and thread_as_obj.parent_id == target_channel.id:
+                        found_thread = thread_as_obj
+                except (ValueError, discord.NotFound, discord.Forbidden): pass
+                except Exception as e: log.error(f"Error fetching thread by ID '{requested_thread_target}': {e}")
+
+                if not found_thread and hasattr(target_channel, 'threads'):
+                    for t in target_channel.threads:
+                        if t.name.lower() == requested_thread_target.lower():
+                            found_thread = t; break
+                
+                if found_thread:
+                    actual_target_thread_id = str(found_thread.id)
+                    actual_target_thread_mention = found_thread.mention
+                else:
+                    return f"❌ Could not find an accessible thread named or with ID `{requested_thread_target}` in {target_channel.mention}."
+        
+        # Handle ForumChannel - create a new post (thread)
+        elif isinstance(target_channel, discord.ForumChannel):
+            forum_post_initial_message = f"✨ **New R34 Watch Initialized!** ✨\nNow monitoring tags: `{tags}`"
+            if is_request_approval and requester_mention:
+                forum_post_initial_message += f"\n_Requested by: {requester_mention}_"
+            
+            try:
+                # Check permissions to create posts/threads in forum
+                if not target_channel.permissions_for(target_channel.guild.me).create_public_threads: # Or send_messages_in_threads / manage_threads
+                    return f"❌ I don't have permission to create posts/threads in the forum channel {target_channel.mention}."
+
+                new_forum_post = await target_channel.create_thread(
+                    name=actual_post_title,
+                    content=forum_post_initial_message,
+                    reason=f"R34Watch subscription for tags: {tags}"
+                    # auto_archive_duration can be set here if needed
+                )
+                actual_target_thread_id = str(new_forum_post.id) # The forum post is a thread
+                actual_target_thread_mention = new_forum_post.mention
+                log.info(f"Created new forum post {new_forum_post.id} for tags '{tags}' in forum {target_channel.id}")
+            except discord.HTTPException as e:
+                log.error(f"Failed to create forum post for tags '{tags}' in {target_channel.mention}: {e}")
+                return f"❌ Failed to create a new post in forum {target_channel.mention}. Error: {e}"
+            except Exception as e:
+                log.exception(f"Unexpected error creating forum post for tags '{tags}' in {target_channel.mention}")
+                return f"❌ An unexpected error occurred while creating the forum post."
+
+        # Common logic: Webhook, initial fetch, save subscription
+        webhook_url = await self._get_or_create_webhook(target_channel)
+        if not webhook_url:
+            return f"❌ Failed to get/create webhook for {target_channel.mention}. Check permissions."
 
         initial_posts = await self._rule34_logic("internal_initial_fetch", tags, pid_override=0, limit_override=1)
         last_known_post_id = 0
         if isinstance(initial_posts, list) and initial_posts:
             if isinstance(initial_posts[0], dict) and "id" in initial_posts[0]:
                  last_known_post_id = int(initial_posts[0]["id"])
-            else:
-                log.warning(f"Malformed post data during initial fetch for tags '{tags}': {initial_posts[0]}")
-        elif isinstance(initial_posts, str):
-            log.error(f"Error during initial post fetch for r34watch add (tags: {tags}): {initial_posts}")
+            else: log.warning(f"Malformed post data for initial fetch (tags: '{tags}'): {initial_posts[0]}")
+        elif isinstance(initial_posts, str): log.error(f"API error on initial fetch (tags: '{tags}'): {initial_posts}")
 
-        guild_id_str = str(interaction.guild_id)
+        guild_id_str = str(guild_id)
         subscription_id = str(uuid.uuid4())
         
-        new_subscription = {
-            "subscription_id": subscription_id,
-            "tags": tags.strip(),
-            "channel_id": str(channel.id), # Parent channel for webhook
-            "thread_id": target_thread_id, # Optional target thread ID
-            "webhook_url": webhook_url,
-            "last_known_post_id": last_known_post_id,
-            "added_by_user_id": str(interaction.user.id),
-            "added_timestamp": discord.utils.utcnow().isoformat()
+        new_sub_data = {
+            "subscription_id": subscription_id, "tags": tags.strip(),
+            "webhook_url": webhook_url, "last_known_post_id": last_known_post_id,
+            "added_by_user_id": str(user_id), "added_timestamp": discord.utils.utcnow().isoformat()
         }
+        if isinstance(target_channel, discord.ForumChannel):
+            new_sub_data["forum_channel_id"] = str(target_channel.id)
+            new_sub_data["target_post_id"] = actual_target_thread_id # This is the forum's post/thread ID
+            new_sub_data["post_title"] = actual_post_title
+        else: # TextChannel
+            new_sub_data["channel_id"] = str(target_channel.id)
+            new_sub_data["thread_id"] = actual_target_thread_id # Optional thread within TextChannel
 
         if guild_id_str not in self.subscriptions_data:
             self.subscriptions_data[guild_id_str] = []
         
-        # Check for duplicate subscription (same tags, same channel, same thread_id)
+        # Duplicate check
         for existing_sub in self.subscriptions_data[guild_id_str]:
-            if (existing_sub.get("tags") == new_subscription["tags"] and
-                existing_sub.get("channel_id") == new_subscription["channel_id"] and
-                existing_sub.get("thread_id") == new_subscription["thread_id"]): # Also check thread_id
-                target_location = f"{channel.mention}"
-                if target_thread_mention:
-                    target_location += f" (thread: {target_thread_mention})"
-                await interaction.followup.send(f"⚠️ A subscription for tags `{tags}` in {target_location} already exists (ID: `{existing_sub.get('subscription_id')}`).")
-                return
+            is_dup_tags = existing_sub.get("tags") == new_sub_data["tags"]
+            is_dup_forum = isinstance(target_channel, discord.ForumChannel) and \
+                           existing_sub.get("forum_channel_id") == new_sub_data.get("forum_channel_id") and \
+                           existing_sub.get("target_post_id") == new_sub_data.get("target_post_id") # Should be unique if new post created
+            is_dup_text_chan = isinstance(target_channel, discord.TextChannel) and \
+                               existing_sub.get("channel_id") == new_sub_data.get("channel_id") and \
+                               existing_sub.get("thread_id") == new_sub_data.get("thread_id")
+            if is_dup_tags and (is_dup_forum or is_dup_text_chan):
+                return f"⚠️ A subscription for these tags in this exact location already exists (ID: `{existing_sub.get('subscription_id')}`)."
 
-        self.subscriptions_data[guild_id_str].append(new_subscription)
+        self.subscriptions_data[guild_id_str].append(new_sub_data)
         self._save_subscriptions()
 
-        target_location_msg = f"in {channel.mention}"
-        if target_thread_mention:
-            target_location_msg += f" (thread: {target_thread_mention})"
+        target_desc = f"in {target_channel.mention}"
+        if isinstance(target_channel, discord.ForumChannel) and actual_target_thread_mention:
+            target_desc = f"in forum post {actual_target_thread_mention} within {target_channel.mention}"
+        elif actual_target_thread_mention: # TextChannel thread
+            target_desc += f" (thread: {actual_target_thread_mention})"
+        
+        log.info(f"Subscription added: Guild {guild_id_str}, Tags '{tags}', Target {target_desc}, SubID {subscription_id}")
+        return (f"✅ Watching for new posts with tags `{tags}` {target_desc}.\n"
+                f"Initial latest post ID set to: {last_known_post_id}.\n"
+                f"Subscription ID: `{subscription_id}`.")
 
-        log.info(f"Added R34 watch: Guild {guild_id_str}, Tags '{tags}', Channel {channel.id}, Thread {target_thread_id}, Sub ID {subscription_id}, Last Post {last_known_post_id}")
-        await interaction.followup.send(
-            f"✅ Watching for new posts with tags `{tags}` {target_location_msg}.\n"
-            f"Initial latest post ID set to: {last_known_post_id}.\n"
-            f"Subscription ID: `{subscription_id}` (use this to remove the watch)."
+
+    @r34watch.command(name="request", description="Request a new Rule34 tag watch (requires moderator approval).")
+    @app_commands.describe(
+        tags="The tags you want to watch.",
+        forum_channel="The Forum Channel where a new post for this watch should be created.",
+        post_title="Optional: A title for the new forum post (defaults to tags)."
+    )
+    async def r34watch_request(self, interaction: discord.Interaction, tags: str, forum_channel: discord.ForumChannel, post_title: typing.Optional[str] = None):
+        """Allows users to request a new Rule34 tag watch, creating a post in a ForumChannel upon approval."""
+        if not interaction.guild_id or not interaction.user:
+            await interaction.response.send_message("This command can only be used in a server by a user.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id_str = str(interaction.guild_id)
+        request_id = str(uuid.uuid4())
+        actual_post_title = post_title or f"R34 Watch: {tags[:50]}" # Default title generation
+
+        new_request = {
+            "request_id": request_id,
+            "requester_id": str(interaction.user.id),
+            "requester_name": str(interaction.user),
+            "requested_tags": tags.strip(),
+            "target_forum_channel_id": str(forum_channel.id),
+            "requested_post_title": actual_post_title,
+            "status": "pending",
+            "request_timestamp": discord.utils.utcnow().isoformat(),
+            "moderator_id": None,
+            "moderation_timestamp": None
+        }
+
+        if guild_id_str not in self.pending_requests_data:
+            self.pending_requests_data[guild_id_str] = []
+        
+        self.pending_requests_data[guild_id_str].append(new_request)
+        self._save_pending_requests()
+
+        log.info(f"New R34 watch request: Guild {guild_id_str}, Requester {interaction.user} ({interaction.user.id}), Tags '{tags}', Forum {forum_channel.id}, ReqID {request_id}")
+        
+        # Notify moderators (simple version: log and tell user to inform mods)
+        # TODO: Implement a more direct mod notification system (e.g., message to a mod channel)
+        mod_notification_message = (
+            f"📝 New Rule34 watch request (ID: `{request_id}`) from {interaction.user.mention} for tags `{tags}` "
+            f"targeting forum {forum_channel.mention} with title \"{actual_post_title}\".\n"
+            f"Use `/r34watch pending_list` or `/r34watch approve_request request_id:{request_id}` / `/r34watch reject_request request_id:{request_id}`."
         )
+        log.info(f"Moderator alert (logged): {mod_notification_message}")
+        # For now, we'll just confirm to the user. A dedicated mod channel message would be better.
+
+        await interaction.followup.send(
+            f"✅ Your request to watch tags `{tags}` in forum {forum_channel.mention} (proposed title: \"{actual_post_title}\") has been submitted.\n"
+            f"Request ID: `{request_id}`. It is now awaiting moderator approval."
+        )
+
+    @r34watch.command(name="pending_list", description="Lists all pending Rule34 watch requests.")
+    @app_commands.checks.has_permissions(manage_guild=True) # Moderator command
+    async def r34watch_pending_list(self, interaction: discord.Interaction):
+        """Displays a list of pending Rule34 watch requests."""
+        if not interaction.guild_id:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+
+        guild_id_str = str(interaction.guild_id)
+        pending_reqs = [req for req in self.pending_requests_data.get(guild_id_str, []) if req.get("status") == "pending"]
+
+        if not pending_reqs:
+            await interaction.response.send_message("No pending Rule34 watch requests for this server.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title=f"Pending Rule34 Watch Requests for {interaction.guild.name}", color=discord.Color.orange())
+        description_parts = []
+        for req in pending_reqs:
+            forum_channel_mention = f"<#{req.get('target_forum_channel_id', 'Unknown')}>"
+            requester_name = req.get('requester_name', 'Unknown User')
+            description_parts.append(
+                f"**ID:** `{req.get('request_id')}`\n"
+                f"  **Requester:** {requester_name} (`{req.get('requester_id')}`)\n"
+                f"  **Tags:** `{req.get('requested_tags')}`\n"
+                f"  **Target Forum:** {forum_channel_mention}\n"
+                f"  **Proposed Title:** \"{req.get('requested_post_title')}\"\n"
+                f"  **Requested:** {discord.utils.format_dt(discord.utils.parse_isoformat(req.get('request_timestamp')), style='R') if req.get('request_timestamp') else 'Unknown time'}\n"
+                f"---"
+            )
+        
+        full_description = "\n".join(description_parts)
+        if len(full_description) > 4096: # Embed description limit
+            await interaction.response.send_message("Too many pending requests to display. Please approve/reject some.", ephemeral=True)
+        else:
+            embed.description = full_description
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+    @r34watch.command(name="approve_request", description="Approves a pending Rule34 watch request.")
+    @app_commands.describe(request_id="The ID of the request to approve.")
+    @app_commands.checks.has_permissions(manage_guild=True) # Moderator command
+    async def r34watch_approve_request(self, interaction: discord.Interaction, request_id: str):
+        """Approves a pending Rule34 watch request."""
+        if not interaction.guild_id or not interaction.user:
+            await interaction.response.send_message("This command can only be used in a server by a moderator.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        guild_id_str = str(interaction.guild_id)
+        
+        request_to_approve = None
+        req_index = -1
+
+        guild_pending_requests = self.pending_requests_data.get(guild_id_str, [])
+        for i, req in enumerate(guild_pending_requests):
+            if req.get("request_id") == request_id and req.get("status") == "pending":
+                request_to_approve = req
+                req_index = i
+                break
+        
+        if not request_to_approve:
+            await interaction.followup.send(f"❌ Pending request ID `{request_id}` not found or already processed.", ephemeral=True)
+            return
+
+        target_forum_channel_id = request_to_approve.get("target_forum_channel_id")
+        target_forum_channel = None
+        if target_forum_channel_id:
+            try:
+                target_forum_channel = await interaction.guild.fetch_channel(int(target_forum_channel_id))
+                if not isinstance(target_forum_channel, discord.ForumChannel):
+                    await interaction.followup.send(f"❌ Target channel ID `{target_forum_channel_id}` is not a Forum Channel.", ephemeral=True)
+                    return
+            except (discord.NotFound, discord.Forbidden, ValueError):
+                await interaction.followup.send(f"❌ Could not find or access the target forum channel (ID: {target_forum_channel_id}).", ephemeral=True)
+                return
+        
+        if not target_forum_channel: # Should have been caught above, but defensive
+            await interaction.followup.send(f"❌ Target forum channel not resolved for request `{request_id}`.", ephemeral=True)
+            return
+
+        # Call the core subscription creation logic
+        creation_response = await self._create_new_subscription(
+            guild_id=interaction.guild_id,
+            user_id=int(request_to_approve["requester_id"]), # Use original requester's ID for "added_by"
+            tags=request_to_approve["requested_tags"],
+            target_channel=target_forum_channel, # This is a ForumChannel
+            requested_post_title=request_to_approve["requested_post_title"],
+            is_request_approval=True, # Indicate it's from an approval flow
+            requester_mention=f"<@{request_to_approve['requester_id']}>"
+        )
+
+        if creation_response.startswith("✅"):
+            request_to_approve["status"] = "approved"
+            request_to_approve["moderator_id"] = str(interaction.user.id)
+            request_to_approve["moderation_timestamp"] = discord.utils.utcnow().isoformat()
+            self.pending_requests_data[guild_id_str][req_index] = request_to_approve
+            self._save_pending_requests()
+            
+            await interaction.followup.send(f"✅ Request ID `{request_id}` approved. {creation_response}", ephemeral=True)
+            
+            # Notify original requester
+            try:
+                requester = await self.bot.fetch_user(int(request_to_approve["requester_id"]))
+                if requester:
+                    await requester.send(
+                        f"🎉 Your Rule34 watch request (ID: `{request_id}`) for tags `{request_to_approve['requested_tags']}` "
+                        f"in server `{interaction.guild.name}` has been **approved** by {interaction.user.mention}!\n"
+                        f"The subscription details: {creation_response.replace('Subscription ID:', 'New Subscription ID:')}" # Rephrase slightly
+                    )
+            except Exception as e:
+                log.error(f"Failed to notify requester {request_to_approve['requester_id']} about approval: {e}")
+        else:
+            # Subscription creation failed
+            await interaction.followup.send(f"❌ Failed to approve request `{request_id}`. Subscription creation failed: {creation_response}", ephemeral=True)
+
+
+    @r34watch.command(name="reject_request", description="Rejects a pending Rule34 watch request.")
+    @app_commands.describe(request_id="The ID of the request to reject.", reason="Optional reason for rejection.")
+    @app_commands.checks.has_permissions(manage_guild=True) # Moderator command
+    async def r34watch_reject_request(self, interaction: discord.Interaction, request_id: str, reason: typing.Optional[str] = None):
+        """Rejects a pending Rule34 watch request."""
+        if not interaction.guild_id or not interaction.user:
+            await interaction.response.send_message("This command can only be used in a server by a moderator.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        guild_id_str = str(interaction.guild_id)
+
+        request_to_reject = None
+        req_index = -1
+        guild_pending_requests = self.pending_requests_data.get(guild_id_str, [])
+        for i, req in enumerate(guild_pending_requests):
+            if req.get("request_id") == request_id and req.get("status") == "pending":
+                request_to_reject = req
+                req_index = i
+                break
+        
+        if not request_to_reject:
+            await interaction.followup.send(f"❌ Pending request ID `{request_id}` not found or already processed.", ephemeral=True)
+            return
+
+        request_to_reject["status"] = "rejected"
+        request_to_reject["moderator_id"] = str(interaction.user.id)
+        request_to_reject["moderation_timestamp"] = discord.utils.utcnow().isoformat()
+        request_to_reject["rejection_reason"] = reason
+        self.pending_requests_data[guild_id_str][req_index] = request_to_reject
+        self._save_pending_requests()
+
+        await interaction.followup.send(f"🗑️ Request ID `{request_id}` has been rejected.", ephemeral=True)
+
+        # Notify original requester
+        try:
+            requester = await self.bot.fetch_user(int(request_to_reject["requester_id"]))
+            if requester:
+                rejection_msg = (
+                    f"😥 Your Rule34 watch request (ID: `{request_id}`) for tags `{request_to_reject['requested_tags']}` "
+                    f"in server `{interaction.guild.name}` has been **rejected** by {interaction.user.mention}."
+                )
+                if reason:
+                    rejection_msg += f"\nReason: {reason}"
+                await requester.send(rejection_msg)
+        except Exception as e:
+            log.error(f"Failed to notify requester {request_to_reject['requester_id']} about rejection: {e}")
+
 
     @r34watch.command(name="list", description="List active Rule34 tag watches for this server.")
     @app_commands.checks.has_permissions(manage_guild=True)
