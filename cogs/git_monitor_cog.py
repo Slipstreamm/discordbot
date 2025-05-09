@@ -275,7 +275,7 @@ class GitMonitorCog(commands.Cog):
             # The API server needs the bot's domain. This should be configured.
             # For now, we'll use a placeholder.
             # TODO: Fetch API base URL from config or bot instance
-            api_base_url = getattr(self.bot, 'config', {}).get('API_BASE_URL', 'YOUR_API_DOMAIN_HERE.com')
+            api_base_url = getattr(self.bot, 'config', {}).get('API_BASE_URL', 'slipstreamm.dev/api')
             if api_base_url == 'YOUR_API_DOMAIN_HERE.com':
                  log.warning("API_BASE_URL not configured for webhook URL generation. Using placeholder.")
 
