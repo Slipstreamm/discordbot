@@ -24,20 +24,19 @@ ssl_cert = os.getenv("SSL_CERT_FILE", "/etc/letsencrypt/live/slipstreamm.dev/ful
 ssl_key = os.getenv("SSL_KEY_FILE", "/etc/letsencrypt/live/slipstreamm.dev/privkey.pem")
 
 def run_unified_api():
-    """Run the unified API service"""
-    try:
-        print(f"Starting unified API service on {api_host}:{api_port}")
+    """Run the unified API service (dual-stack IPv4+IPv6)"""
+    import multiprocessing
 
-        # Check if SSL certificates exist and are configured
+    def run_uvicorn(bind_host):
+        print(f"Starting unified API service on {bind_host}:{api_port}")
         ssl_available = ssl_cert and ssl_key and os.path.exists(ssl_cert) and os.path.exists(ssl_key)
-
         if ssl_available:
             print(f"Using SSL with certificates at {ssl_cert} and {ssl_key}")
             uvicorn.run(
                 "api_server:app",
-                host=api_host,
+                host=bind_host,
                 port=api_port,
-                log_level="debug", # Increase log level
+                log_level="debug",
                 ssl_certfile=ssl_cert,
                 ssl_keyfile=ssl_key
             )
@@ -45,10 +44,19 @@ def run_unified_api():
             print("SSL certificates not found or not configured. Starting without SSL (development mode)")
             uvicorn.run(
                 "api_server:app",
-                host=api_host,
+                host=bind_host,
                 port=api_port,
-                log_level="debug" # Increase log level
+                log_level="debug"
             )
+
+    try:
+        processes = []
+        for bind_host in ["0.0.0.0", "::"]:
+            p = multiprocessing.Process(target=run_uvicorn, args=(bind_host,))
+            p.start()
+            processes.append(p)
+        for p in processes:
+            p.join()
     except Exception as e:
         print(f"Error starting unified API service: {e}")
 

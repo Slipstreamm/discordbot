@@ -24,8 +24,22 @@ else:
 
 
 if __name__ == "__main__":
-    print(f"Starting API server on {host}:{port}")
+    import multiprocessing
+
+    def run_uvicorn(bind_host):
+        print(f"Starting API server on {bind_host}:{port}")
+        uvicorn.run(
+            "discordbot.api_service.api_server:app",
+            host=bind_host,
+            port=port
+        )
+
     print(f"Data directory: {data_dir}")
-    # Use the full module path to ensure correct package context
-    # Removed reload=True to potentially fix import issues with the reloader
-    uvicorn.run("discordbot.api_service.api_server:app", host=host, port=port)
+    # Start both IPv4 and IPv6 servers
+    processes = []
+    for bind_host in ["0.0.0.0", "::"]:
+        p = multiprocessing.Process(target=run_uvicorn, args=(bind_host,))
+        p.start()
+        processes.append(p)
+    for p in processes:
+        p.join()
