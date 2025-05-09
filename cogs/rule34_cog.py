@@ -670,8 +670,14 @@ class Rule34Cog(commands.Cog, name="Rule34"): # Added name for clarity
                         # For now, assume webhook is in an appropriate channel as per setup.
                         # A more robust solution might store channel NSFW status or re-check.
                         
-                        current_thread_id = sub.get("thread_id") # Get thread_id for this subscription
-                        send_success = await self._send_via_webhook(webhook_url, message_content, thread_id=current_thread_id)
+                        # Determine the correct thread ID for sending the webhook
+                        webhook_target_thread_id: typing.Optional[str] = None
+                        if sub.get("forum_channel_id") and sub.get("target_post_id"):
+                            webhook_target_thread_id = sub.get("target_post_id")
+                        elif sub.get("channel_id") and sub.get("thread_id"):
+                            webhook_target_thread_id = sub.get("thread_id")
+                        
+                        send_success = await self._send_via_webhook(webhook_url, message_content, thread_id=webhook_target_thread_id)
                         if send_success:
                             latest_sent_id_for_this_sub = post_id
                             # Update the original subscriptions_data immediately after successful send
@@ -1131,28 +1137,45 @@ class Rule34Cog(commands.Cog, name="Rule34"): # Added name for clarity
         
         description_parts = []
         for sub in guild_subs:
-            channel_mention = f"<#{sub.get('channel_id', 'Unknown')}>"
-            thread_id = sub.get('thread_id')
-            target_location = channel_mention
-            if thread_id:
-                # Try to fetch thread for its name, fallback to ID
+            forum_channel_id = sub.get('forum_channel_id')
+            target_post_id = sub.get('target_post_id') # This is the forum's post/thread ID
+            channel_id = sub.get('channel_id')
+            thread_id = sub.get('thread_id') # For text channel threads
+            target_location = ""
+
+            guild = interaction.guild # Ensure guild object is available
+            if not guild:
+                target_location = "Error: Guild context lost for this subscription."
+            elif forum_channel_id and target_post_id:
+                forum_mention = f"<#{forum_channel_id}>"
                 try:
-                    # Ensure guild object is available
-                    guild = interaction.guild
-                    if not guild: # Should ideally not happen if guild_id is present
-                        target_location += f" (Thread ID: `{thread_id}` - Guild context lost)"
+                    post_thread_obj = await guild.fetch_channel(int(target_post_id))
+                    if isinstance(post_thread_obj, discord.Thread):
+                        target_location = f"Forum Post {post_thread_obj.mention} (`{post_thread_obj.name}`) in Forum {forum_mention}"
                     else:
+                        target_location = f"Forum Post <#{target_post_id}> (Not a thread object) in Forum {forum_mention}"
+                except (discord.NotFound, discord.Forbidden, ValueError):
+                    target_location = f"Forum Post <#{target_post_id}> (Not found or no access) in Forum {forum_mention}"
+                except Exception as e:
+                    log.warning(f"Error fetching forum post thread {target_post_id} for list command: {e}")
+                    target_location = f"Forum Post <#{target_post_id}> (Error fetching name) in Forum {forum_mention}"
+            elif channel_id:
+                target_location = f"<#{channel_id}>"
+                if thread_id:
+                    try:
                         thread_obj = await guild.fetch_channel(int(thread_id))
                         if isinstance(thread_obj, discord.Thread):
                             target_location += f" (Thread: {thread_obj.mention} `{thread_obj.name}`)"
-                        else: # Should be a thread, but if not, show ID
+                        else:
                             target_location += f" (Thread ID: `{thread_id}` - Not a thread object)"
-                except (discord.NotFound, discord.Forbidden, ValueError):
-                    target_location += f" (Thread ID: `{thread_id}` - Not found or no access)"
-                except Exception as e: # Catch any other error during fetch
-                     log.warning(f"Error fetching thread {thread_id} for list command: {e}")
-                     target_location += f" (Thread ID: `{thread_id}` - Error fetching name)"
-            
+                    except (discord.NotFound, discord.Forbidden, ValueError):
+                        target_location += f" (Thread ID: `{thread_id}` - Not found or no access)"
+                    except Exception as e:
+                        log.warning(f"Error fetching thread {thread_id} for list command: {e}")
+                        target_location += f" (Thread ID: `{thread_id}` - Error fetching name)"
+            else:
+                target_location = "Unknown Target (Missing channel/forum info)"
+
             tags_str = sub.get('tags', 'Unknown tags')
             sub_id_str = sub.get('subscription_id', 'Unknown ID')
             last_id = sub.get('last_known_post_id', 'N/A')
