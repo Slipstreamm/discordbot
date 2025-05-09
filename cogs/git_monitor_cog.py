@@ -22,11 +22,12 @@ log = logging.getLogger(__name__)
 # Helper to parse repo URL and determine platform
 def parse_repo_url(url: str) -> tuple[Optional[str], Optional[str]]:
     """Parses a Git repository URL to extract platform and a simplified repo identifier."""
-    github_match = re.match(r"https^(?:https?://)?(?:www\.)?github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?/?$", url)
+    # Changed from +? to + for the repo name part for robustness, though unlikely to be the issue for simple URLs.
+    github_match = re.match(r"https^(?:https?://)?(?:www\.)?github\.com/([\w.-]+/[\w.-]+)(?:\.git)?/?$", url)
     if github_match:
         return "github", github_match.group(1)
 
-    gitlab_match = re.match(r"^(?:https?://)?(?:www\.)?gitlab\.com/([\w.-]+(?:/[\w.-]+)+?)(?:\.git)?/?$", url)
+    gitlab_match = re.match(r"^(?:https?://)?(?:www\.)?gitlab\.com/([\w.-]+(?:/[\w.-]+)+)(?:\.git)?/?$", url)
     if gitlab_match:
         return "gitlab", gitlab_match.group(1)
     return None, None
@@ -243,14 +244,16 @@ class GitMonitorCog(commands.Cog):
                              branch: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
 
+        cleaned_repository_url = repository_url.strip() # Strip whitespace
+
         if monitoring_method == 'poll' and not branch:
-            log.info(f"Branch not specified for polling method for {repository_url}. Will use default in polling task or API default.")
+            log.info(f"Branch not specified for polling method for {cleaned_repository_url}. Will use default in polling task or API default.")
             # If branch is None, the polling task will attempt to use the repo's default branch.
             pass
 
-        platform, repo_identifier = parse_repo_url(repository_url)
+        platform, repo_identifier = parse_repo_url(cleaned_repository_url) # Use cleaned URL
         if not platform or not repo_identifier:
-            await interaction.followup.send("Invalid repository URL. Please provide a valid GitHub or GitLab URL.", ephemeral=True)
+            await interaction.followup.send(f"Invalid repository URL: `{repository_url}`. Please provide a valid GitHub or GitLab URL (e.g., https://github.com/user/repo).", ephemeral=True)
             return
 
         guild_id = interaction.guild_id
@@ -278,7 +281,7 @@ class GitMonitorCog(commands.Cog):
 
 
             db_repo_id = await settings_manager.add_monitored_repository(
-                guild_id=guild_id, repository_url=repository_url, platform=platform,
+                guild_id=guild_id, repository_url=cleaned_repository_url, platform=platform, # Use cleaned URL
                 monitoring_method='webhook', notification_channel_id=notification_channel_id,
                 added_by_user_id=added_by_user_id, webhook_secret=webhook_secret, target_branch=None # Branch not used for webhooks
             )
@@ -287,7 +290,7 @@ class GitMonitorCog(commands.Cog):
                 reply_message = (
                     f"Webhook monitoring for `{repo_identifier}` ({platform.capitalize()}) added for {channel.mention}!\n\n"
                     f"**Action Required:**\n"
-                    f"1. Go to your repository's settings: `{repository_url}/settings/hooks` (GitHub) or `{repository_url}/-/hooks` (GitLab).\n"
+                    f"1. Go to your repository's settings: `{cleaned_repository_url}/settings/hooks` (GitHub) or `{cleaned_repository_url}/-/hooks` (GitLab).\n"
                     f"2. Add a new webhook.\n"
                     f"   - **Payload URL:** `{payload_url}`\n"
                     f"   - **Content type:** `application/json`\n"
@@ -303,7 +306,7 @@ class GitMonitorCog(commands.Cog):
             # This is a placeholder; actual fetching needs platform-specific API calls
             initial_sha = None # TODO: Implement initial SHA fetch if desired
             db_repo_id = await settings_manager.add_monitored_repository(
-                guild_id=guild_id, repository_url=repository_url, platform=platform,
+                guild_id=guild_id, repository_url=cleaned_repository_url, platform=platform, # Use cleaned URL
                 monitoring_method='poll', notification_channel_id=notification_channel_id,
                 added_by_user_id=added_by_user_id, target_branch=branch, # Pass the branch for polling
                 last_polled_commit_sha=initial_sha
