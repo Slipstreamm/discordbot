@@ -1,1 +1,0 @@
-Code to some random bot I made. Do whatever you want with it.

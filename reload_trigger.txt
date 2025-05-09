@@ -1,2 +1,0 @@
-Edit and save this file to trigger a reload of the bot commands.
-Last reload: 2025-04-12 17:55:10
