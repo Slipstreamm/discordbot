@@ -285,7 +285,7 @@ from api_service.api_models import (
     UpdateConversationRequest,
     ApiResponse
 )
-import code_verifier_store
+import api_service.code_verifier_store as code_verifier_store
 
 # Ensure discordbot is in path to import settings_manager
 discordbot_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
