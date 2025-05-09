@@ -17,7 +17,7 @@ except ImportError:
     # Or if the structure is flat
     import settings_manager
     # If api_server.py is in the same directory:
-    from api_server import send_discord_message_via_api, get_api_settings
+    from api_service.api_server import send_discord_message_via_api, get_api_settings
 
 
 log = logging.getLogger(__name__)

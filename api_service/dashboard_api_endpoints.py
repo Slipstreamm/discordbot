@@ -21,7 +21,7 @@ from api_service.dashboard_models import (
     GroupCustomizationUpdate,
     CommandAliasAdd,
     CommandAliasRemove,
-    # Add other models used in this file if they were previously imported from api_server
+    # Add other models used in this file if they were previously imported from api_service.api_server
     # GuildSettingsResponse, GuildSettingsUpdate, CommandPermission, CommandPermissionsResponse,
     # CogInfo, CommandInfo # Assuming these might be needed based on context below
 )
@@ -701,7 +701,7 @@ async def test_welcome_message(
     try:
         # Import the main API server endpoint
         try:
-            from api_server import dashboard_test_welcome_message
+            from api_service.api_server import dashboard_test_welcome_message
         except ImportError:
             from .api_server import dashboard_test_welcome_message
 
@@ -729,7 +729,7 @@ async def test_goodbye_message(
     try:
         # Import the main API server endpoint
         try:
-            from api_server import dashboard_test_goodbye_message
+            from api_service.api_server import dashboard_test_goodbye_message
         except ImportError:
             from .api_server import dashboard_test_goodbye_message
 
@@ -757,7 +757,7 @@ async def get_global_settings(
         try:
             from api_service.api_server import db
         except ImportError:
-            from api_server import db
+            from api_service.api_server import db
 
         if not db:
             raise HTTPException(
@@ -833,7 +833,7 @@ async def update_global_settings(
             from api_service.api_server import db
             from api_service.api_models import UserSettings
         except ImportError:
-            from api_server import db
+            from api_service.api_server import db
             from api_models import UserSettings
 
         if not db:
