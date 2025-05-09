@@ -168,7 +168,7 @@ def format_gitlab_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed
         return embed
 
 
-@router.post("/webhook/github/{repo_db_id}")
+@router.post("/github/{repo_db_id}")
 async def webhook_github(
     request: Request,
     repo_db_id: int = Path(..., description="The database ID of the monitored repository"),
@@ -272,7 +272,7 @@ async def webhook_github(
         return {"status": "error", "message": f"Webhook received, but notification failed: {send_result.get('message')}"}
 
 
-@router.post("/webhook/gitlab/{repo_db_id}")
+@router.post("/gitlab/{repo_db_id}")
 async def webhook_gitlab(
     request: Request,
     repo_db_id: int = Path(..., description="The database ID of the monitored repository"),

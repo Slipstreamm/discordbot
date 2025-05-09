@@ -6,7 +6,7 @@ import sys
 import json
 
 # Add the api_service directory to the Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'api_service'))
+sys.path.append(os.path.join(os.path.dirname(__file__), 'api_service'))
 
 # Import the API client and models
 from discord_client import ApiClient
