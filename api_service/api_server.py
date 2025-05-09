@@ -277,7 +277,7 @@ async def send_discord_message_via_api(channel_id: int, content: str, timeout: f
 # Import dependencies after defining settings and constants
 # Use absolute imports to avoid issues when running the server directly
 from api_service import dependencies # type: ignore
-from api_models import (
+from api_service.api_models import (
     Conversation,
     UserSettings,
     GetConversationsResponse,

@@ -9,8 +9,8 @@ import json
 sys.path.append(os.path.join(os.path.dirname(__file__), 'api_service'))
 
 # Import the API client and models
-from discord_client import ApiClient
-from api_models import Conversation, UserSettings, Message
+from api_service.discord_client import ApiClient
+from api_service.api_models import Conversation, UserSettings, Message
 
 # API client instance
 api_client = None

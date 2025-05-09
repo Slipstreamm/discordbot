@@ -2,7 +2,7 @@ import aiohttp
 import json
 import datetime
 from typing import Dict, List, Optional, Any, Union
-from api_models import Conversation, UserSettings, Message
+from api_service.api_models import Conversation, UserSettings, Message
 
 class ApiClient:
     def __init__(self, api_url: str, token: Optional[str] = None):
