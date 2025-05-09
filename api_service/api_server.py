@@ -12,7 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import aiohttp
 import asyncpg
 import discord
-from database import Database # Existing DB
+from api_service.database import Database # Existing DB
 import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
