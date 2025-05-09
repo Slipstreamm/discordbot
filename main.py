@@ -591,7 +591,7 @@ def handle_sighup(signum, frame):
     try:
         print("Received SIGHUP: pulling latest code from /home/git/discordbot.git (branch master)...")
         result = subprocess.run(
-            ["git", "--git-dir=/home/git/discordbot.git", "--work-tree=.", "pull", "origin", "master"],
+            ["git", "pull"],
             capture_output=True, text=True
         )
         print(result.stdout)
