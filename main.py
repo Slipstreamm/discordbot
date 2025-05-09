@@ -149,7 +149,7 @@ class MyBot(commands.Bot):
         # --- Manually Load FreakTetoCog (only if AI is NOT disabled) ---
         if not self.ai_cogs_to_skip: # Check if list is empty (meaning AI is not disabled)
             try:
-                freak_teto_cog_path = "discordbot.freak_teto.cog"
+                freak_teto_cog_path = "freak_teto.cog"
                 await self.load_extension(freak_teto_cog_path)
                 log.info(f"Successfully loaded FreakTetoCog from {freak_teto_cog_path} in setup_hook.")
             except commands.ExtensionAlreadyLoaded:
@@ -589,7 +589,7 @@ def handle_sighup(signum, frame):
     import sys
     import os
     try:
-        print("Received SIGHUP: pulling latest code from /home/git/discordbot.git (branch master)...")
+        print("Received SIGHUP: pulling latest code from /home/git/git (branch master)...")
         result = subprocess.run(
             ["git", "pull"],
             capture_output=True, text=True

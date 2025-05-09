@@ -6,8 +6,8 @@ import logging
 from typing import Optional, Union, List
 
 # Use absolute import for ModLogCog
-from discordbot.cogs.mod_log_cog import ModLogCog
-from discordbot.db import mod_log_db # Import the database functions
+from cogs.mod_log_cog import ModLogCog
+from db import mod_log_db # Import the database functions
 
 # Configure logging
 logger = logging.getLogger(__name__)

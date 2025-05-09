@@ -9,10 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 # Import dependencies from the new dependencies module (use absolute path)
-from discordbot.api_service.dependencies import get_dashboard_user, verify_dashboard_guild_admin
+from api_service.dependencies import get_dashboard_user, verify_dashboard_guild_admin
 
 # Import models from the new dashboard_models module (use absolute path)
-from discordbot.api_service.dashboard_models import (
+from api_service.dashboard_models import (
     CommandCustomizationResponse,
     CommandCustomizationUpdate,
         GroupCustomizationUpdate,
@@ -22,8 +22,8 @@ from discordbot.api_service.dashboard_models import (
 )
 
 # Import settings_manager for database access (use absolute path)
-from discordbot import settings_manager
-from discordbot.global_bot_accessor import get_bot_instance
+import settings_manager
+from global_bot_accessor import get_bot_instance
 
 log = logging.getLogger(__name__)
 

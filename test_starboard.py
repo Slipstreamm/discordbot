@@ -10,8 +10,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the starboard cog and settings manager
-from discordbot.cogs.starboard_cog import StarboardCog
-import discordbot.settings_manager as settings_manager
+from cogs.starboard_cog import StarboardCog
+import settings_manager as settings_manager
 
 # Load environment variables
 load_dotenv()

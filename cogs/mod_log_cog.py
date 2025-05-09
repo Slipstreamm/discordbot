@@ -7,8 +7,8 @@ from typing import Optional, Union, Dict, Any
 import datetime
 
 # Use absolute imports from the discordbot package root
-from discordbot.db import mod_log_db
-from discordbot import settings_manager as sm # Use module functions directly
+from db import mod_log_db
+import settings_manager as sm # Use module functions directly
 
 log = logging.getLogger(__name__)
 

@@ -13,8 +13,8 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import settings manager for database operations
-import discordbot.settings_manager as settings_manager
-from discordbot.global_bot_accessor import get_bot_instance
+import settings_manager as settings_manager
+from global_bot_accessor import get_bot_instance
 
 # Set up logging
 log = logging.getLogger(__name__)

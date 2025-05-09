@@ -12,10 +12,10 @@ from pydantic import BaseModel, Field
 DEFAULT_PREFIX = "!"
 
 # Import dependencies using absolute paths
-from discordbot.api_service.dependencies import get_dashboard_user, verify_dashboard_guild_admin
+from api_service.dependencies import get_dashboard_user, verify_dashboard_guild_admin
 
 # Import models using absolute paths
-from discordbot.api_service.dashboard_models import (
+from api_service.dashboard_models import (
     CommandCustomizationResponse,
     CommandCustomizationUpdate,
     GroupCustomizationUpdate,
@@ -28,7 +28,7 @@ from discordbot.api_service.dashboard_models import (
 
 
 # Import settings_manager for database access (use absolute path)
-from discordbot import settings_manager
+import settings_manager
 
 # Set up logging
 log = logging.getLogger(__name__)
@@ -590,7 +590,7 @@ async def update_guild_settings(
 
         # Get bot instance for core cogs check
         try:
-            from discordbot import discord_bot_sync_api
+            import discord_bot_sync_api
             bot = discord_bot_sync_api.bot_instance
             core_cogs_list = bot.core_cogs if bot and hasattr(bot, 'core_cogs') else {'SettingsCog', 'HelpCog'}
         except ImportError:
@@ -755,7 +755,7 @@ async def get_global_settings(
     try:
         # Import the database module for user settings
         try:
-            from discordbot.api_service.api_server import db
+            from api_service.api_server import db
         except ImportError:
             from api_server import db
 
@@ -830,8 +830,8 @@ async def update_global_settings(
     try:
         # Import the database module for user settings
         try:
-            from discordbot.api_service.api_server import db
-            from discordbot.api_service.api_models import UserSettings
+            from api_service.api_server import db
+            from api_service.api_models import UserSettings
         except ImportError:
             from api_server import db
             from api_models import UserSettings
@@ -863,7 +863,7 @@ async def update_global_settings(
 
         # Add theme settings if provided
         if settings.theme:
-            from discordbot.api_service.api_models import ThemeSettings as ApiThemeSettings
+            from api_service.api_models import ThemeSettings as ApiThemeSettings
             user_settings.theme = ApiThemeSettings(
                 theme_mode=settings.theme.theme_mode,
                 primary_color=settings.theme.primary_color,
@@ -949,7 +949,7 @@ async def get_guild_cogs_redirect(
                 # Fall back to direct implementation
                 # Check if bot instance is available via discord_bot_sync_api
                 try:
-                    from discordbot import discord_bot_sync_api
+                    import discord_bot_sync_api
                     bot = discord_bot_sync_api.bot_instance
                     if not bot:
                         raise HTTPException(
@@ -1058,7 +1058,7 @@ async def update_cog_status_redirect(
 
                 # Check if the cog exists
                 try:
-                    from discordbot import discord_bot_sync_api
+                    import discord_bot_sync_api
                     bot = discord_bot_sync_api.bot_instance
                     if not bot:
                         raise HTTPException(
@@ -1151,7 +1151,7 @@ async def update_command_status_redirect(
 
                 # Check if the command exists
                 try:
-                    from discordbot import discord_bot_sync_api
+                    import discord_bot_sync_api
                     bot = discord_bot_sync_api.bot_instance
                     if not bot:
                         raise HTTPException(

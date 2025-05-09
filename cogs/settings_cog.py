@@ -1,8 +1,8 @@
 import discord
 from discord.ext import commands
 import logging
-from discordbot import settings_manager # Assuming settings_manager is accessible
-from discordbot import command_customization # Import command customization utilities
+import settings_manager # Assuming settings_manager is accessible
+import command_customization # Import command customization utilities
 from typing import Optional
 
 log = logging.getLogger(__name__)

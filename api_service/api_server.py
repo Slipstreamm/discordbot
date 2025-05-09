@@ -276,7 +276,7 @@ async def send_discord_message_via_api(channel_id: int, content: str, timeout: f
 
 # Import dependencies after defining settings and constants
 # Use absolute imports to avoid issues when running the server directly
-from discordbot.api_service import dependencies # type: ignore
+from api_service import dependencies # type: ignore
 from api_models import (
     Conversation,
     UserSettings,
@@ -293,11 +293,11 @@ if discordbot_path not in sys.path:
     sys.path.insert(0, discordbot_path)
 
 try:
-    from discordbot import settings_manager # type: ignore # type: ignore
+    import settings_manager # type: ignore # type: ignore
     from global_bot_accessor import get_bot_instance
     log.info("Successfully imported settings_manager module and get_bot_instance")
 except ImportError as e:
-    log.error(f"Could not import discordbot.settings_manager or get_bot_instance: {e}")
+    log.error(f"Could not import settings_manager or get_bot_instance: {e}")
     log.error("Ensure the API is run from the project root or discordbot is in PYTHONPATH.")
     settings_manager = None # Set to None to indicate failure
 
@@ -461,7 +461,7 @@ dashboard_api_app = FastAPI(
 # Import dashboard API endpoints
 try:
     # Use absolute import
-    from discordbot.api_service.dashboard_api_endpoints import router as dashboard_router # type: ignore
+    from api_service.dashboard_api_endpoints import router as dashboard_router # type: ignore
     # Add the dashboard router to the dashboard API app
     dashboard_api_app.include_router(dashboard_router)
     log.info("Dashboard API endpoints loaded successfully")
@@ -476,7 +476,7 @@ except ImportError as e:
 # Import command customization models and endpoints
 try:
     # Use absolute import
-    from discordbot.api_service.command_customization_endpoints import router as customization_router # type: ignore
+    from api_service.command_customization_endpoints import router as customization_router # type: ignore
     # Add the command customization router to the dashboard API app
     dashboard_api_app.include_router(customization_router, prefix="/commands", tags=["Command Customization"])
     log.info("Command customization endpoints loaded successfully")
@@ -487,7 +487,7 @@ except ImportError as e:
 # Import cog management endpoints
 try:
     # Use absolute import
-    from discordbot.api_service.cog_management_endpoints import router as cog_management_router # type: ignore
+    from api_service.cog_management_endpoints import router as cog_management_router # type: ignore
     log.info("Successfully imported cog_management_endpoints")
     # Add the cog management router to the dashboard API app
     dashboard_api_app.include_router(cog_management_router, tags=["Cog Management"])
@@ -646,7 +646,7 @@ async def get_guild_cogs_no_deps(guild_id: int):
         # First try to get cogs from the bot instance
         bot = None
         try:
-            from discordbot import discord_bot_sync_api # type: ignore
+            import discord_bot_sync_api # type: ignore
             bot = discord_bot_sync_api.bot_instance
         except (ImportError, AttributeError) as e:
             log.warning(f"Could not import bot instance: {e}")
@@ -887,7 +887,7 @@ async def auth(code: str, state: str = None, code_verifier: str = None, request:
 # Models are now in dashboard_models.py
 # Dependencies are now in dependencies.py
 
-from discordbot.api_service.dashboard_models import ( # type: ignore
+from api_service.dashboard_models import ( # type: ignore
     GuildSettingsResponse,
     GuildSettingsUpdate,
     CommandPermission,
@@ -1013,7 +1013,7 @@ async def get_guild_cogs_direct(
         # First try to get cogs from the bot instance
         bot = None
         try:
-            from discordbot import discord_bot_sync_api # type: ignore
+            import discord_bot_sync_api # type: ignore
             bot = discord_bot_sync_api.bot_instance
         except (ImportError, AttributeError) as e:
             log.warning(f"Could not import bot instance: {e}")
@@ -1181,7 +1181,7 @@ async def update_cog_status_direct(
             )
 
         # Get the bot instance to check if pools are available
-        from discordbot.global_bot_accessor import get_bot_instance # type: ignore
+        from global_bot_accessor import get_bot_instance # type: ignore
         bot_instance = get_bot_instance()
         if not bot_instance or not bot_instance.pg_pool:
             raise HTTPException(
@@ -1192,7 +1192,7 @@ async def update_cog_status_direct(
         # Try to get the bot instance, but don't require it
         bot = None
         try:
-            from discordbot import discord_bot_sync_api # type: ignore # type: ignore
+            import discord_bot_sync_api # type: ignore # type: ignore
             bot = discord_bot_sync_api.bot_instance
         except (ImportError, AttributeError) as e:
             log.warning(f"Could not import bot instance: {e}")
@@ -1255,7 +1255,7 @@ async def update_command_status_direct(
             )
 
         # Get the bot instance to check if pools are available
-        from discordbot.global_bot_accessor import get_bot_instance # type: ignore
+        from global_bot_accessor import get_bot_instance # type: ignore
         bot_instance = get_bot_instance()
         if not bot_instance or not bot_instance.pg_pool:
             raise HTTPException(
@@ -1266,7 +1266,7 @@ async def update_command_status_direct(
         # Try to get the bot instance, but don't require it
         bot = None
         try:
-            from discordbot import discord_bot_sync_api # type: ignore
+            import discord_bot_sync_api # type: ignore
             bot = discord_bot_sync_api.bot_instance
         except (ImportError, AttributeError) as e:
             log.warning(f"Could not import bot instance: {e}")
@@ -2206,7 +2206,7 @@ async def ai_moderation_action(
 
     # Add to moderation log
     try:
-        from discordbot.db import mod_log_db # type: ignore
+        from db import mod_log_db # type: ignore
         bot = get_bot_instance()
 
         # Create AI details dictionary with all relevant information

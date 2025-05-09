@@ -29,7 +29,7 @@ if __name__ == "__main__":
     def run_uvicorn(bind_host):
         print(f"Starting API server on {bind_host}:{port}")
         uvicorn.run(
-            "discordbot.api_service.api_server:app",
+            "api_service.api_server:app",
             host=bind_host,
             port=port
         )

@@ -20,7 +20,7 @@ test_urls = [
     "http://github.com/Slipstreamm/discordbot",
     "github.com/Slipstreamm/discordbot",
     "www.github.com/Slipstreamm/discordbot",
-    "https://github.com/Slipstreamm/discordbot.git",
+    "https://github.com/Slipstreamm/git",
     "https://gitlab.com/group/project",
     "https://gitlab.com/group/subgroup/project",
     "invalid-url"

@@ -3,7 +3,7 @@ import json
 import datetime
 from typing import Dict, List, Optional, Any
 # Use absolute import for api_models
-from discordbot.api_service.api_models import Conversation, UserSettings, Message
+from api_service.api_models import Conversation, UserSettings, Message
 
 # ============= Database Class =============
 

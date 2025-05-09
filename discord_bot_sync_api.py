@@ -19,8 +19,8 @@ from typing import Optional # Added for GurtCog type hint
 
 # --- Placeholder for GurtCog instance and bot instance ---
 # These need to be set by the script that starts the bot and API server
-from discordbot.gurt.cog import GurtCog # Import GurtCog for type hint and access
-from discordbot.cogs.mod_log_cog import ModLogCog # Import ModLogCog for type hint
+from gurt.cog import GurtCog # Import GurtCog for type hint and access
+from cogs.mod_log_cog import ModLogCog # Import ModLogCog for type hint
 gurt_cog_instance: Optional[GurtCog] = None
 mod_log_cog_instance: Optional[ModLogCog] = None # Placeholder for ModLogCog
 bot_instance = None  # Will be set to the Discord bot instance
