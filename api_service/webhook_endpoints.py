@@ -24,6 +24,31 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 api_settings = get_api_settings() # Get loaded API settings
 
+async def get_monitored_repository_by_id_api(request: Request, repo_db_id: int) -> Dict | None:
+    """Gets details of a monitored repository by its database ID using the API service's PostgreSQL pool.
+    This is an alternative to settings_manager.get_monitored_repository_by_id that doesn't rely on the bot instance.
+    """
+    # Try to get the PostgreSQL pool from the FastAPI app state
+    pg_pool = getattr(request.app.state, "pg_pool", None)
+    if not pg_pool:
+        log.warning(f"API service PostgreSQL pool not available for get_monitored_repository_by_id_api (ID {repo_db_id}).")
+        # Fall back to settings_manager if API pool is not available
+        return await settings_manager.get_monitored_repository_by_id(repo_db_id)
+
+    try:
+        async with pg_pool.acquire() as conn:
+            record = await conn.fetchrow(
+                "SELECT * FROM git_monitored_repositories WHERE id = $1",
+                repo_db_id
+            )
+            log.info(f"Retrieved repository configuration for ID {repo_db_id} using API service PostgreSQL pool")
+            return dict(record) if record else None
+    except Exception as e:
+        log.exception(f"Database error getting monitored repository by ID {repo_db_id} using API service pool: {e}")
+        # Fall back to settings_manager if there's an error with the API pool
+        log.info(f"Falling back to settings_manager for repository ID {repo_db_id}")
+        return await settings_manager.get_monitored_repository_by_id(repo_db_id)
+
 def verify_github_signature(payload_body: bytes, secret_token: str, signature_header: str) -> bool:
     """Verify that the payload was sent from GitHub by validating the signature."""
     if not signature_header:
@@ -59,7 +84,7 @@ def format_github_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed
         repo_name = payload.get('repository', {}).get('full_name', repo_url)
         pusher = payload.get('pusher', {}).get('name', 'Unknown Pusher')
         compare_url = payload.get('compare', repo_url)
-        
+
         embed = discord.Embed(
             title=f"New Push to {repo_name}",
             url=compare_url,
@@ -72,12 +97,12 @@ def format_github_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed
             commit_msg = commit.get('message', 'No commit message.')
             commit_url = commit.get('url', '#')
             author_name = commit.get('author', {}).get('name', 'Unknown Author')
-            
+
             # Files changed, insertions/deletions
             added = commit.get('added', [])
             removed = commit.get('removed', [])
             modified = commit.get('modified', [])
-            
+
             stats_lines = []
             if added: stats_lines.append(f"+{len(added)} added")
             if removed: stats_lines.append(f"-{len(removed)} removed")
@@ -102,7 +127,7 @@ def format_github_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed
             if len(embed.fields) >= 5: # Limit fields to avoid overly large embeds
                 embed.add_field(name="...", value=f"And {len(payload.get('commits')) - 5} more commits.", inline=False)
                 break
-        
+
         if not payload.get('commits'):
             embed.description = "Received push event with no commits (e.g., new branch created without commits)."
 
@@ -118,7 +143,7 @@ def format_gitlab_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed
     try:
         project_name = payload.get('project', {}).get('path_with_namespace', repo_url)
         user_name = payload.get('user_name', 'Unknown Pusher')
-        
+
         # GitLab's compare URL is not directly in the main payload, but commits have URLs
         # We can use the project's web_url as a base.
         project_web_url = payload.get('project', {}).get('web_url', repo_url)
@@ -140,11 +165,10 @@ def format_gitlab_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed
             # GitLab commit objects don't directly list added/removed/modified files in the same way GitHub does per commit in a push.
             # The overall push event has 'total_commits_count', but individual commit stats are usually fetched separately if needed.
             # For simplicity, we'll list files if available, or just the message.
-            stats_lines = []
             # GitLab's commit object in webhook doesn't typically include detailed file stats like GitHub's.
             # It might have 'added', 'modified', 'removed' at the top level of the push event for the whole push, not per commit.
             # We'll focus on commit message and author for now.
-            
+
             # GitLab commit verification is not as straightforward in the webhook payload as GitHub's.
             # It's often handled via GPG keys and displayed in the UI. We'll omit for now.
 
@@ -157,7 +181,7 @@ def format_gitlab_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed
             if len(embed.fields) >= 5:
                 embed.add_field(name="...", value=f"And {len(payload.get('commits')) - 5} more commits.", inline=False)
                 break
-        
+
         if not payload.get('commits'):
             embed.description = "Received push event with no commits (e.g., new branch created or tag pushed)."
 
@@ -176,8 +200,9 @@ async def webhook_github(
 ):
     log.info(f"Received GitHub webhook for repo_db_id: {repo_db_id}")
     payload_bytes = await request.body()
-    
-    repo_config = await settings_manager.get_monitored_repository_by_id(repo_db_id)
+
+    # Use our new function that uses the API service's PostgreSQL pool
+    repo_config = await get_monitored_repository_by_id_api(request, repo_db_id)
     if not repo_config:
         log.error(f"No repository configuration found for repo_db_id: {repo_db_id}")
         raise HTTPException(status_code=404, detail="Repository configuration not found.")
@@ -210,7 +235,7 @@ async def webhook_github(
 
     notification_channel_id = repo_config['notification_channel_id']
     discord_embed = format_github_embed(payload, repo_config['repository_url'])
-    
+
     # Convert embed to dict for sending via API
     message_content = {"embeds": [discord_embed.to_dict()]}
 
@@ -231,13 +256,13 @@ async def webhook_github(
     )
     # The send_discord_message_via_api needs to be adapted to send embeds.
     # For now, let's construct the data for the POST request directly as it would expect.
-    
+
     # Corrected way to send embed using the existing send_discord_message_via_api structure
     # The function expects a simple string content. We need to modify it or use aiohttp directly here.
     # Let's assume we'll modify send_discord_message_via_api later or use a more direct aiohttp call.
     # For now, this will likely fail to send an embed correctly with the current send_discord_message_via_api.
     # This is a placeholder for correct embed sending.
-    
+
     # To send an embed, the JSON body to Discord API should be like:
     # { "embeds": [ { ... embed object ... } ] }
     # The current `send_discord_message_via_api` sends `{"content": "message"}`.
@@ -254,10 +279,9 @@ async def webhook_github(
 
     # If send_discord_message_via_api is adapted to handle embeds in its 'content' (e.g. by checking if it's a dict with 'embeds' key)
     # then the following would be more appropriate:
-    send_payload = {"embeds": [discord_embed.to_dict()]}
     # This requires send_discord_message_via_api to be flexible.
     send_payload_dict = {"embeds": [discord_embed.to_dict()]}
-    
+
     send_result = await send_discord_message_via_api(
         channel_id=notification_channel_id,
         content=send_payload_dict # Pass the dict directly
@@ -281,7 +305,8 @@ async def webhook_gitlab(
     log.info(f"Received GitLab webhook for repo_db_id: {repo_db_id}")
     payload_bytes = await request.body()
 
-    repo_config = await settings_manager.get_monitored_repository_by_id(repo_db_id)
+    # Use our new function that uses the API service's PostgreSQL pool
+    repo_config = await get_monitored_repository_by_id_api(request, repo_db_id)
     if not repo_config:
         log.error(f"No repository configuration found for repo_db_id: {repo_db_id}")
         raise HTTPException(status_code=404, detail="Repository configuration not found.")
@@ -314,7 +339,7 @@ async def webhook_gitlab(
 
     notification_channel_id = repo_config['notification_channel_id']
     discord_embed = format_gitlab_embed(payload, repo_config['repository_url'])
-    
+
     # Similar to GitHub, sending embed needs careful handling with send_discord_message_via_api
     if not api_settings.DISCORD_BOT_TOKEN:
         log.error("DISCORD_BOT_TOKEN not configured in API settings. Cannot send webhook notification.")
