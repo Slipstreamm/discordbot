@@ -193,10 +193,20 @@ async def send_discord_message_via_api(channel_id: int, content: str, timeout: f
         "Content-Type": "application/json"
     }
 
-    # Message data
-    data = {
-        "content": content
-    }
+    # Message data - allow for complex payloads (like embeds)
+    data: Dict[str, Any]
+    if isinstance(content, str):
+        data = {"content": content}
+    elif isinstance(content, dict): # Assuming dict means it's a full payload like {"embeds": [...]}
+        data = content
+    else:
+        return {
+            "success": False,
+            "message": "Invalid content type for sending message. Must be string or dict.",
+            "error": "invalid_content_type"
+        }
+    
+    log.debug(f"Sending message to channel {channel_id} with data: {data}")
 
     try:
         # Use global http_session if available, otherwise create a new one
@@ -507,6 +517,32 @@ except ImportError as e:
 app.mount("/api", api_app)
 app.mount("/discordapi", discordapi_app)
 app.mount("/dashboard/api", dashboard_api_app) # Mount the new dashboard API
+
+# Import and mount webhook endpoints
+try:
+    from .webhook_endpoints import router as webhook_router # Relative import
+    app.mount("/webhook", webhook_router) # Mount directly on the main app for simplicity
+    # Or, if you prefer to nest it under /api:
+    # api_app.include_router(webhook_router, prefix="/webhooks", tags=["Webhooks"])
+    log.info("Webhook endpoints loaded and mounted successfully at /webhook")
+except ImportError as e:
+    log.error(f"Could not import or mount webhook endpoints: {e}")
+    # Attempt to find the module for debugging
+    try:
+        import sys
+        log.info(f"Python path: {sys.path}")
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        log.info(f"Current directory for webhook_endpoints: {current_dir}")
+        files_in_current_dir = os.listdir(current_dir)
+        log.info(f"Files in {current_dir}: {files_in_current_dir}")
+        if 'webhook_endpoints.py' in files_in_current_dir:
+            log.info("webhook_endpoints.py found in current directory.")
+        else:
+            log.warning("webhook_endpoints.py NOT found in current directory.")
+    except Exception as e_debug:
+        log.error(f"Debug check for webhook_endpoints failed: {e_debug}")
+
 
 # Log the available routes for debugging
 log.info("Available routes in dashboard_api_app:")

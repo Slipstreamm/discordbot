@@ -225,6 +225,33 @@ async def initialize_database():
                 );
             """)
 
+            # Git Monitored Repositories table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS git_monitored_repositories (
+                    id SERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    repository_url TEXT NOT NULL,
+                    platform VARCHAR(10) NOT NULL CHECK (platform IN ('github', 'gitlab')),
+                    monitoring_method VARCHAR(10) NOT NULL CHECK (monitoring_method IN ('webhook', 'poll')),
+                    notification_channel_id BIGINT NOT NULL,
+                    webhook_secret TEXT, -- Nullable, only used for 'webhook' method
+                    target_branch VARCHAR(255), -- For polling: specific branch to monitor, null for default
+                    last_polled_commit_sha VARCHAR(64), -- Increased length for future-proofing
+                    last_polled_at TIMESTAMP WITH TIME ZONE,
+                    polling_interval_minutes INTEGER DEFAULT 15,
+                    is_public_repo BOOLEAN DEFAULT TRUE, -- Relevant for polling
+                    added_by_user_id BIGINT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_guild_repo_channel UNIQUE (guild_id, repository_url, notification_channel_id),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                );
+            """)
+            # Add indexes for faster lookups
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_git_monitored_repo_guild ON git_monitored_repositories (guild_id);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_git_monitored_repo_method ON git_monitored_repositories (monitoring_method);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_git_monitored_repo_url ON git_monitored_repositories (repository_url);")
+
+
             # Logging Event Toggles table - Stores enabled/disabled state per event type
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS logging_event_toggles (
@@ -2151,3 +2178,198 @@ async def set_mod_log_channel_id(guild_id: int, channel_id: int | None) -> bool:
 #     """Returns the active Redis pool instance."""
 #     log.debug(f"get_redis_pool called. Returning _active_redis_pool with ID: {id(_active_redis_pool)}")
 #     return _active_redis_pool
+
+
+# --- Git Repository Monitoring Functions ---
+
+async def add_monitored_repository(
+    guild_id: int,
+    repository_url: str,
+    platform: str, # 'github' or 'gitlab'
+    monitoring_method: str, # 'webhook' or 'poll'
+    notification_channel_id: int,
+    added_by_user_id: int,
+    webhook_secret: str | None = None, # Only for 'webhook'
+    target_branch: str | None = None, # For polling
+    polling_interval_minutes: int = 15,
+    is_public_repo: bool = True,
+    last_polled_commit_sha: str | None = None # For initial poll setup
+) -> int | None:
+    """Adds a new repository to monitor. Returns the ID of the new row, or None on failure."""
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.error(f"Bot instance or PostgreSQL pool not available for add_monitored_repository (guild {guild_id}).")
+        return None
+
+    try:
+        async with bot.pg_pool.acquire() as conn:
+            # Ensure guild exists
+            await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
+
+            # Insert the new repository monitoring entry
+            repo_id = await conn.fetchval(
+                """
+                INSERT INTO git_monitored_repositories (
+                    guild_id, repository_url, platform, monitoring_method,
+                    notification_channel_id, added_by_user_id, webhook_secret, target_branch,
+                    polling_interval_minutes, is_public_repo, last_polled_commit_sha
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (guild_id, repository_url, notification_channel_id) DO NOTHING
+                RETURNING id;
+                """,
+                guild_id, repository_url, platform, monitoring_method,
+                notification_channel_id, added_by_user_id, webhook_secret, target_branch,
+                polling_interval_minutes, is_public_repo, last_polled_commit_sha
+            )
+            if repo_id:
+                log.info(f"Added repository '{repository_url}' (Branch: {target_branch or 'default'}) for monitoring in guild {guild_id}, channel {notification_channel_id}. ID: {repo_id}")
+            else:
+                # This means ON CONFLICT DO NOTHING was triggered, fetch existing ID
+                existing_id = await conn.fetchval(
+                    """
+                    SELECT id FROM git_monitored_repositories
+                    WHERE guild_id = $1 AND repository_url = $2 AND notification_channel_id = $3;
+                    """,
+                    guild_id, repository_url, notification_channel_id
+                )
+                log.warning(f"Repository '{repository_url}' for guild {guild_id}, channel {notification_channel_id} already exists with ID {existing_id}. Not adding again.")
+                return existing_id # Return existing ID if it was a conflict
+            return repo_id
+    except Exception as e:
+        log.exception(f"Database error adding monitored repository '{repository_url}' for guild {guild_id}: {e}")
+        return None
+
+
+async def get_monitored_repository_by_id(repo_db_id: int) -> Dict | None:
+    """Gets details of a monitored repository by its database ID."""
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.warning(f"Bot instance or PostgreSQL pool not available for get_monitored_repository_by_id (ID {repo_db_id}).")
+        return None
+    try:
+        async with bot.pg_pool.acquire() as conn:
+            record = await conn.fetchrow(
+                "SELECT * FROM git_monitored_repositories WHERE id = $1",
+                repo_db_id
+            )
+            return dict(record) if record else None
+    except Exception as e:
+        log.exception(f"Database error getting monitored repository by ID {repo_db_id}: {e}")
+        return None
+
+async def get_monitored_repository_by_url(guild_id: int, repository_url: str, notification_channel_id: int) -> Dict | None:
+    """Gets details of a monitored repository by its URL and channel for a specific guild."""
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.warning(f"Bot instance or PostgreSQL pool not available for get_monitored_repository_by_url (guild {guild_id}).")
+        return None
+    try:
+        async with bot.pg_pool.acquire() as conn:
+            record = await conn.fetchrow(
+                """
+                SELECT * FROM git_monitored_repositories
+                WHERE guild_id = $1 AND repository_url = $2 AND notification_channel_id = $3
+                """,
+                guild_id, repository_url, notification_channel_id
+            )
+            return dict(record) if record else None
+    except Exception as e:
+        log.exception(f"Database error getting monitored repository by URL '{repository_url}' for guild {guild_id}: {e}")
+        return None
+
+
+async def update_repository_polling_status(repo_db_id: int, last_polled_commit_sha: str, last_polled_at: asyncio.Future | None = None) -> bool:
+    """Updates the last polled commit SHA and timestamp for a repository."""
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.error(f"Bot instance or PostgreSQL pool not available for update_repository_polling_status (ID {repo_db_id}).")
+        return False
+
+    # If last_polled_at is not provided, use current time
+    current_time = last_polled_at if last_polled_at else datetime.datetime.now(datetime.timezone.utc)
+
+    try:
+        async with bot.pg_pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE git_monitored_repositories
+                SET last_polled_commit_sha = $2, last_polled_at = $3
+                WHERE id = $1;
+                """,
+                repo_db_id, last_polled_commit_sha, current_time
+            )
+            log.debug(f"Updated polling status for repository ID {repo_db_id} to SHA {last_polled_commit_sha[:7]}.")
+            return True
+    except Exception as e:
+        log.exception(f"Database error updating polling status for repository ID {repo_db_id}: {e}")
+        return False
+
+
+async def remove_monitored_repository(guild_id: int, repository_url: str, notification_channel_id: int) -> bool:
+    """Removes a repository from monitoring for a specific guild and channel."""
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.error(f"Bot instance or PostgreSQL pool not available for remove_monitored_repository (guild {guild_id}).")
+        return False
+    try:
+        async with bot.pg_pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                DELETE FROM git_monitored_repositories
+                WHERE guild_id = $1 AND repository_url = $2 AND notification_channel_id = $3;
+                """,
+                guild_id, repository_url, notification_channel_id
+            )
+            # DELETE command returns a string like 'DELETE 1' if a row was deleted
+            deleted_count = int(result.split()[-1]) if result.startswith("DELETE") else 0
+            if deleted_count > 0:
+                log.info(f"Removed repository '{repository_url}' from monitoring for guild {guild_id}, channel {notification_channel_id}.")
+                return True
+            else:
+                log.warning(f"No repository '{repository_url}' found for monitoring in guild {guild_id}, channel {notification_channel_id} to remove.")
+                return False
+    except Exception as e:
+        log.exception(f"Database error removing monitored repository '{repository_url}' for guild {guild_id}: {e}")
+        return False
+
+
+async def list_monitored_repositories_for_guild(guild_id: int) -> list[Dict]:
+    """Lists all repositories being monitored for a specific guild."""
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.warning(f"Bot instance or PostgreSQL pool not available for list_monitored_repositories_for_guild (guild {guild_id}).")
+        return []
+    try:
+        async with bot.pg_pool.acquire() as conn:
+            records = await conn.fetch(
+                "SELECT id, repository_url, platform, monitoring_method, notification_channel_id, created_at FROM git_monitored_repositories WHERE guild_id = $1 ORDER BY created_at DESC",
+                guild_id
+            )
+            return [dict(record) for record in records]
+    except Exception as e:
+        log.exception(f"Database error listing monitored repositories for guild {guild_id}: {e}")
+        return []
+
+
+async def get_all_repositories_for_polling() -> list[Dict]:
+    """Fetches all repositories configured for polling."""
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.warning("Bot instance or PostgreSQL pool not available for get_all_repositories_for_polling.")
+        return []
+    try:
+        async with bot.pg_pool.acquire() as conn:
+            records = await conn.fetch(
+                """
+                SELECT id, guild_id, repository_url, platform, notification_channel_id, target_branch,
+                       last_polled_commit_sha, last_polled_at, polling_interval_minutes, is_public_repo
+                FROM git_monitored_repositories
+                WHERE monitoring_method = 'poll'
+                ORDER BY guild_id, id;
+                """
+            )
+            return [dict(record) for record in records]
+    except Exception as e:
+        log.exception(f"Database error fetching all repositories for polling: {e}")
+        return []

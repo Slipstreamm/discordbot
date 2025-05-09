@@ -208,6 +208,97 @@ class GiveawaysCog(commands.Cog, name="Giveaways"):
     # async def list_giveaways_slash(self, interaction: discord.Interaction):
     #     pass
 
+    @app_commands.command(name="grollmanual", description="Manually roll a winner from reactions on a specific message.")
+    @app_commands.describe(
+        message_id="The ID of the message to get reactions from.",
+        winners="How many winners to pick? (default: 1)",
+        emoji="Which emoji should be considered for entry? (default: 🎉)"
+    )
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def manual_roll_giveaway_slash(self, interaction: discord.Interaction, message_id: str, winners: int = 1, emoji: str = "🎉"):
+        """Manually picks winner(s) from reactions on a given message."""
+        if winners < 1:
+            await interaction.response.send_message("Number of winners must be at least 1.", ephemeral=True)
+            return
+
+        try:
+            msg_id = int(message_id)
+        except ValueError:
+            await interaction.response.send_message("Invalid Message ID format. It should be a number.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True) # Acknowledge interaction
+
+        try:
+            # Try to fetch the message from the current channel first, then any channel in the guild
+            message_to_roll = None
+            try:
+                message_to_roll = await interaction.channel.fetch_message(msg_id)
+            except discord.NotFound:
+                # If not in current channel, search all text channels in the guild
+                for channel in interaction.guild.text_channels:
+                    try:
+                        message_to_roll = await channel.fetch_message(msg_id)
+                        if message_to_roll:
+                            break # Found the message
+                    except discord.NotFound:
+                        continue # Not in this channel
+                    except discord.Forbidden:
+                        await interaction.followup.send(f"I don't have permissions to read messages in {channel.mention}. Cannot fetch message {msg_id}.", ephemeral=True)
+                        return
+            
+            if not message_to_roll:
+                await interaction.followup.send(f"Could not find message with ID `{msg_id}` in this server.", ephemeral=True)
+                return
+
+        except discord.Forbidden:
+            await interaction.followup.send(f"I don't have permissions to read message history in {interaction.channel.mention} to find message `{msg_id}`.", ephemeral=True)
+            return
+        except Exception as e:
+            await interaction.followup.send(f"An unexpected error occurred while fetching the message: {e}", ephemeral=True)
+            return
+
+        entrants = set()
+        reaction_found = False
+        for reaction in message_to_roll.reactions:
+            if str(reaction.emoji) == emoji:
+                reaction_found = True
+                async for user in reaction.users():
+                    if not user.bot:
+                        entrants.add(user)
+                break
+        
+        if not reaction_found:
+            await interaction.followup.send(f"No reactions found with the emoji {emoji} on message `{msg_id}`.", ephemeral=True)
+            return
+
+        if not entrants:
+            await interaction.followup.send(f"No valid (non-bot) users reacted with {emoji} on message `{msg_id}`.", ephemeral=True)
+            return
+
+        winners_list = []
+        if len(entrants) <= winners:
+            winners_list = list(entrants)
+        else:
+            winners_list = random.sample(list(entrants), winners)
+
+        if winners_list:
+            winner_mentions = ", ".join(w.mention for w in winners_list)
+            # Announce in the channel where command was used, not necessarily message_to_roll.channel
+            await interaction.followup.send(f"Congratulations {winner_mentions}! You've been manually selected as winner(s) from message `{msg_id}` in {message_to_roll.channel.mention}!", ephemeral=False)
+            
+            # Optionally, also send to the original message's channel if different and bot has perms
+            if interaction.channel.id != message_to_roll.channel.id:
+                try:
+                    await message_to_roll.channel.send(f"Manual roll for message {message_to_roll.jump_url} concluded. Winner(s): {winner_mentions}")
+                except discord.Forbidden:
+                    await interaction.followup.send(f"(Note: I couldn't announce the winner in {message_to_roll.channel.mention} due to missing permissions there.)", ephemeral=True)
+                except discord.HTTPException:
+                     await interaction.followup.send(f"(Note: An error occurred trying to announce the winner in {message_to_roll.channel.mention}.)", ephemeral=True)
+
+        else: # Should not happen if entrants is not empty, but as a safeguard
+            await interaction.followup.send(f"Could not select any winners from the reactions on message `{msg_id}`.", ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GiveawaysCog(bot))
