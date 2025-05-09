@@ -522,6 +522,10 @@ app.mount("/dashboard/api", dashboard_api_app) # Mount the new dashboard API
 try:
     from webhook_endpoints import router as webhook_router # Relative import
     app.mount("/webhook", webhook_router) # Mount directly on the main app for simplicity
+    # After mounting the webhook router
+    log.info("Available routes in webhook_router:")
+    for route in webhook_router.routes:
+        log.info(f"  {route.path} - {route.name} - {route.methods}")
     # Or, if you prefer to nest it under /api:
     # api_app.include_router(webhook_router, prefix="/webhooks", tags=["Webhooks"])
     log.info("Webhook endpoints loaded and mounted successfully at /webhook")

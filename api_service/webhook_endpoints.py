@@ -333,3 +333,7 @@ async def webhook_gitlab(
     else:
         log.error(f"Failed to send GitLab webhook notification for repo {repo_db_id}. Error: {send_result.get('message')}")
         return {"status": "error", "message": f"Webhook received, but notification failed: {send_result.get('message')}"}
+
+@router.get("/test")
+async def test_webhook_router():
+    return {"message": "Webhook router is working. Or mounted, at least."}
