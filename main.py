@@ -320,7 +320,7 @@ async def on_app_command_error(interaction, error):
 
 # Need to import SettingsCog to access CORE_COGS, or define CORE_COGS here.
 # Let's import it, assuming it's safe to do so at the top level.
-# If it causes circular imports, CORE_COGS needs to be defined elsewhere or passed differently
+# If it causes circular imports, CORE_COGS needs to be defined elsewhere or passed differently.
 class CogDisabledError(commands.CheckFailure):
     """Custom exception for disabled cogs."""
     def __init__(self, cog_name):
