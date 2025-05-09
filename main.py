@@ -588,7 +588,39 @@ async def main(args): # Pass parsed args
             log.info("Pools were not initialized or already closed, skipping close_pools in main.")
 
 # Run the main async function
+import signal
+
+def handle_sighup(signum, frame):
+    import subprocess
+    import sys
+    import os
+    try:
+        print("Received SIGHUP: pulling latest code from /home/git/discordbot.git (branch master)...")
+        result = subprocess.run(
+            ["git", "--git-dir=/home/git/discordbot.git", "--work-tree=.", "pull", "origin", "master"],
+            capture_output=True, text=True
+        )
+        print(result.stdout)
+        print(result.stderr)
+        print("Restarting process after SIGHUP...")
+    except Exception as e:
+        print(f"Error during SIGHUP git pull: {e}")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
 if __name__ == '__main__':
+    # Write PID to .pid file for git hook usage
+    try:
+        with open(".pid", "w") as f:
+            f.write(str(os.getpid()))
+    except Exception as e:
+        print(f"Failed to write .pid file: {e}")
+
+    # Register SIGHUP handler (Linux only)
+    try:
+        signal.signal(signal.SIGHUP, handle_sighup)
+    except AttributeError:
+        print("SIGHUP not available on this platform.")
+
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(description="Run the Discord Bot")
     parser.add_argument(
