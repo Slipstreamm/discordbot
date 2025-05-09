@@ -583,6 +583,10 @@ async def root():
 async def ip(request: Request):
     return Response(content=request.client.host, media_type="text/plain")
 
+@app.get("/agent")
+async def agent(request: Request):
+    return Response(content=request.headers.get("user-agent", request.client.host), media_type="text/plain")
+
 # Add root for dashboard API for clarity
 @dashboard_api_app.get("/")
 async def dashboard_api_root():
