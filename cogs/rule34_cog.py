@@ -11,6 +11,7 @@ import typing # Need this for Optional
 import uuid # For subscription IDs
 import asyncio
 import logging # For logging
+from datetime import datetime # For parsing ISO format timestamps
 
 # Cache file path
 CACHE_FILE = "rule34_cache.json"
@@ -979,7 +980,7 @@ class Rule34Cog(commands.Cog, name="Rule34"): # Added name for clarity
                 f"  **Tags:** `{req.get('requested_tags')}`\n"
                 f"  **Target Forum:** {forum_channel_mention}\n"
                 f"  **Proposed Title:** \"{req.get('requested_post_title')}\"\n"
-                f"  **Requested:** {discord.utils.format_dt(discord.utils.parse_isoformat(req.get('request_timestamp')), style='R') if req.get('request_timestamp') else 'Unknown time'}\n"
+                f"  **Requested:** {discord.utils.format_dt(datetime.fromisoformat(req.get('request_timestamp')), style='R') if req.get('request_timestamp') else 'Unknown time'}\n"
                 f"---"
             )
         

@@ -18,7 +18,7 @@ class CaptionCog(commands.Cog, name="Caption"):
             os.path.join("discordbot", "FONT", "sys.ttf") # Bundled fallback
         ]
 
-    async def _add_text_to_gif(self, image_bytes: bytes, caption_text: str):
+    def _add_text_to_gif(self, image_bytes: bytes, caption_text: str):
         """
         Adds text to each frame of a GIF.
         The text is placed in a white bar at the top of the GIF.
