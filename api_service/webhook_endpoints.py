@@ -7,15 +7,10 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, HTTPException, Depends, Header, Path
 import discord # For Color
 
-# Assuming settings_manager and api_server are accessible
-# Adjust imports based on your project structure
+# Import API server functions
 try:
-    from .. import settings_manager # If api_service is a package
     from .api_server import send_discord_message_via_api, get_api_settings # For settings
 except ImportError:
-    # This path might be used if running webhook_endpoints.py directly for testing (not typical for FastAPI)
-    # Or if the structure is flat
-    import settings_manager
     # If api_server.py is in the same directory:
     from api_service.api_server import send_discord_message_via_api, get_api_settings
 
@@ -28,12 +23,46 @@ async def get_monitored_repository_by_id_api(request: Request, repo_db_id: int) 
     """Gets details of a monitored repository by its database ID using the API service's PostgreSQL pool.
     This is an alternative to settings_manager.get_monitored_repository_by_id that doesn't rely on the bot instance.
     """
+    # Log the available attributes in app.state for debugging
+    log.info(f"Available attributes in app.state: {dir(request.app.state)}")
+
     # Try to get the PostgreSQL pool from the FastAPI app state
     pg_pool = getattr(request.app.state, "pg_pool", None)
     if not pg_pool:
         log.warning(f"API service PostgreSQL pool not available for get_monitored_repository_by_id_api (ID {repo_db_id}).")
-        # Fall back to settings_manager if API pool is not available
-        return await settings_manager.get_monitored_repository_by_id(repo_db_id)
+
+        # Instead of falling back to settings_manager, let's try to create a new connection
+        # This is a temporary solution to diagnose the issue
+        try:
+            import asyncpg
+            from api_service.api_server import get_api_settings
+
+            settings = get_api_settings()
+            log.info(f"Attempting to create a new PostgreSQL connection for repo_db_id: {repo_db_id}")
+
+            # Create a new connection to the database
+            conn = await asyncpg.connect(
+                user=settings.POSTGRES_USER,
+                password=settings.POSTGRES_PASSWORD,
+                host=settings.POSTGRES_HOST,
+                database=settings.POSTGRES_SETTINGS_DB
+            )
+
+            # Query the database
+            record = await conn.fetchrow(
+                "SELECT * FROM git_monitored_repositories WHERE id = $1",
+                repo_db_id
+            )
+
+            # Close the connection
+            await conn.close()
+
+            log.info(f"Successfully retrieved repository configuration for ID {repo_db_id} using a new connection")
+            return dict(record) if record else None
+        except Exception as e:
+            log.exception(f"Failed to create a new PostgreSQL connection: {e}")
+            # Don't fall back to settings_manager as it's already failing
+            return None
 
     try:
         async with pg_pool.acquire() as conn:
@@ -45,9 +74,37 @@ async def get_monitored_repository_by_id_api(request: Request, repo_db_id: int) 
             return dict(record) if record else None
     except Exception as e:
         log.exception(f"Database error getting monitored repository by ID {repo_db_id} using API service pool: {e}")
-        # Fall back to settings_manager if there's an error with the API pool
-        log.info(f"Falling back to settings_manager for repository ID {repo_db_id}")
-        return await settings_manager.get_monitored_repository_by_id(repo_db_id)
+
+        # Instead of falling back to settings_manager, try with a new connection
+        try:
+            import asyncpg
+            from api_service.api_server import get_api_settings
+
+            settings = get_api_settings()
+            log.info(f"Attempting to create a new PostgreSQL connection after pool error for repo_db_id: {repo_db_id}")
+
+            # Create a new connection to the database
+            conn = await asyncpg.connect(
+                user=settings.POSTGRES_USER,
+                password=settings.POSTGRES_PASSWORD,
+                host=settings.POSTGRES_HOST,
+                database=settings.POSTGRES_SETTINGS_DB
+            )
+
+            # Query the database
+            record = await conn.fetchrow(
+                "SELECT * FROM git_monitored_repositories WHERE id = $1",
+                repo_db_id
+            )
+
+            # Close the connection
+            await conn.close()
+
+            log.info(f"Successfully retrieved repository configuration for ID {repo_db_id} using a new connection after pool error")
+            return dict(record) if record else None
+        except Exception as e2:
+            log.exception(f"Failed to create a new PostgreSQL connection after pool error: {e2}")
+            return None
 
 def verify_github_signature(payload_body: bytes, secret_token: str, signature_header: str) -> bool:
     """Verify that the payload was sent from GitHub by validating the signature."""
@@ -362,3 +419,101 @@ async def webhook_gitlab(
 @router.get("/test")
 async def test_webhook_router():
     return {"message": "Webhook router is working. Or mounted, at least."}
+
+@router.get("/test-repo/{repo_db_id}")
+async def test_repo_retrieval(request: Request, repo_db_id: int):
+    """Test endpoint to check if we can retrieve repository information."""
+    try:
+        # Try to get the repository using our new function
+        repo_config = await get_monitored_repository_by_id_api(request, repo_db_id)
+
+        if repo_config:
+            return {
+                "message": "Repository found",
+                "repo_config": repo_config
+            }
+        else:
+            return {
+                "message": "Repository not found",
+                "repo_db_id": repo_db_id
+            }
+    except Exception as e:
+        log.exception(f"Error retrieving repository {repo_db_id}: {e}")
+        return {
+            "message": "Error retrieving repository",
+            "repo_db_id": repo_db_id,
+            "error": str(e)
+        }
+
+@router.get("/test-db")
+async def test_db_connection(request: Request):
+    """Test endpoint to check if the database connection is working."""
+    try:
+        # Log the available attributes in app.state for debugging
+        state_attrs = dir(request.app.state)
+        log.info(f"Available attributes in app.state: {state_attrs}")
+
+        # Try to get the PostgreSQL pool from the FastAPI app state
+        pg_pool = getattr(request.app.state, "pg_pool", None)
+        if not pg_pool:
+            log.warning("API service PostgreSQL pool not available for test-db endpoint.")
+
+            # Try to create a new connection
+            try:
+                import asyncpg
+                settings = get_api_settings()
+                log.info("Attempting to create a new PostgreSQL connection for test-db endpoint")
+
+                # Create a new connection to the database
+                conn = await asyncpg.connect(
+                    user=settings.POSTGRES_USER,
+                    password=settings.POSTGRES_PASSWORD,
+                    host=settings.POSTGRES_HOST,
+                    database=settings.POSTGRES_SETTINGS_DB
+                )
+
+                # Test query
+                version = await conn.fetchval("SELECT version()")
+
+                # Close the connection
+                await conn.close()
+
+                return {
+                    "message": "Database connection successful using direct connection",
+                    "app_state_attrs": state_attrs,
+                    "pg_pool_available": False,
+                    "version": version
+                }
+            except Exception as e:
+                log.exception(f"Failed to create a new PostgreSQL connection for test-db endpoint: {e}")
+                return {
+                    "message": "Database connection failed using direct connection",
+                    "app_state_attrs": state_attrs,
+                    "pg_pool_available": False,
+                    "error": str(e)
+                }
+
+        # Use the pool
+        try:
+            async with pg_pool.acquire() as conn:
+                version = await conn.fetchval("SELECT version()")
+                return {
+                    "message": "Database connection successful using app.state.pg_pool",
+                    "app_state_attrs": state_attrs,
+                    "pg_pool_available": True,
+                    "version": version
+                }
+        except Exception as e:
+            log.exception(f"Database error using app.state.pg_pool: {e}")
+            return {
+                "message": "Database connection failed using app.state.pg_pool",
+                "app_state_attrs": state_attrs,
+                "pg_pool_available": True,
+                "error": str(e)
+            }
+    except Exception as e:
+        log.exception(f"Unexpected error in test-db endpoint: {e}")
+        return {
+            "message": "Unexpected error in test-db endpoint",
+            "error": str(e)
+        }
