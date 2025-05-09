@@ -16,7 +16,7 @@ class EarningCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.hybrid_command(name="daily", description="Claim your daily reward.")
+    @commands.command(name="daily", description="Claim your daily reward.")
     async def daily(self, ctx: commands.Context):
         """Allows users to claim a daily currency reward."""
         user_id = ctx.author.id
@@ -54,7 +54,7 @@ class EarningCommands(commands.Cog):
         await ctx.send(embed=embed)
 
 
-    @commands.hybrid_command(name="beg", description="Beg for some spare change.")
+    @commands.command(name="beg", description="Beg for some spare change.")
     async def beg(self, ctx: commands.Context):
         """Allows users to beg for a small amount of currency with a chance of success."""
         user_id = ctx.author.id
@@ -102,7 +102,7 @@ class EarningCommands(commands.Cog):
             )
             await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="work", description="Do some work for a guaranteed reward.")
+    @commands.command(name="work", description="Do some work for a guaranteed reward.")
     async def work(self, ctx: commands.Context):
         """Allows users to perform work for a small, guaranteed reward."""
         user_id = ctx.author.id
@@ -161,7 +161,7 @@ class EarningCommands(commands.Cog):
         embed.add_field(name="New Balance", value=f"${current_balance:,}", inline=False)
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="scavenge", description="Scavenge around for some spare change.") # Renamed to avoid conflict
+    @commands.command(name="scavenge", description="Scavenge around for some spare change.") # Renamed to avoid conflict
     async def scavenge(self, ctx: commands.Context): # Renamed function
         """Allows users to scavenge for a small chance of finding money."""
         user_id = ctx.author.id

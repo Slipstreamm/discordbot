@@ -22,8 +22,8 @@ log = logging.getLogger(__name__)
 # Helper to parse repo URL and determine platform
 def parse_repo_url(url: str) -> tuple[Optional[str], Optional[str]]:
     """Parses a Git repository URL to extract platform and a simplified repo identifier."""
-    # Changed from +? to + for the repo name part for robustness, though unlikely to be the issue for simple URLs.
-    github_match = re.match(r"https^(?:https?://)?(?:www\.)?github\.com/([\w.-]+/[\w.-]+)(?:\.git)?/?$", url)
+    # Fixed regex pattern for GitHub URLs
+    github_match = re.match(r"^(?:https?://)?(?:www\.)?github\.com/([\w.-]+/[\w.-]+)(?:\.git)?/?$", url)
     if github_match:
         return "github", github_match.group(1)
 
@@ -81,7 +81,7 @@ class GitMonitorCog(commands.Cog):
                                 if target_branch:
                                     params["sha"] = target_branch # GitHub uses 'sha' for branch/tag/commit SHA
                                 # No 'since_sha' for GitHub commits list. Manual filtering after fetch.
-                                
+
                                 async with session.get(api_url, params=params) as response:
                                     if response.status == 200:
                                         commits_payload = await response.json()
@@ -91,7 +91,7 @@ class GitMonitorCog(commands.Cog):
                                                 temp_new_commits = [] # Clear previous if we found the last one
                                                 continue
                                             temp_new_commits.append(commit_item)
-                                        
+
                                         if temp_new_commits:
                                             new_commits_data = temp_new_commits
                                             latest_fetched_sha = new_commits_data[-1]['sha']
@@ -124,7 +124,7 @@ class GitMonitorCog(commands.Cog):
                                                 temp_new_commits = []
                                                 continue
                                             temp_new_commits.append(commit_item)
-                                        
+
                                         if temp_new_commits:
                                             new_commits_data = temp_new_commits
                                             latest_fetched_sha = new_commits_data[-1]['id']
@@ -161,7 +161,7 @@ class GitMonitorCog(commands.Cog):
                                 verified_status = "Verified" if verification.get('verified') else "Unverified"
                                 if verification.get('reason') and verification.get('reason') != 'unsigned':
                                     verified_status += f" ({verification.get('reason')})"
-                                
+
                                 # Files changed and stats require another API call per commit: GET /repos/{owner}/{repo}/commits/{sha}
                                 # This is too API intensive for a simple polling loop.
                                 # We will omit detailed file stats for polled GitHub commits for now.
@@ -200,7 +200,7 @@ class GitMonitorCog(commands.Cog):
                                 embed.add_field(name="Commit", value=f"[`{commit_id_short}`]({commit_url})", inline=True)
                                 # embed.add_field(name="Branch", value="default (polling)", inline=True) # Placeholder
                                 embed.add_field(name="Changes", value=files_changed_str, inline=False)
-                            
+
                             if embed:
                                 try:
                                     await channel.send(embed=embed)
@@ -211,11 +211,11 @@ class GitMonitorCog(commands.Cog):
                                     log.error(f"Discord HTTP error sending message for {repo_url}: {dhe}")
                     else:
                         log.warning(f"Channel {channel_id} not found for guild {guild_id} for repo {repo_url}")
-                
+
                 # Update polling status in DB
                 if latest_fetched_sha != last_sha or not new_commits_data : # Update if new sha or just to update timestamp
                     await settings_manager.update_repository_polling_status(repo_id, latest_fetched_sha, datetime.datetime.now(datetime.timezone.utc))
-                
+
                 # Small delay between processing each repo to be nice to APIs
                 await asyncio.sleep(2) # 2 seconds delay
 
@@ -365,14 +365,14 @@ class GitMonitorCog(commands.Cog):
             return
 
         embed = discord.Embed(title=f"Monitored Repositories for {interaction.guild.name}", color=discord.Color.blue())
-        
+
         description_lines = []
         for repo in monitored_repos:
             channel = self.bot.get_channel(repo['notification_channel_id'])
             channel_mention = channel.mention if channel else f"ID: {repo['notification_channel_id']}"
             method = repo['monitoring_method'].capitalize()
             platform = repo['platform'].capitalize()
-            
+
             # Attempt to get a cleaner repo name if possible
             _, repo_name_simple = parse_repo_url(repo['repository_url'])
             display_name = repo_name_simple if repo_name_simple else repo['repository_url']
@@ -384,7 +384,7 @@ class GitMonitorCog(commands.Cog):
                 f"- Channel: {channel_mention}\n"
                 f"- DB ID: `{repo['id']}`"
             )
-        
+
         embed.description = "\n\n".join(description_lines)
         if len(embed.description) > 4000 : # Discord embed description limit
             embed.description = embed.description[:3990] + "\n... (list truncated)"

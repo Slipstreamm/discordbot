@@ -975,7 +975,7 @@ class GamesCog(commands.Cog, name="Games"):
 
     # --- Prefix Commands (Legacy Support) ---
 
-    @commands.command(name="coinflipbet")
+    @commands.command(name="coinflipbet", add_to_app_commands=False)
     async def coinflipbet_prefix(self, ctx: commands.Context, opponent: discord.Member):
         """(Prefix) Challenge another user to a coin flip game."""
         initiator = ctx.author
@@ -989,25 +989,25 @@ class GamesCog(commands.Cog, name="Games"):
         message = await ctx.send(initial_message, view=view)
         view.message = message
 
-    @commands.command(name="coinflip")
+    @commands.command(name="coinflip", add_to_app_commands=False)
     async def coinflip_prefix(self, ctx: commands.Context):
         """(Prefix) Flip a coin."""
         result = flip_coin()
         await ctx.send(f"The coin landed on **{result}**! 🪙")
 
-    @commands.command(name="roll")
+    @commands.command(name="roll", add_to_app_commands=False)
     async def roll_prefix(self, ctx: commands.Context):
         """(Prefix) Roll a dice."""
         result = roll_dice()
         await ctx.send(f"You rolled a **{result}**! 🎲")
 
-    @commands.command(name="magic8ball")
+    @commands.command(name="magic8ball", add_to_app_commands=False)
     async def magic8ball_prefix(self, ctx: commands.Context, *, question: str):
         """(Prefix) Ask the magic 8 ball."""
         response = magic8ball_response()
         await ctx.send(f"🎱 {response}")
 
-    @commands.command(name="tictactoe")
+    @commands.command(name="tictactoe", add_to_app_commands=False)
     async def tictactoe_prefix(self, ctx: commands.Context, opponent: discord.Member):
         """(Prefix) Challenge another user to Tic-Tac-Toe."""
         initiator = ctx.author
@@ -1021,7 +1021,7 @@ class GamesCog(commands.Cog, name="Games"):
         message = await ctx.send(initial_message, view=view)
         view.message = message
 
-    @commands.command(name="tictactoebot")
+    @commands.command(name="tictactoebot", add_to_app_commands=False)
     async def tictactoebot_prefix(self, ctx: commands.Context, difficulty: str = "minimax"):
         """(Prefix) Play Tic-Tac-Toe against the bot."""
         difficulty_value = difficulty.lower()
@@ -1057,7 +1057,7 @@ class GamesCog(commands.Cog, name="Games"):
         )
         view.message = message
 
-    @commands.command(name="rpschallenge")
+    @commands.command(name="rpschallenge", add_to_app_commands=False)
     async def rpschallenge_prefix(self, ctx: commands.Context, opponent: discord.Member):
         """(Prefix) Challenge another user to Rock-Paper-Scissors."""
         initiator = ctx.author
@@ -1071,7 +1071,7 @@ class GamesCog(commands.Cog, name="Games"):
         message = await ctx.send(initial_message, view=view)
         view.message = message
 
-    @commands.command(name="rps")
+    @commands.command(name="rps", add_to_app_commands=False)
     async def rps_prefix(self, ctx: commands.Context, choice: str):
         """(Prefix) Play Rock-Paper-Scissors against the bot."""
         choices = ["Rock", "Paper", "Scissors"]
@@ -1099,7 +1099,7 @@ class GamesCog(commands.Cog, name="Games"):
             f"{result}"
         )
 
-    @commands.command(name="chess")
+    @commands.command(name="chess", add_to_app_commands=False)
     async def chess_prefix(self, ctx: commands.Context, opponent: discord.Member):
         """(Prefix) Start a game of chess with another user."""
         initiator = ctx.author
@@ -1120,12 +1120,12 @@ class GamesCog(commands.Cog, name="Games"):
         asyncio.create_task(view._send_or_update_dm(view.white_player))
         asyncio.create_task(view._send_or_update_dm(view.black_player))
 
-    @commands.command(name="hangman")
+    @commands.command(name="hangman", add_to_app_commands=False)
     async def hangman_prefix(self, ctx: commands.Context):
         """(Prefix) Play a game of Hangman."""
         await play_hangman(self.bot, ctx.channel, ctx.author)
 
-    @commands.command(name="guess")
+    @commands.command(name="guess", add_to_app_commands=False)
     async def guess_prefix(self, ctx: commands.Context, guess: int):
         """(Prefix) Guess a number between 1 and 100."""
         number_to_guess = random.randint(1, 100)
