@@ -602,7 +602,7 @@ def handle_sighup(signum, frame):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 if __name__ == '__main__':
-    # Write PID to .pid file for git hook usage
+    # Write PID to .pid file for git hook use
     try:
         with open(".pid", "w") as f:
             f.write(str(os.getpid()))
