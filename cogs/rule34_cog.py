@@ -824,9 +824,9 @@ class Rule34Cog(commands.Cog, name="Rule34"): # Added name for clarity
                     reason=f"R34Watch subscription for tags: {tags}"
                     # auto_archive_duration can be set here if needed
                 )
-                actual_target_thread_id = str(new_forum_post.id) # The forum post is a thread
-                actual_target_thread_mention = new_forum_post.mention
-                log.info(f"Created new forum post {new_forum_post.id} for tags '{tags}' in forum {target_channel.id}")
+                actual_target_thread_id = str(new_forum_post.thread.id) # The forum post is a thread
+                actual_target_thread_mention = new_forum_post.thread.mention
+                log.info(f"Created new forum post {new_forum_post.thread.id} for tags '{tags}' in forum {target_channel.id}")
             except discord.HTTPException as e:
                 log.error(f"Failed to create forum post for tags '{tags}' in {target_channel.mention}: {e}")
                 return f"❌ Failed to create a new post in forum {target_channel.mention}. Error: {e}"
