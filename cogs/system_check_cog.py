@@ -19,6 +19,17 @@ class SystemCheckCog(commands.Cog):
         self.bot = bot
 
     async def _system_check_logic(self, context_or_interaction):
+        """Check the bot and system status."""
+        # Defer the response to prevent interaction timeout
+        await context_or_interaction.response.defer(thinking=True)
+        try:
+            embed = await self._system_check_logic(context_or_interaction)
+            await context_or_interaction.followup.send(embed=embed)
+        except Exception as e:
+            print(f"Error in systemcheck command: {e}")
+            await context_or_interaction.followup.send(f"An error occurred while checking system status: {e}")
+
+    async def _system_check_logic(self, context_or_interaction):
         """Return detailed bot and system information as a Discord embed."""
         # Bot information
         bot_user = self.bot.user
@@ -35,15 +46,14 @@ class SystemCheckCog(commands.Cog):
                         user_ids.add(member.id)
             except Exception as e:
                 print(f"Error counting members in guild {guild.name}: {e}")
-
         user_count = len(user_ids)
-
 
         # System information
         system = platform.system()
         os_info = f"{system} {platform.release()}"
         hostname = platform.node()
-        distro_info_str = "" # Renamed variable
+        distro_info_str = ""  # Renamed variable
+
         if system == "Linux":
             try:
                 # Use distro library for better Linux distribution detection
@@ -54,19 +64,20 @@ class SystemCheckCog(commands.Cog):
             except Exception as e:
                 distro_info_str = f"\n**Distro:** (Error getting info: {e})"
         elif system == "Windows":
-             # Add Windows version details if possible
-             try:
-                 win_ver = platform.version() # e.g., '10.0.19041'
-                 win_build = platform.win32_ver()[1] # e.g., '19041'
-                 os_info = f"Windows {win_ver} (Build {win_build})"
-             except Exception as e:
-                 print(f"Could not get detailed Windows version: {e}")
-                 # Keep the basic os_info
+            # Add Windows version details if possible
+            try:
+                win_ver = platform.version()  # e.g., '10.0.19041'
+                win_build = platform.win32_ver()[1]  # e.g., '19041'
+                os_info = f"Windows {win_ver} (Build {win_build})"
+            except Exception as e:
+                print(f"Could not get detailed Windows version: {e}")
+                # Keep the basic os_info
 
         uptime_seconds = time.time() - psutil.boot_time()
         days, remainder = divmod(uptime_seconds, 86400)
         hours, remainder = divmod(remainder, 3600)
         minutes, seconds = divmod(remainder, 60)
+
         uptime_str = ""
         if days > 0:
             uptime_str += f"{int(days)}d "
@@ -80,20 +91,24 @@ class SystemCheckCog(commands.Cog):
         try:
             # Use a simpler approach for CPU name to avoid potential slowdowns
             if platform.system() == "Windows":
-                cpu_name = platform.processor()
+                cpu_name_base = platform.processor()
             elif platform.system() == "Linux":
                 try:
                     with open("/proc/cpuinfo", "r") as f:
                         for line in f:
                             if line.startswith("model name"):
-                                cpu_name = line.split(":")[1].strip()
+                                cpu_name_base = line.split(":")[1].strip()
                                 break
                         else:
-                            cpu_name = "Unknown CPU"
+                            cpu_name_base = "Unknown CPU"
                 except:
-                    cpu_name = platform.processor() or "Unknown CPU"
+                    cpu_name_base = platform.processor() or "Unknown CPU"
             else:
-                cpu_name = platform.processor() or "Unknown CPU"
+                cpu_name_base = platform.processor() or "Unknown CPU"
+
+            physical_cores = psutil.cpu_count(logical=False)
+            total_threads = psutil.cpu_count(logical=True)
+            cpu_name = f"{cpu_name_base} ({physical_cores}C/{total_threads}T)"
         except Exception as e:
             print(f"Error getting CPU info: {e}")
             cpu_name = "N/A"
@@ -117,7 +132,7 @@ class SystemCheckCog(commands.Cog):
             else:
                 gpu_info = "No dedicated GPU detected by GPUtil."
         except ImportError:
-             gpu_info = "GPUtil library not installed. Cannot get detailed GPU info."
+            gpu_info = "GPUtil library not installed. Cannot get detailed GPU info."
         except Exception as e:
             print(f"Error getting GPU info via GPUtil: {e}")
             gpu_info = f"Error retrieving GPU info: {e}"
@@ -129,8 +144,9 @@ class SystemCheckCog(commands.Cog):
         elif isinstance(context_or_interaction, discord.Interaction):
             user = context_or_interaction.user
             avatar_url = user.display_avatar.url
-        else: # Fallback or handle error if needed
-            user = self.bot.user # Or some default
+        else:
+            # Fallback or handle error if needed
+            user = self.bot.user  # Or some default
             avatar_url = self.bot.user.display_avatar.url if self.bot.user else None
 
         # Create embed
@@ -149,7 +165,7 @@ class SystemCheckCog(commands.Cog):
                 inline=False
             )
         else:
-             embed.add_field(
+            embed.add_field(
                 name="🤖 Bot Information",
                 value="Bot user information not available.",
                 inline=False
@@ -158,7 +174,7 @@ class SystemCheckCog(commands.Cog):
         # System Info Field
         embed.add_field(
             name="🖥️ System Information",
-            value=f"**OS:** {os_info}{distro_info_str}\n" # Use renamed variable
+            value=f"**OS:** {os_info}{distro_info_str}\n"  # Use renamed variable
                   f"**Hostname:** {hostname}\n"
                   f"**Uptime:** {uptime}",
             inline=False
@@ -177,8 +193,8 @@ class SystemCheckCog(commands.Cog):
 
         if user:
             embed.set_footer(text=f"Requested by: {user.display_name}", icon_url=avatar_url)
-        embed.timestamp = discord.utils.utcnow()
 
+        embed.timestamp = discord.utils.utcnow()
         return embed
 
     # --- Prefix Command ---
