@@ -15,7 +15,7 @@ class CaptionCog(commands.Cog, name="Caption"):
         self.preferred_fonts = [
             "impact.ttf",  # Common name for Impact font file
             "Impact",      # Font name Pillow might find if installed system-wide
-            os.path.join("discordbot", "FONT", "sys.ttf") # Bundled fallback
+            os.path.join("FONT", "impact.ttf") # Bundled fallback
         ]
 
     def _add_text_to_gif(self, image_bytes: bytes, caption_text: str):
