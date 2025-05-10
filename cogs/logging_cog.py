@@ -1497,11 +1497,23 @@ class LoggingCog(commands.Cog):
              audit_event_key = "audit_message_bulk_delete"
              if not await self._check_log_enabled(guild.id, audit_event_key): return
              title = "🛡️ Audit Log: Message Bulk Delete"
-             channel = entry.target # Channel is the target here
+             channel_target = entry.target # Channel is the target here
              count = entry.extra.count
-             action_desc = f"{user.mention} bulk deleted {count} messages in {channel.mention}"
+             
+             channel_display = ""
+             if hasattr(channel_target, 'mention'):
+                 channel_display = channel_target.mention
+             elif isinstance(channel_target, discord.Object) and hasattr(channel_target, 'id'):
+                 # If it's an Object, it might be a deleted channel or not fully loaded.
+                 # Using <#id> is a safe way to reference it.
+                 channel_display = f"<#{channel_target.id}>"
+             else:
+                 # Fallback if it's not an object with 'mention' or an 'Object' with 'id'
+                 channel_display = f"an unknown channel (ID: {getattr(channel_target, 'id', 'N/A')})"
+
+             action_desc = f"{user.mention} bulk deleted {count} messages in {channel_display}"
              color = discord.Color.dark_grey()
-             # self._add_id_footer(embed, channel, id_name="Channel ID") # Footer set later
+             # self._add_id_footer(embed, channel_target, id_name="Channel ID") # Footer set later
 
         # --- Emoji Events ---
         elif entry.action == discord.AuditLogAction.emoji_create:
