@@ -175,7 +175,7 @@ def format_github_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed
 
             field_value = (
                 f"Author: {author_name}\n"
-                f"Message: {commit_msg.splitlines()[0]}\n" # First line of commit message
+                f"Message: {commit_msg.splitlines()[0]}\n" # First line of commit message.
                 f"Verification: {verified_status}\n"
                 f"Stats: {stats_str}\n"
                 f"[View Commit]({commit_url})"
