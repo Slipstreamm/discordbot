@@ -1258,3 +1258,101 @@ async def get_conversation_messages(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting conversation messages: {str(e)}"
         )
+
+# --- Git Monitor Webhook Event Configuration Endpoints ---
+
+class GitRepositoryEventSettings(BaseModel):
+    events: List[str]
+
+class AvailableGitEventsResponse(BaseModel):
+    platform: str
+    events: List[str]
+
+SUPPORTED_GITHUB_EVENTS = [
+    "push", "issues", "issue_comment", "pull_request", "pull_request_review",
+    "pull_request_review_comment", "release", "fork", "star", "watch",
+    "commit_comment", "create", "delete", "deployment", "deployment_status",
+    "gollum", "member", "milestone", "project_card", "project_column", "project",
+    "public", "repository_dispatch", "status"
+    # Add more as needed/supported by formatters
+]
+SUPPORTED_GITLAB_EVENTS = [
+    "push", "tag_push", "issues", "note", "merge_request", "wiki_page",
+    "pipeline", "job", "release"
+    # Add more as needed/supported by formatters
+    # GitLab uses "push_events", "issues_events" etc. in webhook config,
+    # but object_kind in payload is often singular like "push", "issue".
+    # We'll store and expect the singular/object_kind style.
+]
+
+@router.get("/git_monitors/available_events/{platform}", response_model=AvailableGitEventsResponse)
+async def get_available_git_events(
+    platform: str,
+    _user: dict = Depends(get_dashboard_user) # Basic auth to access
+):
+    """Get a list of available/supported webhook event types for a given platform."""
+    if platform == "github":
+        return AvailableGitEventsResponse(platform="github", events=SUPPORTED_GITHUB_EVENTS)
+    elif platform == "gitlab":
+        return AvailableGitEventsResponse(platform="gitlab", events=SUPPORTED_GITLAB_EVENTS)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid platform specified. Use 'github' or 'gitlab'.")
+
+
+@router.get("/guilds/{guild_id}/git_monitors/{repo_db_id}/events", response_model=GitRepositoryEventSettings)
+async def get_git_repository_event_settings(
+    guild_id: int, # Added for verify_dashboard_guild_admin
+    repo_db_id: int,
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin) # Ensures user is admin of the guild
+):
+    """Get the current allowed webhook events for a specific monitored repository."""
+    try:
+        repo_config = await settings_manager.get_monitored_repository_by_id(repo_db_id)
+        if not repo_config:
+            raise HTTPException(status_code=404, detail="Monitored repository not found.")
+        if repo_config['guild_id'] != guild_id: # Ensure the repo belongs to the specified guild
+             raise HTTPException(status_code=403, detail="Repository does not belong to this guild.")
+
+        allowed_events = repo_config.get('allowed_webhook_events', ['push']) # Default to ['push']
+        return GitRepositoryEventSettings(events=allowed_events)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Error getting git repository event settings for repo {repo_db_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve repository event settings.")
+
+@router.put("/guilds/{guild_id}/git_monitors/{repo_db_id}/events", status_code=status.HTTP_200_OK)
+async def update_git_repository_event_settings(
+    guild_id: int, # Added for verify_dashboard_guild_admin
+    repo_db_id: int,
+    settings: GitRepositoryEventSettings,
+    _user: dict = Depends(get_dashboard_user),
+    _admin: bool = Depends(verify_dashboard_guild_admin) # Ensures user is admin of the guild
+):
+    """Update the allowed webhook events for a specific monitored repository."""
+    try:
+        repo_config = await settings_manager.get_monitored_repository_by_id(repo_db_id)
+        if not repo_config:
+            raise HTTPException(status_code=404, detail="Monitored repository not found.")
+        if repo_config['guild_id'] != guild_id: # Ensure the repo belongs to the specified guild
+             raise HTTPException(status_code=403, detail="Repository does not belong to this guild.")
+        if repo_config['monitoring_method'] != 'webhook':
+            raise HTTPException(status_code=400, detail="Event settings are only applicable for webhook monitoring method.")
+
+        # Validate events against supported list for the platform
+        platform = repo_config['platform']
+        supported_events = SUPPORTED_GITHUB_EVENTS if platform == "github" else SUPPORTED_GITLAB_EVENTS
+        for event in settings.events:
+            if event not in supported_events:
+                raise HTTPException(status_code=400, detail=f"Event '{event}' is not supported for platform '{platform}'.")
+
+        success = await settings_manager.update_monitored_repository_events(repo_db_id, settings.events)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update repository event settings.")
+        return {"message": "Repository event settings updated successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Error updating git repository event settings for repo {repo_db_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update repository event settings.")

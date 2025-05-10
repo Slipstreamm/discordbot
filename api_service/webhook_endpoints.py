@@ -106,6 +106,13 @@ async def get_monitored_repository_by_id_api(request: Request, repo_db_id: int) 
             log.exception(f"Failed to create a new PostgreSQL connection after pool error: {e2}")
             return None
 
+async def get_allowed_events_for_repo(request: Request, repo_db_id: int) -> list[str]:
+    """Helper to fetch allowed_webhook_events for a repo."""
+    repo_config = await get_monitored_repository_by_id_api(request, repo_db_id)
+    if repo_config and repo_config.get('allowed_webhook_events'):
+        return repo_config['allowed_webhook_events']
+    return ['push'] # Default to 'push' if not set or not found, for safety
+
 def verify_github_signature(payload_body: bytes, secret_token: str, signature_header: str) -> bool:
     """Verify that the payload was sent from GitHub by validating the signature."""
     if not signature_header:
@@ -135,7 +142,12 @@ def verify_gitlab_token(secret_token: str, gitlab_token_header: str) -> bool:
         return False
     return True
 
-def format_github_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
+# Placeholder for other GitHub event formatters
+# def format_github_issue_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed: ...
+# def format_github_pull_request_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed: ...
+# def format_github_release_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed: ...
+
+def format_github_push_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
     """Formats a GitHub push event payload into a Discord embed."""
     try:
         repo_name = payload.get('repository', {}).get('full_name', repo_url)
@@ -190,12 +202,16 @@ def format_github_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed
 
         return embed
     except Exception as e:
-        log.exception(f"Error formatting GitHub embed: {e}")
-        embed = discord.Embed(title="Error Processing GitHub Webhook", description=f"Could not parse commit details. Raw payload might be available in logs.\nError: {e}", color=discord.Color.red())
+        log.exception(f"Error formatting GitHub push embed: {e}")
+        embed = discord.Embed(title="Error Processing GitHub Push Webhook", description=f"Could not parse commit details. Raw payload might be available in logs.\nError: {e}", color=discord.Color.red())
         return embed
 
+# Placeholder for other GitLab event formatters
+# def format_gitlab_issue_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed: ...
+# def format_gitlab_merge_request_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed: ...
+# def format_gitlab_tag_push_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed: ...
 
-def format_gitlab_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
+def format_gitlab_push_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
     """Formats a GitLab push event payload into a Discord embed."""
     try:
         project_name = payload.get('project', {}).get('path_with_namespace', repo_url)
@@ -244,9 +260,360 @@ def format_gitlab_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed
 
         return embed
     except Exception as e:
-        log.exception(f"Error formatting GitLab embed: {e}")
-        embed = discord.Embed(title="Error Processing GitLab Webhook", description=f"Could not parse commit details. Raw payload might be available in logs.\nError: {e}", color=discord.Color.red())
+        log.exception(f"Error formatting GitLab push embed: {e}")
+        embed = discord.Embed(title="Error Processing GitLab Push Webhook", description=f"Could not parse commit details. Raw payload might be available in logs.\nError: {e}", color=discord.Color.red())
         return embed
+
+# --- GitHub - New Event Formatters ---
+
+def format_github_issues_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
+    """Formats a Discord embed for a GitHub issues event."""
+    try:
+        action = payload.get('action', 'Unknown action')
+        issue_data = payload.get('issue', {})
+        repo_name = payload.get('repository', {}).get('full_name', repo_url)
+        sender = payload.get('sender', {})
+
+        title = issue_data.get('title', 'Untitled Issue')
+        issue_number = issue_data.get('number')
+        issue_url = issue_data.get('html_url', repo_url)
+        user_login = sender.get('login', 'Unknown User')
+        user_url = sender.get('html_url', '#')
+        user_avatar = sender.get('avatar_url')
+
+        color = discord.Color.green() if action == "opened" else \
+                discord.Color.red() if action == "closed" else \
+                discord.Color.gold() if action == "reopened" else \
+                discord.Color.light_grey()
+
+        embed = discord.Embed(
+            title=f"Issue {action.capitalize()}: #{issue_number} {title}",
+            url=issue_url,
+            description=f"Issue in `{repo_name}` was {action}.",
+            color=color
+        )
+        embed.set_author(name=user_login, url=user_url, icon_url=user_avatar)
+        
+        if issue_data.get('body') and action == "opened":
+            body = issue_data['body']
+            embed.add_field(name="Description", value=body[:1020] + "..." if len(body) > 1024 else body, inline=False)
+        
+        if issue_data.get('labels'):
+            labels = ", ".join([f"`{label['name']}`" for label in issue_data['labels']])
+            embed.add_field(name="Labels", value=labels if labels else "None", inline=True)
+
+        if issue_data.get('assignee'):
+            assignee = issue_data['assignee']['login']
+            embed.add_field(name="Assignee", value=f"[{assignee}]({issue_data['assignee']['html_url']})", inline=True)
+        elif issue_data.get('assignees'):
+            assignees = ", ".join([f"[{a['login']}]({a['html_url']})" for a in issue_data['assignees']])
+            embed.add_field(name="Assignees", value=assignees if assignees else "None", inline=True)
+
+        return embed
+    except Exception as e:
+        log.error(f"Error formatting GitHub issues embed: {e}\nPayload: {payload}")
+        return discord.Embed(title="Error Processing GitHub Issue Event", description=str(e), color=discord.Color.red())
+
+def format_github_pull_request_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
+    """Formats a Discord embed for a GitHub pull_request event."""
+    try:
+        action = payload.get('action', 'Unknown action')
+        pr_data = payload.get('pull_request', {})
+        repo_name = payload.get('repository', {}).get('full_name', repo_url)
+        sender = payload.get('sender', {})
+
+        title = pr_data.get('title', 'Untitled Pull Request')
+        pr_number = payload.get('number', pr_data.get('number')) # 'number' is top-level for some PR actions
+        pr_url = pr_data.get('html_url', repo_url)
+        user_login = sender.get('login', 'Unknown User')
+        user_url = sender.get('html_url', '#')
+        user_avatar = sender.get('avatar_url')
+
+        color = discord.Color.green() if action == "opened" else \
+                discord.Color.red() if action == "closed" and pr_data.get('merged') is False else \
+                discord.Color.purple() if action == "closed" and pr_data.get('merged') is True else \
+                discord.Color.gold() if action == "reopened" else \
+                discord.Color.blue() if action in ["synchronize", "ready_for_review"] else \
+                discord.Color.light_grey()
+
+        description = f"Pull Request #{pr_number} in `{repo_name}` was {action}."
+        if action == "closed" and pr_data.get('merged'):
+            description = f"Pull Request #{pr_number} in `{repo_name}` was merged."
+        
+        embed = discord.Embed(
+            title=f"PR {action.capitalize()}: #{pr_number} {title}",
+            url=pr_url,
+            description=description,
+            color=color
+        )
+        embed.set_author(name=user_login, url=user_url, icon_url=user_avatar)
+
+        if pr_data.get('body') and action == "opened":
+            body = pr_data['body']
+            embed.add_field(name="Description", value=body[:1020] + "..." if len(body) > 1024 else body, inline=False)
+        
+        embed.add_field(name="Base Branch", value=f"`{pr_data.get('base', {}).get('ref', 'N/A')}`", inline=True)
+        embed.add_field(name="Head Branch", value=f"`{pr_data.get('head', {}).get('ref', 'N/A')}`", inline=True)
+
+        if action == "closed":
+            merged_by = pr_data.get('merged_by')
+            if merged_by:
+                embed.add_field(name="Merged By", value=f"[{merged_by['login']}]({merged_by['html_url']})", inline=True)
+            else:
+                 embed.add_field(name="Status", value="Closed without merging", inline=True)
+
+
+        return embed
+    except Exception as e:
+        log.error(f"Error formatting GitHub PR embed: {e}\nPayload: {payload}")
+        return discord.Embed(title="Error Processing GitHub PR Event", description=str(e), color=discord.Color.red())
+
+def format_github_release_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
+    """Formats a Discord embed for a GitHub release event."""
+    try:
+        action = payload.get('action', 'Unknown action') # e.g., published, created, edited
+        release_data = payload.get('release', {})
+        repo_name = payload.get('repository', {}).get('full_name', repo_url)
+        sender = payload.get('sender', {})
+
+        tag_name = release_data.get('tag_name', 'N/A')
+        release_name = release_data.get('name', tag_name)
+        release_url = release_data.get('html_url', repo_url)
+        user_login = sender.get('login', 'Unknown User')
+        user_url = sender.get('html_url', '#')
+        user_avatar = sender.get('avatar_url')
+
+        color = discord.Color.teal() if action == "published" else discord.Color.blurple()
+
+        embed = discord.Embed(
+            title=f"Release {action.capitalize()}: {release_name}",
+            url=release_url,
+            description=f"A new release `{tag_name}` was {action} in `{repo_name}`.",
+            color=color
+        )
+        embed.set_author(name=user_login, url=user_url, icon_url=user_avatar)
+
+        if release_data.get('body'):
+            body = release_data['body']
+            embed.add_field(name="Release Notes", value=body[:1020] + "..." if len(body) > 1024 else body, inline=False)
+        
+        return embed
+    except Exception as e:
+        log.error(f"Error formatting GitHub release embed: {e}\nPayload: {payload}")
+        return discord.Embed(title="Error Processing GitHub Release Event", description=str(e), color=discord.Color.red())
+
+def format_github_issue_comment_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
+    """Formats a Discord embed for a GitHub issue_comment event."""
+    try:
+        action = payload.get('action', 'Unknown action') # created, edited, deleted
+        comment_data = payload.get('comment', {})
+        issue_data = payload.get('issue', {})
+        repo_name = payload.get('repository', {}).get('full_name', repo_url)
+        sender = payload.get('sender', {})
+
+        comment_url = comment_data.get('html_url', repo_url)
+        user_login = sender.get('login', 'Unknown User')
+        user_url = sender.get('html_url', '#')
+        user_avatar = sender.get('avatar_url')
+        
+        issue_title = issue_data.get('title', 'Untitled Issue')
+        issue_number = issue_data.get('number')
+
+        color = discord.Color.greyple()
+
+        embed = discord.Embed(
+            title=f"Comment {action} on Issue #{issue_number}: {issue_title}",
+            url=comment_url,
+            color=color
+        )
+        embed.set_author(name=user_login, url=user_url, icon_url=user_avatar)
+
+        if comment_data.get('body'):
+            body = comment_data['body']
+            embed.description = body[:2040] + "..." if len(body) > 2048 else body
+        
+        return embed
+    except Exception as e:
+        log.error(f"Error formatting GitHub issue_comment embed: {e}\nPayload: {payload}")
+        return discord.Embed(title="Error Processing GitHub Issue Comment Event", description=str(e), color=discord.Color.red())
+
+# --- GitLab - New Event Formatters ---
+
+def format_gitlab_issue_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
+    """Formats a Discord embed for a GitLab issue event (object_kind: 'issue')."""
+    try:
+        attributes = payload.get('object_attributes', {})
+        user = payload.get('user', {})
+        project_data = payload.get('project', {})
+        repo_name = project_data.get('path_with_namespace', repo_url)
+
+        action = attributes.get('action', 'unknown') # open, close, reopen, update
+        title = attributes.get('title', 'Untitled Issue')
+        issue_iid = attributes.get('iid') # Internal ID for display
+        issue_url = attributes.get('url', repo_url)
+        user_name = user.get('name', 'Unknown User')
+        user_avatar = user.get('avatar_url')
+
+        color = discord.Color.green() if action == "open" else \
+                discord.Color.red() if action == "close" else \
+                discord.Color.gold() if action == "reopen" else \
+                discord.Color.light_grey()
+        
+        embed = discord.Embed(
+            title=f"Issue {action.capitalize()}: #{issue_iid} {title}",
+            url=issue_url,
+            description=f"Issue in `{repo_name}` was {action}.",
+            color=color
+        )
+        embed.set_author(name=user_name, icon_url=user_avatar)
+
+        if attributes.get('description') and action == "open":
+            desc = attributes['description']
+            embed.add_field(name="Description", value=desc[:1020] + "..." if len(desc) > 1024 else desc, inline=False)
+
+        if attributes.get('labels'):
+            labels = ", ".join([f"`{label['title']}`" for label in attributes['labels']])
+            embed.add_field(name="Labels", value=labels if labels else "None", inline=True)
+        
+        assignees_data = payload.get('assignees', [])
+        if assignees_data:
+            assignees = ", ".join([f"{a['name']}" for a in assignees_data])
+            embed.add_field(name="Assignees", value=assignees, inline=True)
+
+        return embed
+    except Exception as e:
+        log.error(f"Error formatting GitLab issue embed: {e}\nPayload: {payload}")
+        return discord.Embed(title="Error Processing GitLab Issue Event", description=str(e), color=discord.Color.red())
+
+def format_gitlab_merge_request_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
+    """Formats a Discord embed for a GitLab merge_request event."""
+    try:
+        attributes = payload.get('object_attributes', {})
+        user = payload.get('user', {})
+        project_data = payload.get('project', {})
+        repo_name = project_data.get('path_with_namespace', repo_url)
+
+        action = attributes.get('action', 'unknown') # open, close, reopen, update, merge
+        title = attributes.get('title', 'Untitled Merge Request')
+        mr_iid = attributes.get('iid')
+        mr_url = attributes.get('url', repo_url)
+        user_name = user.get('name', 'Unknown User')
+        user_avatar = user.get('avatar_url')
+
+        color = discord.Color.green() if action == "open" else \
+                discord.Color.red() if action == "close" else \
+                discord.Color.purple() if action == "merge" else \
+                discord.Color.gold() if action == "reopen" else \
+                discord.Color.blue() if action == "update" else \
+                discord.Color.light_grey()
+
+        description = f"Merge Request !{mr_iid} in `{repo_name}` was {action}."
+        if action == "merge":
+            description = f"Merge Request !{mr_iid} in `{repo_name}` was merged."
+
+        embed = discord.Embed(
+            title=f"MR {action.capitalize()}: !{mr_iid} {title}",
+            url=mr_url,
+            description=description,
+            color=color
+        )
+        embed.set_author(name=user_name, icon_url=user_avatar)
+
+        if attributes.get('description') and action == "open":
+            desc = attributes['description']
+            embed.add_field(name="Description", value=desc[:1020] + "..." if len(desc) > 1024 else desc, inline=False)
+
+        embed.add_field(name="Source Branch", value=f"`{attributes.get('source_branch', 'N/A')}`", inline=True)
+        embed.add_field(name="Target Branch", value=f"`{attributes.get('target_branch', 'N/A')}`", inline=True)
+        
+        if action == "merge" and attributes.get('merge_commit_sha'):
+            embed.add_field(name="Merge Commit", value=f"`{attributes['merge_commit_sha'][:8]}`", inline=True)
+
+        return embed
+    except Exception as e:
+        log.error(f"Error formatting GitLab MR embed: {e}\nPayload: {payload}")
+        return discord.Embed(title="Error Processing GitLab MR Event", description=str(e), color=discord.Color.red())
+
+def format_gitlab_release_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
+    """Formats a Discord embed for a GitLab release event."""
+    try:
+        # GitLab release webhook payload structure is simpler
+        action = payload.get('action', 'created') # create, update
+        tag_name = payload.get('tag', 'N/A')
+        release_name = payload.get('name', tag_name)
+        release_url = payload.get('url', repo_url)
+        project_data = payload.get('project', {})
+        repo_name = project_data.get('path_with_namespace', repo_url)
+        # GitLab release hooks don't typically include a 'user' who performed the action directly in the root.
+        # It might be inferred or logged differently by GitLab. For now, we'll omit a specific author.
+
+        color = discord.Color.teal() if action == "create" else discord.Color.blurple()
+
+        embed = discord.Embed(
+            title=f"Release {action.capitalize()}: {release_name}",
+            url=release_url,
+            description=f"A release `{tag_name}` was {action} in `{repo_name}`.",
+            color=color
+        )
+        # embed.set_author(name=project_data.get('namespace', 'GitLab')) # Or project name
+
+        if payload.get('description'):
+            desc = payload['description']
+            embed.add_field(name="Release Notes", value=desc[:1020] + "..." if len(desc) > 1024 else desc, inline=False)
+        
+        return embed
+    except Exception as e:
+        log.error(f"Error formatting GitLab release embed: {e}\nPayload: {payload}")
+        return discord.Embed(title="Error Processing GitLab Release Event", description=str(e), color=discord.Color.red())
+
+def format_gitlab_note_embed(payload: Dict[str, Any], repo_url: str) -> discord.Embed:
+    """Formats a Discord embed for a GitLab note event (comments)."""
+    try:
+        attributes = payload.get('object_attributes', {})
+        user = payload.get('user', {})
+        project_data = payload.get('project', {})
+        repo_name = project_data.get('path_with_namespace', repo_url)
+
+        note_type = attributes.get('noteable_type', 'Comment') # Issue, MergeRequest, Commit, Snippet
+        note_url = attributes.get('url', repo_url)
+        user_name = user.get('name', 'Unknown User')
+        user_avatar = user.get('avatar_url')
+
+        title_prefix = "New Comment"
+        target_info = ""
+
+        if note_type == 'Commit':
+            commit_data = payload.get('commit', {})
+            title_prefix = f"Comment on Commit `{commit_data.get('id', 'N/A')[:7]}`"
+        elif note_type == 'Issue':
+            issue_data = payload.get('issue', {})
+            title_prefix = f"Comment on Issue #{issue_data.get('iid', 'N/A')}"
+            target_info = issue_data.get('title', '')
+        elif note_type == 'MergeRequest':
+            mr_data = payload.get('merge_request', {})
+            title_prefix = f"Comment on MR !{mr_data.get('iid', 'N/A')}"
+            target_info = mr_data.get('title', '')
+        elif note_type == 'Snippet':
+            snippet_data = payload.get('snippet', {})
+            title_prefix = f"Comment on Snippet #{snippet_data.get('id', 'N/A')}"
+            target_info = snippet_data.get('title', '')
+        
+        embed = discord.Embed(
+            title=f"{title_prefix}: {target_info}".strip(),
+            url=note_url,
+            color=discord.Color.greyple()
+        )
+        embed.set_author(name=user_name, icon_url=user_avatar)
+
+        if attributes.get('note'):
+            note_body = attributes['note']
+            embed.description = note_body[:2040] + "..." if len(note_body) > 2048 else note_body
+        
+        embed.set_footer(text=f"Comment in {repo_name}")
+        return embed
+    except Exception as e:
+        log.error(f"Error formatting GitLab note embed: {e}\nPayload: {payload}")
+        return discord.Embed(title="Error Processing GitLab Note Event", description=str(e), color=discord.Color.red())
 
 
 @router.post("/github/{repo_db_id}")
@@ -280,18 +647,51 @@ async def webhook_github(
 
     log.debug(f"GitHub webhook payload for {repo_db_id}: {payload}")
 
-    # We only care about 'push' events for commits
     event_type = request.headers.get("X-GitHub-Event")
-    if event_type != "push":
-        log.info(f"Ignoring GitHub event type '{event_type}' for repo_db_id: {repo_db_id}")
-        return {"status": "success", "message": f"Event type '{event_type}' ignored."}
+    allowed_events = repo_config.get('allowed_webhook_events', ['push']) # Default to 'push'
 
-    if not payload.get('commits'):
-        log.info(f"GitHub push event for {repo_db_id} has no commits (e.g. branch creation/deletion). Ignoring.")
-        return {"status": "success", "message": "Push event with no commits ignored."}
+    if event_type not in allowed_events:
+        log.info(f"Ignoring GitHub event type '{event_type}' for repo_db_id: {repo_db_id} as it's not in allowed events: {allowed_events}")
+        return {"status": "success", "message": f"Event type '{event_type}' ignored per configuration."}
+
+    discord_embed = None
+    if event_type == "push":
+        if not payload.get('commits') and not payload.get('deleted', False): # Also consider branch deletion as a push event
+            log.info(f"GitHub push event for {repo_db_id} has no commits and is not a delete event. Ignoring.")
+            return {"status": "success", "message": "Push event with no commits ignored."}
+        discord_embed = format_github_push_embed(payload, repo_config['repository_url'])
+    elif event_type == "issues":
+        discord_embed = format_github_issues_embed(payload, repo_config['repository_url'])
+    elif event_type == "pull_request":
+        discord_embed = format_github_pull_request_embed(payload, repo_config['repository_url'])
+    elif event_type == "release":
+        discord_embed = format_github_release_embed(payload, repo_config['repository_url'])
+    elif event_type == "issue_comment":
+        discord_embed = format_github_issue_comment_embed(payload, repo_config['repository_url'])
+    # Add other specific event types above this else block
+    else:
+        log.info(f"GitHub event type '{event_type}' is allowed but not yet handled by a specific formatter for repo_db_id: {repo_db_id}. Sending generic message.")
+        # For unhandled but allowed events, send a generic notification or log.
+        # For now, we'll just acknowledge. If you want to notify for all allowed events, create generic formatter.
+        # return {"status": "success", "message": f"Event type '{event_type}' received but no specific formatter yet."}
+        # Or, create a generic embed:
+        embed_title = f"GitHub Event: {event_type.replace('_', ' ').title()} in {repo_config.get('repository_url')}"
+        embed_description = f"Received a '{event_type}' event."
+        # Try to get a relevant URL
+        action_url = payload.get('repository', {}).get('html_url', '#')
+        if event_type == 'issues' and 'issue' in payload and 'html_url' in payload['issue']:
+            action_url = payload['issue']['html_url']
+        elif event_type == 'pull_request' and 'pull_request' in payload and 'html_url' in payload['pull_request']:
+            action_url = payload['pull_request']['html_url']
+
+        discord_embed = discord.Embed(title=embed_title, description=embed_description, url=action_url, color=discord.Color.light_grey())
+
+
+    if not discord_embed:
+        log.warning(f"No embed generated for allowed GitHub event '{event_type}' for repo {repo_db_id}. This shouldn't happen if event is handled.")
+        return {"status": "error", "message": "Embed generation failed for an allowed event."}
 
     notification_channel_id = repo_config['notification_channel_id']
-    discord_embed = format_github_embed(payload, repo_config['repository_url'])
 
     # Convert embed to dict for sending via API
     message_content = {"embeds": [discord_embed.to_dict()]}
@@ -384,18 +784,69 @@ async def webhook_gitlab(
 
     log.debug(f"GitLab webhook payload for {repo_db_id}: {payload}")
 
-    # GitLab uses 'object_kind' for event type
-    event_type = payload.get("object_kind")
-    if event_type != "push": # GitLab calls it 'push' for push hooks
-        log.info(f"Ignoring GitLab event type '{event_type}' for repo_db_id: {repo_db_id}")
-        return {"status": "success", "message": f"Event type '{event_type}' ignored."}
+    # GitLab uses 'object_kind' for event type, or 'event_name' for system hooks
+    event_type = payload.get("object_kind", payload.get("event_name"))
+    allowed_events = repo_config.get('allowed_webhook_events', ['push']) # Default to 'push' (GitLab calls push hooks 'push events' or 'tag_push events')
 
-    if not payload.get('commits'):
-        log.info(f"GitLab push event for {repo_db_id} has no commits. Ignoring.")
-        return {"status": "success", "message": "Push event with no commits ignored."}
+    # Normalize GitLab event types if needed, e.g. 'push' for 'push_hook' or 'tag_push_hook'
+    # For now, assume direct match or that 'push' covers both.
+    # GitLab event names for webhooks: push_events, tag_push_events, issues_events, merge_requests_events, etc.
+    # The payload's object_kind is often more specific: 'push', 'tag_push', 'issue', 'merge_request'.
+    # We should aim to match against object_kind primarily.
+    # Let's simplify: if 'push' is in allowed_events, we'll accept 'push' and 'tag_push' object_kinds.
+    
+    effective_event_type = event_type
+    if event_type == "tag_push" and "push" in allowed_events and "tag_push" not in allowed_events:
+        # If only "push" is allowed, but we receive "tag_push", treat it as a push for now.
+        # This logic might need refinement based on how granular the user wants control.
+        pass # It will be caught by the 'push' check if 'push' is allowed.
+        
+    is_event_allowed = False
+    if event_type in allowed_events:
+        is_event_allowed = True
+    elif event_type == "tag_push" and "push" in allowed_events: # Special handling if 'push' implies 'tag_push'
+        is_event_allowed = True
+        effective_event_type = "push" # Treat as push for formatter if only push is configured
+
+    if not is_event_allowed:
+        log.info(f"Ignoring GitLab event type '{event_type}' (object_kind/event_name) for repo_db_id: {repo_db_id} as it's not in allowed events: {allowed_events}")
+        return {"status": "success", "message": f"Event type '{event_type}' ignored per configuration."}
+
+    discord_embed = None
+    # Use effective_event_type for choosing formatter
+    if effective_event_type == "push": # This will catch 'push' and 'tag_push' if 'push' is allowed
+        if not payload.get('commits') and payload.get('total_commits_count', 0) == 0:
+             log.info(f"GitLab push event for {repo_db_id} has no commits. Ignoring.")
+             return {"status": "success", "message": "Push event with no commits ignored."}
+        discord_embed = format_gitlab_push_embed(payload, repo_config['repository_url'])
+    elif effective_event_type == "issue": # Matches object_kind 'issue'
+        discord_embed = format_gitlab_issue_embed(payload, repo_config['repository_url'])
+    elif effective_event_type == "merge_request":
+        discord_embed = format_gitlab_merge_request_embed(payload, repo_config['repository_url'])
+    elif effective_event_type == "release":
+        discord_embed = format_gitlab_release_embed(payload, repo_config['repository_url'])
+    elif effective_event_type == "note": # For comments
+        discord_embed = format_gitlab_note_embed(payload, repo_config['repository_url'])
+    # Add other specific event types above this else block
+    else:
+        log.info(f"GitLab event type '{event_type}' (effective: {effective_event_type}) is allowed but not yet handled by a specific formatter for repo_db_id: {repo_db_id}. Sending generic message.")
+        embed_title = f"GitLab Event: {event_type.replace('_', ' ').title()} in {repo_config.get('repository_url')}"
+        embed_description = f"Received a '{event_type}' event."
+        action_url = payload.get('project', {}).get('web_url', '#')
+        # Try to get more specific URLs for common GitLab events
+        if 'object_attributes' in payload and 'url' in payload['object_attributes']:
+            action_url = payload['object_attributes']['url']
+        elif 'project' in payload and 'web_url' in payload['project']:
+            action_url = payload['project']['web_url']
+
+        discord_embed = discord.Embed(title=embed_title, description=embed_description, url=action_url, color=discord.Color.dark_orange())
+
+
+    if not discord_embed:
+        log.warning(f"No embed generated for allowed GitLab event '{event_type}' for repo {repo_db_id}.")
+        return {"status": "error", "message": "Embed generation failed for an allowed event."}
 
     notification_channel_id = repo_config['notification_channel_id']
-    discord_embed = format_gitlab_embed(payload, repo_config['repository_url'])
 
     # Similar to GitHub, sending embed needs careful handling with send_discord_message_via_api
     if not api_settings.DISCORD_BOT_TOKEN:

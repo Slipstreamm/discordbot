@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Git Monitor Event Settings</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; }
+        .event-list { list-style-type: none; padding: 0; }
+        .event-list li { margin-bottom: 10px; }
+        .event-list label { margin-left: 8px; }
+        button {
+            background-color: #007bff; color: white; padding: 10px 15px;
+            border: none; border-radius: 4px; cursor: pointer; font-size: 16px;
+        }
+        button:hover { background-color: #0056b3; }
+        #statusMessage { margin-top: 15px; padding: 10px; border-radius: 4px; }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .loading { text-align: center; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Git Monitor Event Settings</h1>
+        <div id="repoInfo">
+            <h2 id="repoUrl">Repository: Loading...</h2>
+            <p>Platform: <span id="repoPlatform">Loading...</span></p>
+        </div>
+
+        <div id="loadingIndicator" class="loading">Loading event settings...</div>
+
+        <form id="eventSettingsForm" style="display:none;">
+            <h3>Select events to receive notifications for:</h3>
+            <ul id="eventList" class="event-list">
+                <!-- Event checkboxes will be populated here -->
+            </ul>
+            <button type="button" onclick="saveEventSettings()">Save Settings</button>
+        </form>
+        <div id="statusMessage"></div>
+    </div>
+
+    <script>
+        let guildId;
+        let repoDbId;
+        let currentPlatform; // To store the platform ('github' or 'gitlab')
+
+        // Assumes bearer token is stored in localStorage, adjust if needed
+        function getAuthToken() {
+            return localStorage.getItem('dashboard_token');
+        }
+
+        async function fetchWithAuth(url, options = {}) {
+            const token = getAuthToken();
+            const headers = {
+                ...options.headers,
+                'Content-Type': 'application/json',
+            };
+            if (token) {
+                headers['Authorization'] = `Bearer ${token}`;
+            }
+            const response = await fetch(url, { ...options, headers });
+            if (response.status === 401) {
+                // Handle unauthorized access, e.g., redirect to login
+                document.getElementById('statusMessage').textContent = 'Unauthorized. Please log in.';
+                document.getElementById('statusMessage').className = 'error';
+                throw new Error('Unauthorized');
+            }
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ detail: 'Unknown error occurred' }));
+                throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        }
+
+        async function loadRepositoryInfoAndEvents() {
+            const pathParts = window.location.pathname.split('/');
+            // Assuming URL like /dashboard/guilds/{guildId}/git_monitors/{repoDbId}/settings
+            // Find 'guilds' and 'git_monitors' to get the IDs
+            const guildsIndex = pathParts.indexOf('guilds');
+            const gitMonitorsIndex = pathParts.indexOf('git_monitors');
+
+            if (guildsIndex !== -1 && pathParts.length > guildsIndex + 1) {
+                guildId = pathParts[guildsIndex + 1];
+            }
+            if (gitMonitorsIndex !== -1 && pathParts.length > gitMonitorsIndex + 1) {
+                repoDbId = pathParts[gitMonitorsIndex + 1];
+            }
+
+            if (!guildId || !repoDbId) {
+                document.getElementById('loadingIndicator').textContent = 'Error: Could not parse Guild ID or Repository ID from URL.';
+                document.getElementById('loadingIndicator').className = 'error';
+                return;
+            }
+
+            try {
+                // 1. Fetch current settings (this also gives us the platform)
+                const currentSettingsUrl = `/api/guilds/${guildId}/git_monitors/${repoDbId}/events`;
+                const currentSettings = await fetchWithAuth(currentSettingsUrl);
+                
+                document.getElementById('repoUrl').textContent = `Repository: ${currentSettings.repository_url}`;
+                document.getElementById('repoPlatform').textContent = currentSettings.platform;
+                currentPlatform = currentSettings.platform;
+                const currentlyAllowedEvents = new Set(currentSettings.allowed_events);
+
+                // 2. Fetch available events for the platform
+                const availableEventsUrl = `/api/git_monitors/available_events/${currentPlatform}`;
+                const availableEventsData = await fetchWithAuth(availableEventsUrl);
+                const availableEvents = availableEventsData.events;
+
+                // 3. Populate checkboxes
+                const eventListUl = document.getElementById('eventList');
+                eventListUl.innerHTML = ''; // Clear previous items
+
+                availableEvents.forEach(event => {
+                    const li = document.createElement('li');
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.id = `event-${event}`;
+                    checkbox.name = 'webhook_events';
+                    checkbox.value = event;
+                    if (currentlyAllowedEvents.has(event)) {
+                        checkbox.checked = true;
+                    }
+
+                    const label = document.createElement('label');
+                    label.htmlFor = `event-${event}`;
+                    label.textContent = event.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()); // Prettify event name
+
+                    li.appendChild(checkbox);
+                    li.appendChild(label);
+                    eventListUl.appendChild(li);
+                });
+
+                document.getElementById('loadingIndicator').style.display = 'none';
+                document.getElementById('eventSettingsForm').style.display = 'block';
+
+            } catch (error) {
+                document.getElementById('loadingIndicator').style.display = 'none';
+                const statusMsg = document.getElementById('statusMessage');
+                statusMsg.textContent = `Error loading settings: ${error.message}`;
+                statusMsg.className = 'error';
+                console.error('Error loading repository info and events:', error);
+            }
+        }
+
+        async function saveEventSettings() {
+            const statusMsg = document.getElementById('statusMessage');
+            statusMsg.textContent = '';
+            statusMsg.className = '';
+
+            if (!guildId || !repoDbId || !currentPlatform) {
+                statusMsg.textContent = 'Error: Missing critical information (Guild ID, Repo ID, or Platform).';
+                statusMsg.className = 'error';
+                return;
+            }
+
+            const selectedEvents = [];
+            document.querySelectorAll('#eventList input[name="webhook_events"]:checked').forEach(checkbox => {
+                selectedEvents.push(checkbox.value);
+            });
+
+            const payload = {
+                allowed_events: selectedEvents
+            };
+
+            try {
+                const saveUrl = `/api/guilds/${guildId}/git_monitors/${repoDbId}/events`;
+                await fetchWithAuth(saveUrl, {
+                    method: 'PUT',
+                    body: JSON.stringify(payload)
+                });
+                statusMsg.textContent = 'Settings saved successfully!';
+                statusMsg.className = 'success';
+            } catch (error) {
+                statusMsg.textContent = `Error saving settings: ${error.message}`;
+                statusMsg.className = 'error';
+                console.error('Error saving event settings:', error);
+            }
+        }
+
+        // Load data when the page loads
+        document.addEventListener('DOMContentLoaded', loadRepositoryInfoAndEvents);
+    </script>
+</body>
+</html>

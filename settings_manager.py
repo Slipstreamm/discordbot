@@ -243,6 +243,7 @@ async def initialize_database():
                     is_public_repo BOOLEAN DEFAULT TRUE, -- Relevant for polling
                     added_by_user_id BIGINT NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    allowed_webhook_events TEXT[] DEFAULT ARRAY['push']::TEXT[], -- Stores which webhook events to notify for
                     CONSTRAINT uq_guild_repo_channel UNIQUE (guild_id, repository_url, notification_channel_id),
                     FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
                 );
@@ -252,6 +253,30 @@ async def initialize_database():
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_git_monitored_repo_method ON git_monitored_repositories (monitoring_method);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_git_monitored_repo_url ON git_monitored_repositories (repository_url);")
 
+            # Migration: Add allowed_webhook_events column if it doesn't exist and set default for old rows
+            column_exists_git_events = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'git_monitored_repositories'
+                    AND column_name = 'allowed_webhook_events'
+                );
+            """)
+            if not column_exists_git_events:
+                log.info("Adding allowed_webhook_events column to git_monitored_repositories table...")
+                await conn.execute("""
+                    ALTER TABLE git_monitored_repositories
+                    ADD COLUMN allowed_webhook_events TEXT[] DEFAULT ARRAY['push']::TEXT[];
+                """)
+                # Update existing rows to have a default value if they are NULL
+                await conn.execute("""
+                    UPDATE git_monitored_repositories
+                    SET allowed_webhook_events = ARRAY['push']::TEXT[]
+                    WHERE allowed_webhook_events IS NULL;
+                """)
+                log.info("Added allowed_webhook_events column and set default for existing rows.")
+            else:
+                log.debug("allowed_webhook_events column already exists in git_monitored_repositories table.")
 
             # Logging Event Toggles table - Stores enabled/disabled state per event type
             await conn.execute("""
@@ -2194,7 +2219,8 @@ async def add_monitored_repository(
     target_branch: str | None = None, # For polling
     polling_interval_minutes: int = 15,
     is_public_repo: bool = True,
-    last_polled_commit_sha: str | None = None # For initial poll setup
+    last_polled_commit_sha: str | None = None, # For initial poll setup
+    allowed_webhook_events: list[str] | None = None # List of event names like ['push', 'issues']
 ) -> int | None:
     """Adds a new repository to monitor. Returns the ID of the new row, or None on failure."""
     bot = get_bot_instance()
@@ -2208,23 +2234,28 @@ async def add_monitored_repository(
             await conn.execute("INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING;", guild_id)
 
             # Insert the new repository monitoring entry
+            # Default allowed_webhook_events if not provided or empty
+            final_allowed_events = allowed_webhook_events if allowed_webhook_events else ['push']
+
             repo_id = await conn.fetchval(
                 """
                 INSERT INTO git_monitored_repositories (
                     guild_id, repository_url, platform, monitoring_method,
                     notification_channel_id, added_by_user_id, webhook_secret, target_branch,
-                    polling_interval_minutes, is_public_repo, last_polled_commit_sha
+                    polling_interval_minutes, is_public_repo, last_polled_commit_sha,
+                    allowed_webhook_events
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 ON CONFLICT (guild_id, repository_url, notification_channel_id) DO NOTHING
                 RETURNING id;
                 """,
                 guild_id, repository_url, platform, monitoring_method,
                 notification_channel_id, added_by_user_id, webhook_secret, target_branch,
-                polling_interval_minutes, is_public_repo, last_polled_commit_sha
+                polling_interval_minutes, is_public_repo, last_polled_commit_sha,
+                final_allowed_events
             )
             if repo_id:
-                log.info(f"Added repository '{repository_url}' (Branch: {target_branch or 'default'}) for monitoring in guild {guild_id}, channel {notification_channel_id}. ID: {repo_id}")
+                log.info(f"Added repository '{repository_url}' (Branch: {target_branch or 'default'}, Events: {final_allowed_events}) for monitoring in guild {guild_id}, channel {notification_channel_id}. ID: {repo_id}")
             else:
                 # This means ON CONFLICT DO NOTHING was triggered, fetch existing ID
                 existing_id = await conn.fetchval(
@@ -2251,10 +2282,10 @@ async def get_monitored_repository_by_id(repo_db_id: int) -> Dict | None:
     try:
         async with bot.pg_pool.acquire() as conn:
             record = await conn.fetchrow(
-                "SELECT * FROM git_monitored_repositories WHERE id = $1",
+                "SELECT *, allowed_webhook_events FROM git_monitored_repositories WHERE id = $1", # Ensure new column is fetched
                 repo_db_id
             )
-            print(f"Grep this line: {dict(record)}")
+            # log.info(f"Grep this line: {dict(record) if record else 'No record found'}") # Keep for debugging if needed
             return dict(record) if record else None
     except Exception as e:
         log.exception(f"Database error getting monitored repository by ID {repo_db_id}: {e}")
@@ -2270,7 +2301,7 @@ async def get_monitored_repository_by_url(guild_id: int, repository_url: str, no
         async with bot.pg_pool.acquire() as conn:
             record = await conn.fetchrow(
                 """
-                SELECT * FROM git_monitored_repositories
+                SELECT *, allowed_webhook_events FROM git_monitored_repositories
                 WHERE guild_id = $1 AND repository_url = $2 AND notification_channel_id = $3
                 """,
                 guild_id, repository_url, notification_channel_id
@@ -2280,6 +2311,28 @@ async def get_monitored_repository_by_url(guild_id: int, repository_url: str, no
         log.exception(f"Database error getting monitored repository by URL '{repository_url}' for guild {guild_id}: {e}")
         return None
 
+async def update_monitored_repository_events(repo_db_id: int, allowed_events: list[str]) -> bool:
+    """Updates the allowed webhook events for a specific monitored repository."""
+    bot = get_bot_instance()
+    if not bot or not bot.pg_pool:
+        log.error(f"Bot instance or PostgreSQL pool not available for update_monitored_repository_events (ID {repo_db_id}).")
+        return False
+    try:
+        async with bot.pg_pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE git_monitored_repositories
+                SET allowed_webhook_events = $2
+                WHERE id = $1;
+                """,
+                repo_db_id, allowed_events
+            )
+            log.info(f"Updated allowed webhook events for repository ID {repo_db_id} to {allowed_events}.")
+            # Consider cache invalidation here if caching these lists directly per repo_id
+            return True
+    except Exception as e:
+        log.exception(f"Database error updating allowed webhook events for repository ID {repo_db_id}: {e}")
+        return False
 
 async def update_repository_polling_status(repo_db_id: int, last_polled_commit_sha: str, last_polled_at: asyncio.Future | None = None) -> bool:
     """Updates the last polled commit SHA and timestamp for a repository."""
